@@ -1,0 +1,49 @@
+# Rust
+target/
+target_linux/
+**/*.rs.bk
+
+# supermemoryfs runtime state
+*.db
+*.log
+dev-mnt/
+
+# Live integration tests (require running API + credentials)
+**/tests/*_live.rs
+
+# End-to-end verify suite — local-only dev tooling, not part of the shipped product.
+verify/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.plan/
+.claude/
+docs/
+paper/
+.scratch/

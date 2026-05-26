@@ -1,0 +1,124 @@
+//! `semfs unmount` — graceful shutdown of a running daemon.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result};
+use clap::Args as ClapArgs;
+
+use semfs_core::daemon::client::send_request;
+use semfs_core::daemon::protocol::{Request, Response};
+
+#[derive(ClapArgs, Debug)]
+pub struct Args {
+    /// Mountpoint or tag to unmount. If omitted, resolves via the nearest
+    /// `.semfs` marker walking up from the current directory.
+    pub target: Option<String>,
+
+    /// Force unmount even if drain + graceful shutdown fail (falls back to
+    /// `umount` / `fusermount -u`).
+    #[arg(long)]
+    pub force: bool,
+}
+
+pub async fn run(args: Args) -> Result<()> {
+    // Resolve tag + optional mountpoint path.
+    let (tag, mount_path) = resolve(args.target)?;
+
+    // Send the Unmount request. If the socket doesn't exist the daemon is
+    // already gone — fall back to umount-by-path if we know one.
+    match send_request(&tag, Request::Unmount).await {
+        Ok(Response::UnmountAck) => {}
+        Ok(Response::Error { message }) => anyhow::bail!("daemon error: {message}"),
+        Ok(other) => anyhow::bail!("unexpected response: {other:?}"),
+        Err(e) => {
+            if args.force {
+                tracing::warn!(error = %e, "IPC unmount failed, forcing via umount");
+            } else {
+                anyhow::bail!("daemon unreachable: {e}. Use --force to attempt a raw unmount.");
+            }
+        }
+    }
+
+    // Poll the pid file for process exit (bounded).
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while Instant::now() < deadline {
+        if let Some(pid) = semfs_core::daemon::read_pid(&tag) {
+            if !semfs_core::daemon::pid_alive(pid) {
+                break;
+            }
+        } else {
+            // PID file gone → daemon finished cleanup.
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    // Force-umount on the path if still present + --force.
+    if args.force {
+        if let Some(path) = &mount_path {
+            force_umount(path);
+        }
+    }
+
+    println!("unmounted '{tag}'");
+
+    // Best-effort: remove the path-scoped hint we installed at mount time.
+    // Failures here must NEVER fail the unmount.
+    match semfs_core::agent_hint::uninstall(&tag) {
+        Ok(written) if !written.is_empty() => {
+            let names: Vec<String> = written.iter().map(|p| friendly_path(p)).collect();
+            eprintln!("✓ Removed hint from {}", names.join(", "));
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "agent-hint uninstall failed"),
+    }
+
+    Ok(())
+}
+
+fn friendly_path(p: &Path) -> String {
+    if let Some(home) = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()) {
+        if let Ok(rel) = p.strip_prefix(&home) {
+            return format!("~/{}", rel.display());
+        }
+    }
+    p.display().to_string()
+}
+
+fn looks_like_path(s: &str) -> bool {
+    s == "." || s == ".." || s.contains('/')
+}
+
+/// Resolve a tag + mountpoint from the CLI target (path | tag | none).
+fn resolve(target: Option<String>) -> Result<(String, Option<PathBuf>)> {
+    if let Some(t) = target.as_deref() {
+        if looks_like_path(t) {
+            let as_path = PathBuf::from(t);
+            let canon = std::fs::canonicalize(&as_path).unwrap_or(as_path);
+            let marker = super::marker::read_semfs_marker_for_path(&canon).with_context(|| {
+                format!("no .semfs marker found at or above {}", canon.display())
+            })?;
+            return Ok((marker.tag, Some(canon)));
+        }
+        return Ok((t.to_string(), None));
+    }
+    let marker = super::marker::read_semfs_marker()
+        .context("no target given and no .semfs marker found in cwd ancestors")?;
+    let mp = marker.mount_path.as_deref().map(PathBuf::from);
+    Ok((marker.tag, mp))
+}
+
+fn force_umount(path: &Path) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("umount").arg(path).output();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("fusermount")
+            .arg("-u")
+            .arg(path)
+            .output();
+    }
+}

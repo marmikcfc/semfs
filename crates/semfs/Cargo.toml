@@ -1,0 +1,28 @@
+[package]
+name = "semfs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "semfs CLI — mount your Supermemory container as a local filesystem"
+
+[[bin]]
+name = "semfs"
+path = "src/main.rs"
+
+[dependencies]
+semfs-core = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+directories = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

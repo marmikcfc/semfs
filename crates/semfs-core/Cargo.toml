@@ -1,0 +1,43 @@
+[package]
+name = "semfs-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "semfs core library — VFS trait, local cache, mount adapters, sync engine, Supermemory API client"
+
+[lib]
+name = "semfs_core"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+libc = { workspace = true }
+reqwest = { workspace = true }
+rusqlite = { workspace = true }
+directories = { workspace = true }
+lru = { workspace = true }
+fs2 = "0.4"
+
+# Mount backends — target-gated (M3a)
+# nfsserve compiles on both macOS and Linux (pure Rust).
+# fuser is Linux-only because on macOS it would require macFUSE,
+# which we deliberately avoid by using NFSv3-over-localhost instead.
+[target.'cfg(unix)'.dependencies]
+nfsserve = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
