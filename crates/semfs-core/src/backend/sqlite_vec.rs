@@ -62,6 +62,23 @@ impl SqliteVecStore {
         }
     }
 
+    /// Probe whether this store can actually answer a search: the vec0 table
+    /// must exist AND match the embedder's dimensions. A reader (`grep`) calls
+    /// this before committing to the local backend so an un-indexed cache or a
+    /// dimension mismatch falls back to cloud instead of erroring at query time.
+    /// A single vec0 MATCH with a correctly-sized vector catches both a missing
+    /// `vchunks` table ("no such table") and a width mismatch (vec0 errors).
+    pub fn is_searchable(&self) -> bool {
+        let probe = vec_to_blob(&vec![0.0f32; self.embedder.dimensions()]);
+        let conn = self.db.conn.lock();
+        conn.prepare("SELECT rowid FROM vchunks WHERE embedding MATCH ?1 AND k = 1")
+            .and_then(|mut stmt| {
+                stmt.query_map(rusqlite::params![probe], |_| Ok(()))?
+                    .try_for_each(|r| r.map(|_| ()))
+            })
+            .is_ok()
+    }
+
     /// Attach an L5 reranker. Search reranks the post-RRF candidates by their
     /// chunk text and re-sorts. Works with any [`Reranker`] (local or cloud).
     pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
@@ -450,6 +467,28 @@ mod tests {
                 .map_or(true, |p| p.starts_with("/scope/"))),
             "scoped search leaked out-of-scope files: {hits:?}"
         );
+    }
+
+    /// `is_searchable` gates the grep→local-backend decision: true only when the
+    /// vec0 tables exist at the embedder's width.
+    #[test]
+    fn is_searchable_reflects_index_compatibility() {
+        // Indexed store at 384-d → searchable.
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let s = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        s.index(2, "/a.md", "hello world").unwrap();
+        assert!(s.is_searchable());
+
+        // Same db reopened with a different-width embedder → NOT searchable
+        // (a 256-d probe vector against a 384-d vec0 table errors).
+        let mismatched =
+            SqliteVecStore::open_existing(db.clone(), Arc::new(HashEmbedder::new(256)));
+        assert!(!mismatched.is_searchable());
+
+        // A cache that never created vec0 tables → NOT searchable.
+        let bare = Arc::new(Db::open_in_memory().unwrap());
+        let no_index = SqliteVecStore::open_existing(bare, Arc::new(HashEmbedder::new(384)));
+        assert!(!no_index.is_searchable());
     }
 
     /// Phase consistency: if a file is reindexed (new chunk ids) WHILE a search

@@ -30,7 +30,19 @@ fn resolve_index(
             if let Some(reranker) = super::resolve::build_reranker(&env)? {
                 store = store.with_reranker(reranker);
             }
-            return Ok(Arc::new(store));
+            // Only commit to the local backend if the cache actually has a
+            // searchable, dimension-compatible index. A persistent mount records
+            // `db_path` even when local indexing was never enabled, and the
+            // resolved embedder may differ from the one that built the index;
+            // either way a probe failure falls back to cloud rather than erroring
+            // at query time.
+            if store.is_searchable() {
+                return Ok(Arc::new(store));
+            }
+            tracing::warn!(
+                "local index at {p} is missing or dimension-incompatible; \
+                 falling back to cloud search"
+            );
         }
     }
     // Cloud fallback (Supermemory) — requires a key.
