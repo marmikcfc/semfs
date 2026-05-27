@@ -13,7 +13,10 @@
 //! The `semfs` binary (in the sibling crate) is a thin CLI dispatch layer on top of this library.
 //! All real behavior lives here.
 
-#![forbid(unsafe_code)]
+// `deny` (not `forbid`) so the single justified FFI block — registering the
+// sqlite-vec extension via `sqlite3_auto_extension` (see `cache::db`) — can opt
+// in with an explicit `#[allow(unsafe_code)]`. Unsafe remains denied everywhere else.
+#![deny(unsafe_code)]
 #![warn(missing_debug_implementations)]
 
 pub mod agent_hint;
@@ -22,6 +25,9 @@ pub mod backend;
 pub mod cache;
 pub mod config;
 pub mod daemon;
+pub mod embed;
+pub mod llm;
+pub mod rerank;
 pub mod mount;
 pub mod sync;
 pub mod vfs;

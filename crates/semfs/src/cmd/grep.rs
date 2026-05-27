@@ -2,16 +2,46 @@
 
 use anyhow::Result;
 use clap::Args as ClapArgs;
-use semfs_core::backend::{CloudIndex, SemanticIndex};
+use semfs_core::backend::{CloudIndex, SemanticIndex, SqliteVecStore};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Resolve the search backend. Phase 1: always the cloud client. Phase 5 adds
-/// local/offline selection here.
-fn resolve_index(api_url: &str, key: &str, tag: &str) -> Arc<dyn SemanticIndex> {
+/// Resolve the search backend — **config-driven, no flag, no network.**
+///
+/// Uses the container's LOCAL SQLite index (full L1–L5: resolved embedder +
+/// reranker, read-only via `open_existing`) when BOTH hold: the daemon recorded
+/// a cache `db_path` in the `.semfs` marker, and this process can build the
+/// matching embedder (`local_indexing_enabled` — same resolver the daemon used).
+/// Otherwise falls back to the cloud (`CloudIndex`). No `validate_key`, so a
+/// local search needs neither credentials nor connectivity.
+fn resolve_index(
+    db_path: Option<&str>,
+    api_url: &str,
+    key: Option<&str>,
+    tag: &str,
+) -> Result<Arc<dyn SemanticIndex>> {
+    let env = super::resolve::ResolveEnv::from_env();
+    if super::resolve::local_indexing_enabled(&env) {
+        if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
+            let db = Arc::new(semfs_core::cache::Db::open(std::path::Path::new(p))?);
+            let embedder = super::resolve::build_embedder(&env)?;
+            let mut store = SqliteVecStore::open_existing(db, embedder);
+            if let Some(reranker) = super::resolve::build_reranker(&env)? {
+                store = store.with_reranker(reranker);
+            }
+            return Ok(Arc::new(store));
+        }
+    }
+    // Cloud fallback (Supermemory) — requires a key.
+    let key = key.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no local index for this container and no API key for cloud search \
+             (configure a local embedder, or run `semfs login`)"
+        )
+    })?;
     let api = Arc::new(semfs_core::api::ApiClient::new(api_url, key, tag));
-    Arc::new(CloudIndex::new(api))
+    Ok(Arc::new(CloudIndex::new(api)))
 }
 
 const DEFAULT_API_URL: &str = "https://api.supermemory.ai";
@@ -190,6 +220,12 @@ pub struct Args {
     /// Override the Supermemory API base URL.
     #[arg(long, env = "SUPERMEMORY_API_URL")]
     pub api_url: Option<String>,
+
+    /// L4: rewrite/expand the query with an LLM (OpenRouter gpt-4.1-nano) before
+    /// searching. Opt-in; falls back to the original query if the LLM is
+    /// unavailable or errors.
+    #[arg(long)]
+    pub rewrite: bool,
 }
 
 pub async fn run(args: Args) -> Result<()> {
@@ -249,9 +285,17 @@ pub async fn run(args: Args) -> Result<()> {
         .and_then(|m| m.mount_path.as_deref())
         .or_else(|| path_marker.as_ref().and_then(|m| m.mount_path.as_deref()))
         .map(std::path::Path::new);
-    let key = super::auth::resolve_api_key(args.key.as_deref(), mount_path)?;
+    // Key is only needed for the cloud fallback; a local search needs none.
+    let key = super::auth::resolve_api_key(args.key.as_deref(), mount_path).ok();
 
-    let index = resolve_index(&api_url, &key, &tag);
+    // Local cache db path from the marker (CWD marker, then path-argument marker)
+    // — opening it needs no network.
+    let db_path = marker
+        .as_ref()
+        .and_then(|m| m.db_path.as_deref())
+        .or_else(|| path_marker.as_ref().and_then(|m| m.db_path.as_deref()));
+
+    let index = resolve_index(db_path, &api_url, key.as_deref(), &tag)?;
 
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
@@ -300,7 +344,30 @@ pub async fn run(args: Args) -> Result<()> {
         Some(relative)
     });
 
-    let hits = index.search(&args.query, filepath.as_deref()).await?;
+    // L4: optional LLM query rewrite (opt-in via --rewrite; fail-open to original).
+    let effective_query = if args.rewrite {
+        let env = super::resolve::ResolveEnv::from_env();
+        match super::resolve::build_llm(&env) {
+            Some(llm) => match semfs_core::llm::rewrite_query(&llm, &args.query) {
+                Ok(q) => {
+                    eprintln!("# rewritten query: {q:?}");
+                    q
+                }
+                Err(e) => {
+                    eprintln!("# query rewrite failed ({e}); using original");
+                    args.query.clone()
+                }
+            },
+            None => {
+                eprintln!("# --rewrite needs OPENROUTER_API_KEY; using original query");
+                args.query.clone()
+            }
+        }
+    } else {
+        args.query.clone()
+    };
+
+    let hits = index.search(&effective_query, filepath.as_deref()).await?;
 
     if hits.is_empty() {
         eprintln!(

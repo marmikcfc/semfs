@@ -24,6 +24,25 @@ use semfs_core::vfs::types::SetAttr;
 
 const ROOT_INO: u64 = 1;
 
+/// Build the local semantic indexer (SqliteVecStore + the resolved embedder)
+/// over the daemon's cache db. Returned as `dyn LocalIndexer` for
+/// `CacheFs::with_indexer`. Uses the same resolver as `grep`, so the indexer's
+/// embedder matches the searcher's (same model, same dims).
+fn build_local_indexer(
+    db: Arc<Db>,
+    env: &crate::cmd::resolve::ResolveEnv,
+) -> anyhow::Result<Arc<dyn semfs_core::cache::LocalIndexer>> {
+    let embedder = crate::cmd::resolve::build_embedder(env)?;
+    let mut store = semfs_core::backend::SqliteVecStore::new(db, embedder)?;
+    // L7: when an LLM is available, attach the entity-graph extractor so writes
+    // populate file→entity edges.
+    if let Some(llm) = crate::cmd::resolve::build_llm(env) {
+        store = store.with_graph_extractor(Arc::new(llm));
+        eprintln!("entity-graph extraction enabled (L7)");
+    }
+    Ok(Arc::new(store))
+}
+
 /// Config needed to run the daemon body — subset of `mount::Args` that
 /// drives behavior. Built once by `mount::run` and passed through either
 /// an inline call (foreground) or a re-exec into `daemon-inner`.
@@ -73,28 +92,9 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         .parent()
         .unwrap_or(&cfg.mount_path)
         .join(".semfs");
-    {
-        use super::marker::{format_marker, parse_all_markers, SmfsMarker};
-        let new_entry = SmfsMarker {
-            tag: cfg.container_tag.clone(),
-            api_url: cfg.api_url.clone(),
-            mount_path: Some(cfg.mount_path.display().to_string()),
-        };
-        let content = if marker_path.exists() {
-            let existing = std::fs::read_to_string(&marker_path).unwrap_or_default();
-            let mut entries = parse_all_markers(&existing);
-            entries.retain(|m| m.tag != cfg.container_tag);
-            entries.push(new_entry);
-            entries
-                .iter()
-                .map(format_marker)
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            format_marker(&new_entry)
-        };
-        std::fs::write(&marker_path, content)?;
-    }
+    // The `.semfs` marker is written AFTER the cache db is opened (below), so it
+    // can record the db path — letting `grep` open the local index with no
+    // network. `marker_path` is computed above.
 
     let opts = MountOpts::new(cfg.mount_path.clone(), cfg.backend).with_ownership(uid, gid);
 
@@ -111,6 +111,8 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         )
     };
 
+    // Captured for the marker so a separate `grep` can find the cache offline.
+    let mut local_db_path: Option<String> = None;
     let db = if cfg.ephemeral {
         eprintln!("using ephemeral in-memory cache (nothing persists after unmount)");
         Arc::new(Db::open_in_memory()?)
@@ -140,8 +142,35 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
             let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
             eprintln!("cache cleared");
         }
+        local_db_path = Some(db_path.display().to_string());
         Arc::new(Db::open(&db_path)?)
     };
+
+    // Write the `.semfs` marker now that the db path is known (db_path is set
+    // only for persistent, non-ephemeral caches).
+    {
+        use super::marker::{format_marker, parse_all_markers, SmfsMarker};
+        let new_entry = SmfsMarker {
+            tag: cfg.container_tag.clone(),
+            api_url: cfg.api_url.clone(),
+            mount_path: Some(cfg.mount_path.display().to_string()),
+            db_path: local_db_path.clone(),
+        };
+        let content = if marker_path.exists() {
+            let existing = std::fs::read_to_string(&marker_path).unwrap_or_default();
+            let mut entries = parse_all_markers(&existing);
+            entries.retain(|m| m.tag != cfg.container_tag);
+            entries.push(new_entry);
+            entries
+                .iter()
+                .map(format_marker)
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            format_marker(&new_entry)
+        };
+        std::fs::write(&marker_path, content)?;
+    }
 
     startup.report("configuring_api", "configuring API client")?;
     let mut api_client =
@@ -166,7 +195,27 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         api.update_memory_paths(paths).await?;
     }
 
-    let fs = Arc::new(CacheFs::with_api(db, api));
+    // Optional local semantic index: the capability resolver decides whether a
+    // real (non-hash) embedder is configured (local model dir or cloud key). If
+    // so, build a SqliteVecStore over this same cache db and attach it so writes
+    // (on flush), deletes, and renames maintain the local index alongside cloud
+    // sync. Otherwise behavior is unchanged.
+    let fs_base = CacheFs::with_api(db.clone(), api);
+    let resolve_env = crate::cmd::resolve::ResolveEnv::from_env();
+    let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) {
+        match build_local_indexer(db.clone(), &resolve_env) {
+            Ok(indexer) => {
+                eprintln!("local semantic index enabled");
+                Arc::new(fs_base.with_indexer(indexer))
+            }
+            Err(e) => {
+                eprintln!("local index disabled: {e}");
+                Arc::new(fs_base)
+            }
+        }
+    } else {
+        Arc::new(fs_base)
+    };
     fs.setattr(
         ROOT_INO,
         SetAttr {

@@ -23,6 +23,7 @@ pub mod logout;
 pub mod logs;
 pub mod marker;
 pub mod mount;
+pub mod resolve;
 pub mod startup;
 pub mod status;
 pub mod sync;

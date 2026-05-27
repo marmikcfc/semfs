@@ -2,6 +2,10 @@ pub struct SmfsMarker {
     pub tag: String,
     pub api_url: String,
     pub mount_path: Option<String>,
+    /// On-disk local cache db path (when the daemon opened a persistent,
+    /// locally-indexed cache). Lets `grep` open the local index with no network
+    /// — no `validate_key`/`org_id` round-trip. Absent for ephemeral mounts.
+    pub db_path: Option<String>,
 }
 
 pub fn parse_all_markers(content: &str) -> Vec<SmfsMarker> {
@@ -12,6 +16,7 @@ fn parse_one_marker(block: &str) -> Option<SmfsMarker> {
     let mut tag = None;
     let mut url = None;
     let mut mount_path = None;
+    let mut db_path = None;
     for line in block.lines() {
         if let Some(v) = line.strip_prefix("container_tag=") {
             tag = Some(v.to_string());
@@ -22,11 +27,17 @@ fn parse_one_marker(block: &str) -> Option<SmfsMarker> {
         if let Some(v) = line.strip_prefix("mount_path=") {
             mount_path = Some(v.to_string());
         }
+        if let Some(v) = line.strip_prefix("db_path=") {
+            if !v.is_empty() {
+                db_path = Some(v.to_string());
+            }
+        }
     }
     Some(SmfsMarker {
         tag: tag?,
         api_url: url.unwrap_or_else(|| "https://api.supermemory.ai".to_string()),
         mount_path,
+        db_path,
     })
 }
 
@@ -45,10 +56,11 @@ fn select_for_path<'a>(
 
 pub fn format_marker(m: &SmfsMarker) -> String {
     format!(
-        "container_tag={}\napi_url={}\nmount_path={}\n",
+        "container_tag={}\napi_url={}\nmount_path={}\ndb_path={}\n",
         m.tag,
         m.api_url,
-        m.mount_path.as_deref().unwrap_or("")
+        m.mount_path.as_deref().unwrap_or(""),
+        m.db_path.as_deref().unwrap_or("")
     )
 }
 
@@ -69,6 +81,7 @@ pub fn read_semfs_marker_for_path(start: &std::path::Path) -> Option<SmfsMarker>
                     tag: m.tag.clone(),
                     api_url: m.api_url.clone(),
                     mount_path: m.mount_path.clone(),
+                    db_path: m.db_path.clone(),
                 });
             }
             return markers.into_iter().next();

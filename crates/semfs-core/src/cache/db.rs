@@ -1,11 +1,29 @@
 //! SQLite database wrapper for the local filesystem cache.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use tokio::sync::Notify;
+
+/// Registers the `sqlite-vec` extension exactly once for the whole process.
+///
+/// `sqlite3_auto_extension` installs an init hook that runs on every connection
+/// opened *afterwards*, so this must fire before any `Connection::open`. Static
+/// registration links `vec0` into the binary — no `.so`/`.dylib` to ship
+/// (spike 4 decision; matters for cold-mounting on e2b sandboxes).
+static VEC_REGISTER: Once = Once::new();
+
+#[allow(unsafe_code)] // FFI: install the sqlite-vec init hook for all later connections.
+#[allow(clippy::missing_transmute_annotations)] // fn-ptr cast for the C entry point
+fn register_sqlite_vec() {
+    VEC_REGISTER.call_once(|| unsafe {
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
+    });
+}
 
 use crate::vfs::{FileAttr, Timestamp, DEFAULT_DIR_MODE, PREFERRED_BLOCK_SIZE};
 
@@ -38,12 +56,14 @@ impl Db {
     /// Sets WAL journal mode, configures pragmas for performance, creates
     /// tables if they don't exist, and ensures the root inode is present.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
+        register_sqlite_vec();
         let conn = Connection::open(path)?;
         Self::configure_and_init(conn)
     }
 
     /// Open an in-memory database (for tests).
     pub fn open_in_memory() -> anyhow::Result<Self> {
+        register_sqlite_vec();
         let conn = Connection::open_in_memory()?;
         Self::configure_and_init(conn)
     }
@@ -73,6 +93,9 @@ impl Db {
             "ALTER TABLE fs_inode   ADD COLUMN derived     INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE push_queue ADD COLUMN poisoned    INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE push_queue ADD COLUMN last_status INTEGER",
+            // L6 salience stats on chunks (added after the initial chunks table).
+            "ALTER TABLE chunks ADD COLUMN last_accessed_at INTEGER",
+            "ALTER TABLE chunks ADD COLUMN access_count     INTEGER NOT NULL DEFAULT 0",
         ];
         for sql in migrations {
             if let Err(e) = conn.execute(sql, []) {
@@ -140,6 +163,69 @@ impl Db {
             "INSERT OR REPLACE INTO fs_config (key, value) VALUES ('schema_version', '2')",
             [],
         )?;
+        Ok(())
+    }
+
+    /// Create the vec0 vector tables at the configured embedder dimensions and
+    /// record those dims in `fs_config`.
+    ///
+    /// vec0 tables bind a `float[N]` width, so they can't live in the static
+    /// schema — they're built here at runtime from the resolved embedder dims.
+    /// Implements the F2 per-vector-space migration: if a stored dimension
+    /// differs from the requested one, only THAT vec0 table is dropped and
+    /// rebuilt. `chunks`/`ffts` (dimension-independent) and the POSIX tables are
+    /// never touched, so files stay keyword-searchable and their vectors lazily
+    /// re-embed on the next write.
+    #[allow(dead_code)] // wired into the write path (SqliteVecStore) in Phase 4
+    pub(crate) fn ensure_vector_tables(
+        &self,
+        text_dims: usize,
+        code_dims: Option<usize>,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+
+        let stored = |key: &str| -> Option<usize> {
+            conn.query_row("SELECT value FROM fs_config WHERE key = ?1", [key], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()
+            .and_then(|s| s.parse().ok())
+        };
+
+        // F2: drop only the vec0 table whose dimension actually changed.
+        if stored("text_embed_dims").is_some_and(|d| d != text_dims) {
+            conn.execute_batch("DROP TABLE IF EXISTS vchunks;")?;
+        }
+        match (stored("code_embed_dims"), code_dims) {
+            (Some(old), Some(new)) if old != new => {
+                conn.execute_batch("DROP TABLE IF EXISTS vchunks_code;")?;
+            }
+            // Code embedder removed → drop the now-orphaned table.
+            (Some(_), None) => conn.execute_batch("DROP TABLE IF EXISTS vchunks_code;")?,
+            _ => {}
+        }
+
+        // Create at the requested widths (no-op if already present at right dim).
+        conn.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vchunks USING vec0(embedding float[{text_dims}]);"
+        ))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO fs_config (key, value) VALUES ('text_embed_dims', ?1)",
+            [text_dims.to_string()],
+        )?;
+
+        if let Some(cd) = code_dims {
+            conn.execute_batch(&format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS vchunks_code USING vec0(embedding float[{cd}]);"
+            ))?;
+            conn.execute(
+                "INSERT OR REPLACE INTO fs_config (key, value) VALUES ('code_embed_dims', ?1)",
+                [cd.to_string()],
+            )?;
+        } else {
+            conn.execute("DELETE FROM fs_config WHERE key = 'code_embed_dims'", [])?;
+        }
+
         Ok(())
     }
 
@@ -831,6 +917,169 @@ mod tests {
             )
             .unwrap();
         assert_eq!(chunk, "4096");
+    }
+
+    /// Phase 2 / spike 4: the sqlite-vec `vec0` virtual table is registered and a
+    /// KNN query returns nearest neighbours in distance order. Vectors are bound as
+    /// little-endian f32 BLOBs (sqlite-vec's native format).
+    #[test]
+    fn vec0_knn_returns_nearest_neighbours_in_order() {
+        let db = Db::open_in_memory().unwrap();
+        let conn = db.conn.lock();
+        conn.execute_batch("CREATE VIRTUAL TABLE vtest USING vec0(embedding float[3]);")
+            .unwrap();
+
+        let blob = |a: [f32; 3]| -> Vec<u8> { a.iter().flat_map(|f| f.to_le_bytes()).collect() };
+        let ins = "INSERT INTO vtest(rowid, embedding) VALUES (?1, ?2)";
+        conn.execute(ins, rusqlite::params![1i64, blob([1.0, 0.0, 0.0])])
+            .unwrap();
+        conn.execute(ins, rusqlite::params![2i64, blob([0.0, 1.0, 0.0])])
+            .unwrap();
+        conn.execute(ins, rusqlite::params![3i64, blob([0.0, 0.0, 1.0])])
+            .unwrap();
+
+        // Nearest to a vector hugging axis-1 must be rowid 1.
+        let nearest: i64 = conn
+            .query_row(
+                "SELECT rowid FROM vtest WHERE embedding MATCH ?1 AND k = 1 ORDER BY distance",
+                rusqlite::params![blob([0.9, 0.1, 0.0])],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(nearest, 1);
+
+        // A query leaning toward axis-2 then axis-1 must rank [2, 1].
+        let mut stmt = conn
+            .prepare("SELECT rowid FROM vtest WHERE embedding MATCH ?1 AND k = 2 ORDER BY distance")
+            .unwrap();
+        let order: Vec<i64> = stmt
+            .query_map(rusqlite::params![blob([0.2, 0.8, 0.0])], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(order, vec![2, 1]);
+    }
+
+    /// Phase 2 T2: the dimension-independent index tables (`chunks` + `ffts` fts5)
+    /// are created by the static schema and are usable (BM25 MATCH works).
+    #[test]
+    fn chunks_and_fts_tables_exist_and_match() {
+        let db = Db::open_in_memory().unwrap();
+        let conn = db.conn.lock();
+        conn.execute(
+            "INSERT INTO chunks(ino, filepath, ord, text) VALUES (1, '/x.md', 0, 'the quick brown fox')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ffts(rowid, text) VALUES (1, 'the quick brown fox')",
+            [],
+        )
+        .unwrap();
+        let hits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM ffts WHERE ffts MATCH 'brown'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1);
+    }
+
+    /// Phase 2 T3: vec0 tables are created at the configured width and the dims
+    /// are recorded in fs_config.
+    #[test]
+    fn ensure_vector_tables_creates_and_records_dims() {
+        let db = Db::open_in_memory().unwrap();
+        db.ensure_vector_tables(384, Some(768)).unwrap();
+        let conn = db.conn.lock();
+
+        let v384: Vec<u8> = (0..384).flat_map(|_| 0.5f32.to_le_bytes()).collect();
+        conn.execute(
+            "INSERT INTO vchunks(rowid, embedding) VALUES (1, ?1)",
+            rusqlite::params![v384],
+        )
+        .unwrap();
+        let v768: Vec<u8> = (0..768).flat_map(|_| 0.5f32.to_le_bytes()).collect();
+        conn.execute(
+            "INSERT INTO vchunks_code(rowid, embedding) VALUES (1, ?1)",
+            rusqlite::params![v768],
+        )
+        .unwrap();
+
+        let td: String = conn
+            .query_row(
+                "SELECT value FROM fs_config WHERE key='text_embed_dims'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(td, "384");
+        let cd: String = conn
+            .query_row(
+                "SELECT value FROM fs_config WHERE key='code_embed_dims'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cd, "768");
+    }
+
+    /// Phase 2 T4 (F2): changing the text dimension rebuilds ONLY `vchunks`.
+    /// `chunks`, `ffts`, and the POSIX tables are never wiped.
+    #[test]
+    fn changing_text_dim_rebuilds_only_vchunks_preserving_other_data() {
+        let db = Db::open_in_memory().unwrap();
+        db.ensure_vector_tables(384, None).unwrap();
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO chunks(ino, filepath, ord, text) VALUES (1, '/x.md', 0, 'keep me')",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO ffts(rowid, text) VALUES (1, 'keep me')", [])
+                .unwrap();
+            let v: Vec<u8> = (0..384).flat_map(|_| 0.1f32.to_le_bytes()).collect();
+            conn.execute(
+                "INSERT INTO vchunks(rowid, embedding) VALUES (1, ?1)",
+                rusqlite::params![v],
+            )
+            .unwrap();
+        }
+
+        // Text dim changes 384 → 768: only vchunks should be rebuilt.
+        db.ensure_vector_tables(768, None).unwrap();
+        let conn = db.conn.lock();
+
+        let vcount: i64 = conn
+            .query_row("SELECT count(*) FROM vchunks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(vcount, 0, "vchunks rebuilt at new dim");
+        let ccount: i64 = conn
+            .query_row("SELECT count(*) FROM chunks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ccount, 1, "chunks preserved");
+        let fcount: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM ffts WHERE ffts MATCH 'keep'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fcount, 1, "ffts preserved");
+        let root: i64 = conn
+            .query_row("SELECT ino FROM fs_inode WHERE ino=1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(root, 1, "POSIX root preserved");
+        let td: String = conn
+            .query_row(
+                "SELECT value FROM fs_config WHERE key='text_embed_dims'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(td, "768");
     }
 
     #[test]

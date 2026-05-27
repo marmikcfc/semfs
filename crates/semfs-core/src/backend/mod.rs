@@ -3,7 +3,10 @@
 //! knowing which.
 
 pub(crate) mod cloud;
+pub mod graph;
+pub mod sqlite_vec;
 pub use cloud::CloudIndex;
+pub use sqlite_vec::SqliteVecStore;
 
 use async_trait::async_trait;
 

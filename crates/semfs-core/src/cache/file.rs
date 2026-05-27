@@ -34,6 +34,8 @@ pub struct SqliteFile {
     pub(crate) ino: u64,
     pub(crate) api: Option<Arc<crate::api::ApiClient>>,
     pub(crate) filepath: Option<String>,
+    /// Local semantic index, maintained on flush. `None` = no local indexing.
+    pub(crate) indexer: Option<Arc<dyn super::LocalIndexer>>,
 }
 
 #[async_trait]
@@ -280,6 +282,21 @@ impl crate::vfs::File for SqliteFile {
     }
 
     async fn flush(&self) -> VfsResult<()> {
+        // Local semantic index — maintained on flush, independent of cloud sync.
+        // Re-index the file's current content (replaces its prior chunks). Only
+        // valid UTF-8 is indexed; binary files are skipped. Each lock is taken
+        // and released separately so we never hold the conn across index().
+        if let Some(indexer) = &self.indexer {
+            if let Some(filepath) = &self.filepath {
+                let content = self.db.read_all_content(self.ino);
+                if let Ok(text) = String::from_utf8(content) {
+                    if let Err(e) = indexer.index(self.ino, filepath, &text) {
+                        tracing::warn!(filepath, "local index on flush failed: {e}");
+                    }
+                }
+            }
+        }
+
         // SQLite writes are already durable after each transaction commit.
         // If we have an API client and a filepath, enqueue a push op so the
         // background worker can coalesce rapid saves into at most one

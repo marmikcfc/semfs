@@ -25,6 +25,10 @@ parking_lot = { workspace = true }
 libc = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
+sqlite-vec = { workspace = true }
+fastembed = { workspace = true }
+ureq = { workspace = true }
+regex = { workspace = true }
 directories = { workspace = true }
 lru = { workspace = true }
 fs2 = "0.4"
