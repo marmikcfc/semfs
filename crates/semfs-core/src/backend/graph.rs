@@ -94,6 +94,12 @@ fn strip_code_fence(s: &str) -> String {
 }
 
 /// Convert an entity name to a URL-safe slug (`Auth Service` → `auth-service`).
+///
+/// Punctuation-only or non-ASCII names (`東京`, `🚀 Launch`) would otherwise
+/// reduce to an empty slug and conflate distinct entities onto a single graph
+/// node — which silently links unrelated files via the co-mention boost. When
+/// the ASCII reduction is empty we fall back to a stable hash of the original
+/// label so distinct names always map to distinct `to_path`s.
 pub fn slugify(label: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
@@ -106,7 +112,23 @@ pub fn slugify(label: &str) -> String {
             prev_dash = true;
         }
     }
-    out.trim_matches('-').to_string()
+    let slug = out.trim_matches('-').to_string();
+    if slug.is_empty() {
+        format!("e-{:016x}", stable_hash(label))
+    } else {
+        slug
+    }
+}
+
+/// FNV-1a — deterministic across runs and Rust versions (unlike `DefaultHasher`),
+/// so the same entity name always hashes to the same slug.
+fn stable_hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 #[cfg(test)]
@@ -118,6 +140,21 @@ mod tests {
         assert_eq!(slugify("Auth Service"), "auth-service");
         assert_eq!(slugify("Acme, Inc."), "acme-inc");
         assert_eq!(entity_path("Stripe"), "/memories/stripe.md");
+    }
+
+    #[test]
+    fn slugify_keeps_non_ascii_names_distinct() {
+        // Names that reduce to an empty ASCII slug must not collapse onto the
+        // same graph node — distinct names get distinct hash-based slugs.
+        let tokyo = slugify("東京");
+        let kyoto = slugify("京都");
+        let rocket = slugify("🚀");
+        assert!(!tokyo.is_empty() && !kyoto.is_empty() && !rocket.is_empty());
+        assert_ne!(tokyo, kyoto);
+        assert_ne!(tokyo, rocket);
+        // Stable: same input → same slug across calls.
+        assert_eq!(tokyo, slugify("東京"));
+        assert_ne!(entity_path("東京"), entity_path("京都"));
     }
 
     #[test]

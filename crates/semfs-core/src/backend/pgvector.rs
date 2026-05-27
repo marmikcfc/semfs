@@ -102,6 +102,28 @@ impl PgVectorStore {
         )
         .execute(&mut conn)
         .await?;
+
+        // Fail fast on dimension drift. `CREATE TABLE IF NOT EXISTS` silently
+        // keeps a pre-existing `chunks` at its old width, so reusing a database
+        // with a different embedding model would otherwise defer the failure to
+        // the first `::vector` insert/search. pgvector stores the declared
+        // dimension directly in `atttypmod` (sized column > 0; unsized = -1).
+        let existing: Option<i32> = sqlx::query_scalar(
+            "SELECT a.atttypmod FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid \
+             WHERE c.relname = 'chunks' AND a.attname = 'embedding' \
+             AND a.attnum > 0 AND NOT a.attisdropped",
+        )
+        .fetch_optional(&mut conn)
+        .await?;
+        if let Some(td) = existing {
+            if td > 0 && td as usize != dims {
+                anyhow::bail!(
+                    "existing chunks.embedding is vector({td}) but the embedder produces \
+                     {dims}-dimensional vectors; rebuild the index or use a matching model"
+                );
+            }
+        }
+
         Ok(Self {
             conn: Mutex::new(conn),
             embedder,
@@ -231,51 +253,69 @@ impl SemanticIndex for PgVectorStore {
             .pop()
             .unwrap_or_default();
         let qlit = vec_literal(&qvec);
+        // Scope predicate pushed into each retrieval lane so a `/prefix/` query
+        // can't be crowded out of the global top-K by out-of-scope files (a
+        // false-negative bug if filtered only after `LIMIT`). NULL = unscoped.
+        let like = filepath.map(|p| format!("{p}%"));
 
-        let mut conn = self.conn.lock().await;
         let mut by_file: HashMap<String, (String, f64)> = HashMap::new();
 
-        // Vector KNN (cosine distance operator).
-        let rows = sqlx::query(
-            "SELECT filepath, text FROM chunks ORDER BY embedding <=> $1::vector LIMIT $2",
-        )
-        .bind(&qlit)
-        .bind(SEARCH_POOL)
-        .fetch_all(&mut *conn)
-        .await?;
-        for (i, row) in rows.iter().enumerate() {
-            rank::rrf_bump(&mut by_file, row.get(0), row.get(1), i);
-        }
-
-        // Keyword (Postgres FTS). Fail-soft — vector hits stand.
-        if let Ok(rows) = sqlx::query(
-            "SELECT filepath, text FROM chunks \
-             WHERE to_tsvector('simple', text) @@ plainto_tsquery('simple', $1) \
-             ORDER BY ts_rank(to_tsvector('simple', text), plainto_tsquery('simple', $1)) DESC \
-             LIMIT $2",
-        )
-        .bind(query)
-        .bind(SEARCH_POOL)
-        .fetch_all(&mut *conn)
-        .await
+        // Phase 1 — retrieval. Hold the single connection only for the queries.
         {
+            let mut conn = self.conn.lock().await;
+
+            // Vector KNN (cosine distance operator).
+            let rows = sqlx::query(
+                "SELECT filepath, text FROM chunks \
+                 WHERE ($2::text IS NULL OR filepath LIKE $2) \
+                 ORDER BY embedding <=> $1::vector LIMIT $3",
+            )
+            .bind(&qlit)
+            .bind(&like)
+            .bind(SEARCH_POOL)
+            .fetch_all(&mut *conn)
+            .await?;
             for (i, row) in rows.iter().enumerate() {
                 rank::rrf_bump(&mut by_file, row.get(0), row.get(1), i);
+            }
+
+            // Keyword (Postgres FTS). Fail-soft — vector hits stand.
+            if let Ok(rows) = sqlx::query(
+                "SELECT filepath, text FROM chunks \
+                 WHERE to_tsvector('simple', text) @@ plainto_tsquery('simple', $1) \
+                 AND ($3::text IS NULL OR filepath LIKE $3) \
+                 ORDER BY ts_rank(to_tsvector('simple', text), plainto_tsquery('simple', $1)) DESC \
+                 LIMIT $2",
+            )
+            .bind(query)
+            .bind(SEARCH_POOL)
+            .bind(&like)
+            .fetch_all(&mut *conn)
+            .await
+            {
+                for (i, row) in rows.iter().enumerate() {
+                    rank::rrf_bump(&mut by_file, row.get(0), row.get(1), i);
+                }
             }
         }
 
         let mut hits = rank::to_hits(by_file, filepath);
 
+        // L5 rerank runs OUTSIDE the connection lock — the reranker trait is
+        // synchronous and may block on a local model or HTTP; holding the only
+        // connection across it would stall every other search/index/write.
         if let Some(reranker) = &self.reranker {
             rank::apply_reranker(&mut hits, reranker.as_ref(), query)?;
         }
 
-        // Pre-fetch salience stats + entities for hit files, then apply via the
-        // shared sync rank helpers (rank.rs takes sync closures; we feed maps).
+        // Phase 2 — re-acquire the connection for salience/entity stats + access
+        // bump. rank.rs takes sync closures, so we pre-fetch into maps first.
         let paths: Vec<String> = hits.iter().filter_map(|h| h.filepath.clone()).collect();
         let mut stats: HashMap<String, (Option<i64>, i64)> = HashMap::new();
         let mut ents: HashMap<String, HashSet<String>> = HashMap::new();
+        let now = now_ms();
         if !paths.is_empty() {
+            let mut conn = self.conn.lock().await;
             if let Ok(srows) = sqlx::query(
                 "SELECT filepath, MAX(last_accessed_at), COALESCE(SUM(access_count), 0)::bigint \
                  FROM chunks WHERE filepath = ANY($1) GROUP BY filepath",
@@ -298,13 +338,6 @@ impl SemanticIndex for PgVectorStore {
                     ents.entry(row.get(0)).or_default().insert(row.get(1));
                 }
             }
-        }
-
-        let now = now_ms();
-        rank::apply_comention_boost(&mut hits, |fp| ents.get(fp).cloned().unwrap_or_default());
-        rank::apply_salience(&mut hits, now, |fp| stats.get(fp).copied().unwrap_or((None, 0)));
-
-        if !paths.is_empty() {
             let _ = sqlx::query(
                 "UPDATE chunks SET access_count = access_count + 1, last_accessed_at = $2 \
                  WHERE filepath = ANY($1)",
@@ -314,6 +347,9 @@ impl SemanticIndex for PgVectorStore {
             .execute(&mut *conn)
             .await;
         }
+
+        rank::apply_comention_boost(&mut hits, |fp| ents.get(fp).cloned().unwrap_or_default());
+        rank::apply_salience(&mut hits, now, |fp| stats.get(fp).copied().unwrap_or((None, 0)));
         rank::sort_desc(&mut hits);
         Ok(hits)
     }
@@ -367,6 +403,66 @@ mod tests {
         // Close the client connection before shutting the server down, else the
         // server blocks waiting for the still-open connection to drain.
         drop(store);
+        let _ = server.shutdown();
+    }
+
+    /// Scoped search returns in-scope matches even when many out-of-scope files
+    /// match the same terms — the scope predicate is pushed into both lanes.
+    #[tokio::test]
+    async fn pg_scoped_search_survives_crowding() {
+        let server = pg();
+        let store = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+            .await
+            .expect("connect");
+        for i in 0..100 {
+            store
+                .index(1000 + i, &format!("/noise/{i}.md"), "alpha shared keyword here")
+                .await
+                .unwrap();
+        }
+        store
+            .index(2, "/scope/target.md", "alpha shared keyword here")
+            .await
+            .unwrap();
+
+        let hits = store
+            .search("alpha shared keyword", Some("/scope/"))
+            .await
+            .unwrap();
+        assert!(
+            hits.iter().any(|h| h.filepath.as_deref() == Some("/scope/target.md")),
+            "scoped search dropped the in-scope file under crowding"
+        );
+        assert!(
+            hits.iter().all(|h| h
+                .filepath
+                .as_deref()
+                .map_or(true, |p| p.starts_with("/scope/"))),
+            "scoped search leaked out-of-scope files"
+        );
+
+        drop(store);
+        let _ = server.shutdown();
+    }
+
+    /// Reusing a database with a mismatched embedding dimension fails fast at
+    /// connect rather than deferring to the first insert/search.
+    #[tokio::test]
+    async fn pg_connect_rejects_dimension_drift() {
+        let server = pg();
+        let first = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+            .await
+            .expect("first connect creates vector(384)");
+        // Close the connection so the single-connection server is free.
+        drop(first);
+
+        let mismatched =
+            PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(256))).await;
+        assert!(
+            mismatched.is_err(),
+            "connect must reject a 256-d embedder against an existing vector(384) table"
+        );
+
         let _ = server.shutdown();
     }
 }

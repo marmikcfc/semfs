@@ -17,6 +17,12 @@ use crate::rerank::Reranker;
 
 /// Over-fetch per ranked list before collapsing chunks → files.
 const SEARCH_POOL: usize = 80;
+/// When a query is scoped to a path prefix, vec0 KNN can't filter on the joined
+/// `filepath` (it only post-filters the global k-nearest), so we raise `k` to
+/// this bound and GLOB-filter, ensuring in-scope hits aren't crowded out of the
+/// pool by out-of-scope files. 4096 is sqlite-vec's hard `k` ceiling; beyond
+/// that the exact-GLOB FTS lane still surfaces in-scope lexical matches.
+const SCOPED_KNN_POOL: usize = 4096;
 
 /// Local, offline semantic index over the SQLite cache.
 #[derive(Debug)]
@@ -89,7 +95,11 @@ impl SqliteVecStore {
         };
 
         let mut conn = self.db.conn.lock();
-        let tx = conn.transaction()?;
+        // IMMEDIATE: take the write lock at BEGIN. These transactions read
+        // (e.g. drop_file_chunks SELECTs) before writing; a DEFERRED tx would
+        // let two concurrent writers deadlock on the read→write upgrade in WAL
+        // (instant SQLITE_BUSY, no busy_timeout retry).
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         // Drop this file's prior chunks + their rowid-linked vec0/fts rows.
         drop_file_chunks(&tx, filepath)?;
@@ -137,7 +147,11 @@ impl SqliteVecStore {
     /// index — on delete, or before re-indexing under a new path on rename.
     pub fn remove(&self, filepath: &str) -> anyhow::Result<()> {
         let mut conn = self.db.conn.lock();
-        let tx = conn.transaction()?;
+        // IMMEDIATE: take the write lock at BEGIN. These transactions read
+        // (e.g. drop_file_chunks SELECTs) before writing; a DEFERRED tx would
+        // let two concurrent writers deadlock on the read→write upgrade in WAL
+        // (instant SQLITE_BUSY, no busy_timeout retry).
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         drop_file_chunks(&tx, filepath)?;
         tx.commit()?;
         Ok(())
@@ -152,7 +166,11 @@ impl SqliteVecStore {
             return Ok(());
         }
         let mut conn = self.db.conn.lock();
-        let tx = conn.transaction()?;
+        // IMMEDIATE: take the write lock at BEGIN. These transactions read
+        // (e.g. drop_file_chunks SELECTs) before writing; a DEFERRED tx would
+        // let two concurrent writers deadlock on the read→write upgrade in WAL
+        // (instant SQLITE_BUSY, no busy_timeout retry).
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         // Overwrite: clear the destination's existing index rows.
         drop_file_chunks(&tx, new)?;
         tx.execute(
@@ -212,20 +230,28 @@ impl SemanticIndex for SqliteVecStore {
             .pop()
             .unwrap_or_default();
         let qblob = vec_to_blob(&qvec);
+        // Scope predicate pushed into each lane so a `/prefix/` query can't be
+        // crowded out of the candidate pool by out-of-scope files (a false-
+        // negative bug if filtered only after the global LIMIT). `None` = no scope.
+        let glob = filepath.map(|p| format!("{p}*"));
 
         // filepath -> (representative chunk, summed RRF score)
         let mut by_file: HashMap<String, (String, f64)> = HashMap::new();
 
         let conn = self.db.conn.lock();
 
-        // Vector KNN (vec0).
+        // Vector KNN (vec0). vec0 only post-filters the global k-nearest on
+        // joined columns, so when scoped we raise k and GLOB-filter rather than
+        // letting out-of-scope files consume the pool.
         {
+            let k = if glob.is_some() { SCOPED_KNN_POOL } else { SEARCH_POOL };
             let mut stmt = conn.prepare(
                 "SELECT c.filepath, c.text FROM vchunks v \
                  JOIN chunks c ON c.id = v.rowid \
-                 WHERE v.embedding MATCH ?1 AND k = ?2 ORDER BY distance",
+                 WHERE v.embedding MATCH ?1 AND k = ?2 \
+                 AND (?3 IS NULL OR c.filepath GLOB ?3) ORDER BY distance",
             )?;
-            let rows = stmt.query_map(rusqlite::params![qblob, SEARCH_POOL as i64], |r| {
+            let rows = stmt.query_map(rusqlite::params![qblob, k as i64, glob], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })?;
             for (rank, row) in rows.enumerate() {
@@ -239,11 +265,14 @@ impl SemanticIndex for SqliteVecStore {
             if let Ok(mut stmt) = conn.prepare(
                 "SELECT c.filepath, c.text FROM ffts \
                  JOIN chunks c ON c.id = ffts.rowid \
-                 WHERE ffts MATCH ?1 ORDER BY rank LIMIT ?2",
+                 WHERE ffts MATCH ?1 AND (?3 IS NULL OR c.filepath GLOB ?3) \
+                 ORDER BY rank LIMIT ?2",
             ) {
-                if let Ok(rows) = stmt.query_map(rusqlite::params![fq, SEARCH_POOL as i64], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-                }) {
+                if let Ok(rows) =
+                    stmt.query_map(rusqlite::params![fq, SEARCH_POOL as i64, glob], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                    })
+                {
                     for (rank, row) in rows.enumerate() {
                         if let Ok((fp, text)) = row {
                             super::rank::rrf_bump(&mut by_file, fp, text, rank);
@@ -352,6 +381,34 @@ mod tests {
             hits[0].filepath.as_deref(),
             Some("/notes/auth.md"),
             "the auth note must outrank the cooking note for a login query"
+        );
+    }
+
+    /// Scoped search must return in-scope matches even when far more out-of-scope
+    /// files match the same terms — they must not crowd the candidate pool.
+    #[tokio::test]
+    async fn scoped_search_survives_out_of_scope_crowding() {
+        let s = store();
+        // 120 out-of-scope files (> SEARCH_POOL=80) all matching the query term.
+        for i in 0..120 {
+            s.index(1000 + i, &format!("/noise/{i}.md"), "alpha shared keyword here")
+                .unwrap();
+        }
+        // One in-scope file with the same term.
+        s.index(2, "/scope/target.md", "alpha shared keyword here")
+            .unwrap();
+
+        let hits = s.search("alpha shared keyword", Some("/scope/")).await.unwrap();
+        assert!(
+            hits.iter().any(|h| h.filepath.as_deref() == Some("/scope/target.md")),
+            "scoped search dropped the in-scope file under crowding: {hits:?}"
+        );
+        assert!(
+            hits.iter().all(|h| h
+                .filepath
+                .as_deref()
+                .map_or(true, |p| p.starts_with("/scope/"))),
+            "scoped search leaked out-of-scope files: {hits:?}"
         );
     }
 
