@@ -3,6 +3,7 @@
 //! knowing which.
 
 pub(crate) mod cloud;
+pub mod chunk;
 pub mod graph;
 pub mod sqlite_vec;
 pub use cloud::CloudIndex;

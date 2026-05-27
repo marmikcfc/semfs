@@ -19,8 +19,6 @@ use crate::rerank::Reranker;
 const RRF_K: f64 = 60.0;
 /// Over-fetch per ranked list before collapsing chunks → files.
 const SEARCH_POOL: usize = 80;
-/// Approximate max characters per chunk.
-const CHUNK_MAX_CHARS: usize = 1000;
 
 /// Local, offline semantic index over the SQLite cache.
 #[derive(Debug)]
@@ -79,7 +77,7 @@ impl SqliteVecStore {
     /// Re-indexing the same `filepath` replaces its prior chunks (and their
     /// rowid-linked vec0/fts rows). Removing a file = `index` with empty content.
     pub fn index(&self, ino: u64, filepath: &str, content: &str) -> anyhow::Result<()> {
-        let chunks = chunk_text(content);
+        let chunks = super::chunk::recursive_chunks(content, &super::chunk::ChunkOptions::default());
         let vectors = self.embedder.embed(&chunks)?;
 
         // L7: extract entities via the LLM BEFORE locking the db (network call).
@@ -409,32 +407,6 @@ fn rrf_bump(acc: &mut HashMap<String, (String, f64)>, fp: String, chunk: String,
         .or_insert((chunk, s));
 }
 
-/// Split content into ~`CHUNK_MAX_CHARS` windows on whitespace boundaries.
-fn chunk_text(content: &str) -> Vec<String> {
-    let content = content.trim();
-    if content.is_empty() {
-        return vec![];
-    }
-    if content.len() <= CHUNK_MAX_CHARS {
-        return vec![content.to_string()];
-    }
-    let mut chunks = Vec::new();
-    let mut cur = String::new();
-    for word in content.split_whitespace() {
-        if !cur.is_empty() && cur.len() + word.len() + 1 > CHUNK_MAX_CHARS {
-            chunks.push(std::mem::take(&mut cur));
-        }
-        if !cur.is_empty() {
-            cur.push(' ');
-        }
-        cur.push_str(word);
-    }
-    if !cur.is_empty() {
-        chunks.push(cur);
-    }
-    chunks
-}
-
 /// Build a safe fts5 MATCH expression: quoted, OR-joined alphanumeric tokens.
 fn to_fts_query(q: &str) -> Option<String> {
     let toks: Vec<String> = q
@@ -496,12 +468,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1, "re-index must replace, not accumulate, chunks");
-    }
-
-    #[test]
-    fn chunk_text_handles_empty_and_short() {
-        assert!(chunk_text("   ").is_empty());
-        assert_eq!(chunk_text("short text"), vec!["short text".to_string()]);
     }
 
     #[test]
