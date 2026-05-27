@@ -71,6 +71,10 @@ impl Embedder for OpenAiEmbedder {
         self.dims
     }
 
+    fn identity(&self) -> String {
+        format!("openai:{}:{}", self.model, self.dims)
+    }
+
     fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);

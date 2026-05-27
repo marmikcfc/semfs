@@ -27,6 +27,10 @@ impl Embedder for HashEmbedder {
         self.dims
     }
 
+    fn identity(&self) -> String {
+        format!("hash:{}", self.dims)
+    }
+
     fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
         Ok(texts.iter().map(|t| embed_one(t, self.dims)).collect())
     }

@@ -22,6 +22,8 @@ pub struct LocalEmbedder {
     // we guard the model behind a Mutex (embedding is sequential anyway).
     model: Mutex<TextEmbedding>,
     dims: usize,
+    /// Source model directory — its identity, so a reader can detect a model swap.
+    model_id: String,
 }
 
 impl LocalEmbedder {
@@ -48,6 +50,12 @@ impl LocalEmbedder {
         Ok(Self {
             model: Mutex::new(model),
             dims,
+            // The directory name identifies which model produced the vectors;
+            // more portable than the absolute path if the index moves machines.
+            model_id: dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| dir.to_string_lossy().into_owned()),
         })
     }
 }
@@ -63,6 +71,10 @@ impl std::fmt::Debug for LocalEmbedder {
 impl Embedder for LocalEmbedder {
     fn dimensions(&self) -> usize {
         self.dims
+    }
+
+    fn identity(&self) -> String {
+        format!("local:{}:{}", self.model_id, self.dims)
     }
 
     fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {

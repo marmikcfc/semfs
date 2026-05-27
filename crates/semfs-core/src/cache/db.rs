@@ -229,6 +229,28 @@ impl Db {
         Ok(())
     }
 
+    /// Record the embedder identity that built the local text index, so a reader
+    /// can refuse a different model/space at the same width (silent corruption).
+    pub(crate) fn record_embed_identity(&self, identity: &str) -> anyhow::Result<()> {
+        self.conn.lock().execute(
+            "INSERT OR REPLACE INTO fs_config (key, value) VALUES ('text_embed_model', ?1)",
+            [identity],
+        )?;
+        Ok(())
+    }
+
+    /// The embedder identity recorded by the writer, if any.
+    pub(crate) fn embed_identity(&self) -> Option<String> {
+        self.conn
+            .lock()
+            .query_row(
+                "SELECT value FROM fs_config WHERE key = 'text_embed_model'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+    }
+
     /// Look up the remote document ID for an inode, if one has been stored.
     pub(crate) fn get_remote_id(&self, ino: u64) -> Option<String> {
         let conn = self.conn.lock();

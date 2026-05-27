@@ -40,6 +40,9 @@ impl SqliteVecStore {
     /// Build a store and ensure the vec0 tables exist at the embedder's width.
     pub fn new(db: Arc<Db>, embedder: Arc<dyn Embedder>) -> anyhow::Result<Self> {
         db.ensure_vector_tables(embedder.dimensions(), None)?;
+        // Stamp the model identity so a reader can detect a model swap at the
+        // same width (which would silently corrupt relevance).
+        db.record_embed_identity(&embedder.identity())?;
         Ok(Self {
             db,
             embedder,
@@ -68,7 +71,15 @@ impl SqliteVecStore {
     /// dimension mismatch falls back to cloud instead of erroring at query time.
     /// A single vec0 MATCH with a correctly-sized vector catches both a missing
     /// `vchunks` table ("no such table") and a width mismatch (vec0 errors).
+    ///
+    /// Also requires the stored embedder identity to match this store's embedder:
+    /// a same-width but different model produces an incompatible vector space, so
+    /// dimension agreement alone is not enough. A missing stamp (an index this
+    /// code never wrote) is treated as incompatible.
     pub fn is_searchable(&self) -> bool {
+        if self.db.embed_identity().as_deref() != Some(self.embedder.identity().as_str()) {
+            return false;
+        }
         let probe = vec_to_blob(&vec![0.0f32; self.embedder.dimensions()]);
         let conn = self.db.conn.lock();
         conn.prepare("SELECT rowid FROM vchunks WHERE embedding MATCH ?1 AND k = 1")
@@ -484,6 +495,30 @@ mod tests {
         let mismatched =
             SqliteVecStore::open_existing(db.clone(), Arc::new(HashEmbedder::new(256)));
         assert!(!mismatched.is_searchable());
+
+        // Same width (384) but a DIFFERENT model identity → NOT searchable
+        // (a same-dimension model swap would silently corrupt relevance).
+        #[derive(Debug)]
+        struct TaggedEmbedder {
+            dims: usize,
+            id: String,
+        }
+        impl crate::embed::Embedder for TaggedEmbedder {
+            fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
+                Ok(texts.iter().map(|_| vec![0.0; self.dims]).collect())
+            }
+            fn dimensions(&self) -> usize {
+                self.dims
+            }
+            fn identity(&self) -> String {
+                self.id.clone()
+            }
+        }
+        let other_model = SqliteVecStore::open_existing(
+            db.clone(),
+            Arc::new(TaggedEmbedder { dims: 384, id: "other-model:384".into() }),
+        );
+        assert!(!other_model.is_searchable());
 
         // A cache that never created vec0 tables → NOT searchable.
         let bare = Arc::new(Db::open_in_memory().unwrap());

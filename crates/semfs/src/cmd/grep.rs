@@ -24,25 +24,19 @@ fn resolve_index(
     let env = super::resolve::ResolveEnv::from_env();
     if super::resolve::local_indexing_enabled(&env) {
         if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
-            let db = Arc::new(semfs_core::cache::Db::open(std::path::Path::new(p))?);
-            let embedder = super::resolve::build_embedder(&env)?;
-            let mut store = SqliteVecStore::open_existing(db, embedder);
-            if let Some(reranker) = super::resolve::build_reranker(&env)? {
-                store = store.with_reranker(reranker);
+            // Degraded-dependency states (corrupt cache, stale model dir) must
+            // fall back to cloud, not abort grep — so local init errors are
+            // logged and we continue rather than `?`-propagating.
+            match build_local_store(&env, p) {
+                Ok(Some(store)) => return Ok(Arc::new(store)),
+                Ok(None) => tracing::warn!(
+                    "local index at {p} is missing or model-incompatible; \
+                     falling back to cloud search"
+                ),
+                Err(e) => tracing::warn!(
+                    "local backend init failed for {p} ({e}); falling back to cloud search"
+                ),
             }
-            // Only commit to the local backend if the cache actually has a
-            // searchable, dimension-compatible index. A persistent mount records
-            // `db_path` even when local indexing was never enabled, and the
-            // resolved embedder may differ from the one that built the index;
-            // either way a probe failure falls back to cloud rather than erroring
-            // at query time.
-            if store.is_searchable() {
-                return Ok(Arc::new(store));
-            }
-            tracing::warn!(
-                "local index at {p} is missing or dimension-incompatible; \
-                 falling back to cloud search"
-            );
         }
     }
     // Cloud fallback (Supermemory) — requires a key.
@@ -54,6 +48,25 @@ fn resolve_index(
     })?;
     let api = Arc::new(semfs_core::api::ApiClient::new(api_url, key, tag));
     Ok(Arc::new(CloudIndex::new(api)))
+}
+
+/// Build the local SQLite store for `grep`, or `Ok(None)` if the on-disk index
+/// isn't usable (missing tables / incompatible model). Hard init failures
+/// (cache open, embedder build) return `Err` so the caller falls back to cloud;
+/// reranker construction failure is non-fatal — we search without reranking.
+fn build_local_store(
+    env: &super::resolve::ResolveEnv,
+    p: &str,
+) -> Result<Option<SqliteVecStore>> {
+    let db = Arc::new(semfs_core::cache::Db::open(Path::new(p))?);
+    let embedder = super::resolve::build_embedder(env)?;
+    let mut store = SqliteVecStore::open_existing(db, embedder);
+    match super::resolve::build_reranker(env) {
+        Ok(Some(reranker)) => store = store.with_reranker(reranker),
+        Ok(None) => {}
+        Err(e) => tracing::warn!("local reranker unavailable ({e}); searching without rerank"),
+    }
+    Ok(store.is_searchable().then_some(store))
 }
 
 const DEFAULT_API_URL: &str = "https://api.supermemory.ai";

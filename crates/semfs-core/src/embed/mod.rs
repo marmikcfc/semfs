@@ -24,6 +24,15 @@ pub trait Embedder: Send + Sync + std::fmt::Debug {
 
     /// Output vector width — determines the vec0 table's `float[N]`.
     fn dimensions(&self) -> usize;
+
+    /// Stable identity of the model + vector space, persisted with a local index
+    /// so a reader (`grep`) can refuse to search vectors produced by a DIFFERENT
+    /// model that merely happens to share the same width (which would silently
+    /// corrupt relevance). The default is dimension-only; real embedders override
+    /// it with their model identity.
+    fn identity(&self) -> String {
+        format!("embedder:{}", self.dimensions())
+    }
 }
 
 /// Cosine similarity helper, shared by tests and the salience/rank steps.
