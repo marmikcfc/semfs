@@ -261,6 +261,10 @@ impl SemanticIndex for PgVectorStore {
         let scope = filepath.map(|p| p.to_string());
 
         let mut by_file: HashMap<String, (String, f64)> = HashMap::new();
+        // filepath -> the representative chunk's row id, captured at retrieval.
+        // Used in phase 2 to detect a concurrent same-path reindex (new ids), so
+        // we never return a snippet/score from pre-rewrite content.
+        let mut rep_chunk: HashMap<String, i64> = HashMap::new();
 
         // Phase 1 — retrieval. Hold the single connection only for the queries.
         {
@@ -268,7 +272,7 @@ impl SemanticIndex for PgVectorStore {
 
             // Vector KNN (cosine distance operator).
             let rows = sqlx::query(
-                "SELECT filepath, text FROM chunks \
+                "SELECT id, filepath, text FROM chunks \
                  WHERE ($2::text IS NULL OR starts_with(filepath, $2)) \
                  ORDER BY embedding <=> $1::vector LIMIT $3",
             )
@@ -278,12 +282,14 @@ impl SemanticIndex for PgVectorStore {
             .fetch_all(&mut *conn)
             .await?;
             for (i, row) in rows.iter().enumerate() {
-                rank::rrf_bump(&mut by_file, row.get(0), row.get(1), i);
+                let (id, fp): (i64, String) = (row.get(0), row.get(1));
+                rep_chunk.entry(fp.clone()).or_insert(id);
+                rank::rrf_bump(&mut by_file, fp, row.get(2), i);
             }
 
             // Keyword (Postgres FTS). Fail-soft — vector hits stand.
             if let Ok(rows) = sqlx::query(
-                "SELECT filepath, text FROM chunks \
+                "SELECT id, filepath, text FROM chunks \
                  WHERE to_tsvector('simple', text) @@ plainto_tsquery('simple', $1) \
                  AND ($3::text IS NULL OR starts_with(filepath, $3)) \
                  ORDER BY ts_rank(to_tsvector('simple', text), plainto_tsquery('simple', $1)) DESC \
@@ -296,7 +302,9 @@ impl SemanticIndex for PgVectorStore {
             .await
             {
                 for (i, row) in rows.iter().enumerate() {
-                    rank::rrf_bump(&mut by_file, row.get(0), row.get(1), i);
+                    let (id, fp): (i64, String) = (row.get(0), row.get(1));
+                    rep_chunk.entry(fp.clone()).or_insert(id);
+                    rank::rrf_bump(&mut by_file, fp, row.get(2), i);
                 }
             }
         }
@@ -318,7 +326,6 @@ impl SemanticIndex for PgVectorStore {
         let now = now_ms();
         if !paths.is_empty() {
             let mut conn = self.conn.lock().await;
-            let mut revalidated = false;
             if let Ok(srows) = sqlx::query(
                 "SELECT filepath, MAX(last_accessed_at), COALESCE(SUM(access_count), 0)::bigint \
                  FROM chunks WHERE filepath = ANY($1) GROUP BY filepath",
@@ -330,15 +337,35 @@ impl SemanticIndex for PgVectorStore {
                 for row in &srows {
                     stats.insert(row.get(0), (row.get(1), row.get(2)));
                 }
-                revalidated = true;
             }
-            // Revalidate: the lock was released for reranking, so a concurrent
-            // rename/remove/reindex may have invalidated a hit's path. The stats
-            // query above only returns paths that still have chunks; drop any hit
-            // whose path vanished instead of returning a ghost. Skip if the query
-            // errored (don't nuke results on a transient failure).
-            if revalidated {
-                hits.retain(|h| h.filepath.as_ref().is_some_and(|fp| stats.contains_key(fp)));
+            // Revalidate against CHUNK IDENTITY: the lock was released for
+            // reranking, so a concurrent rename/remove/reindex may have
+            // invalidated a hit. Keep a hit only if a chunk row still exists with
+            // the exact (id, filepath) we retrieved — drops ghosts from rename
+            // (filepath changed), remove (gone), AND same-path reindex (new ids).
+            // Skip on query error (don't nuke results on a transient failure).
+            let rep_ids: Vec<i64> = hits
+                .iter()
+                .filter_map(|h| h.filepath.as_ref().and_then(|fp| rep_chunk.get(fp).copied()))
+                .collect();
+            if !rep_ids.is_empty() {
+                if let Ok(rows) =
+                    sqlx::query("SELECT id, filepath FROM chunks WHERE id = ANY($1)")
+                        .bind(&rep_ids)
+                        .fetch_all(&mut *conn)
+                        .await
+                {
+                    let live: HashMap<i64, String> =
+                        rows.iter().map(|r| (r.get(0), r.get(1))).collect();
+                    hits.retain(|h| {
+                        h.filepath.as_ref().is_some_and(|fp| {
+                            rep_chunk
+                                .get(fp)
+                                .and_then(|id| live.get(id))
+                                .is_some_and(|cur| cur == fp)
+                        })
+                    });
+                }
             }
             if let Ok(erows) =
                 sqlx::query("SELECT from_path, to_path FROM edges WHERE from_path = ANY($1)")

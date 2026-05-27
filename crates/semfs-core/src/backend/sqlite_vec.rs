@@ -239,6 +239,10 @@ impl SemanticIndex for SqliteVecStore {
 
         // filepath -> (representative chunk, summed RRF score)
         let mut by_file: HashMap<String, (String, f64)> = HashMap::new();
+        // filepath -> the representative chunk's row id, captured at retrieval.
+        // Used in phase 2 to detect a concurrent same-path reindex (which assigns
+        // new ids), so we never return a snippet/score from pre-rewrite content.
+        let mut rep_chunk: HashMap<String, i64> = HashMap::new();
 
         let conn = self.db.conn.lock();
 
@@ -248,16 +252,17 @@ impl SemanticIndex for SqliteVecStore {
         {
             let k = if scope.is_some() { SCOPED_KNN_POOL } else { SEARCH_POOL };
             let mut stmt = conn.prepare(
-                "SELECT c.filepath, c.text FROM vchunks v \
+                "SELECT c.id, c.filepath, c.text FROM vchunks v \
                  JOIN chunks c ON c.id = v.rowid \
                  WHERE v.embedding MATCH ?1 AND k = ?2 \
                  AND (?3 IS NULL OR instr(c.filepath, ?3) = 1) ORDER BY distance",
             )?;
             let rows = stmt.query_map(rusqlite::params![qblob, k as i64, scope], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
             })?;
             for (rank, row) in rows.enumerate() {
-                let (fp, text) = row?;
+                let (id, fp, text) = row?;
+                rep_chunk.entry(fp.clone()).or_insert(id);
                 super::rank::rrf_bump(&mut by_file, fp, text, rank);
             }
         }
@@ -265,18 +270,19 @@ impl SemanticIndex for SqliteVecStore {
         // Keyword BM25 (fts5). Malformed queries fail soft — vector hits stand.
         if let Some(fq) = to_fts_query(query) {
             if let Ok(mut stmt) = conn.prepare(
-                "SELECT c.filepath, c.text FROM ffts \
+                "SELECT c.id, c.filepath, c.text FROM ffts \
                  JOIN chunks c ON c.id = ffts.rowid \
                  WHERE ffts MATCH ?1 AND (?3 IS NULL OR instr(c.filepath, ?3) = 1) \
                  ORDER BY rank LIMIT ?2",
             ) {
                 if let Ok(rows) =
                     stmt.query_map(rusqlite::params![fq, SEARCH_POOL as i64, scope], |r| {
-                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
                     })
                 {
                     for (rank, row) in rows.enumerate() {
-                        if let Ok((fp, text)) = row {
+                        if let Ok((id, fp, text)) = row {
+                            rep_chunk.entry(fp.clone()).or_insert(id);
                             super::rank::rrf_bump(&mut by_file, fp, text, rank);
                         }
                     }
@@ -298,23 +304,32 @@ impl SemanticIndex for SqliteVecStore {
             let now = now_ms();
             let conn = self.db.conn.lock();
 
-            // Revalidate: the lock was released for reranking, so a concurrent
-            // rename/remove/reindex may have invalidated a hit's path. Drop hits
-            // whose backing chunks no longer exist instead of returning ghosts.
-            let paths: Vec<String> = hits.iter().filter_map(|h| h.filepath.clone()).collect();
-            if !paths.is_empty() {
-                let placeholders = vec!["?"; paths.len()].join(",");
-                let sql =
-                    format!("SELECT DISTINCT filepath FROM chunks WHERE filepath IN ({placeholders})");
+            // Revalidate against CHUNK IDENTITY, not just path existence: the lock
+            // was released for reranking, so a concurrent rename/remove/reindex may
+            // have invalidated a hit. Keep a hit only if a chunk row still exists
+            // with the exact (id, filepath) we retrieved — this drops ghosts from
+            // rename (filepath changed), remove (gone), AND same-path reindex (the
+            // delete+insert assigns new ids). Skip on query error (don't nuke).
+            let rep_ids: Vec<i64> = hits
+                .iter()
+                .filter_map(|h| h.filepath.as_ref().and_then(|fp| rep_chunk.get(fp).copied()))
+                .collect();
+            if !rep_ids.is_empty() {
+                let placeholders = vec!["?"; rep_ids.len()].join(",");
+                let sql = format!("SELECT id, filepath FROM chunks WHERE id IN ({placeholders})");
                 if let Ok(mut stmt) = conn.prepare(&sql) {
                     if let Ok(rows) = stmt.query_map(
-                        rusqlite::params_from_iter(paths.iter()),
-                        |r| r.get::<_, String>(0),
+                        rusqlite::params_from_iter(rep_ids.iter()),
+                        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
                     ) {
-                        let existing: std::collections::HashSet<String> =
-                            rows.filter_map(|r| r.ok()).collect();
+                        let live: HashMap<i64, String> = rows.filter_map(|r| r.ok()).collect();
                         hits.retain(|h| {
-                            h.filepath.as_ref().is_some_and(|fp| existing.contains(fp))
+                            h.filepath.as_ref().is_some_and(|fp| {
+                                rep_chunk
+                                    .get(fp)
+                                    .and_then(|id| live.get(id))
+                                    .is_some_and(|cur| cur == fp)
+                            })
                         });
                     }
                 }
@@ -434,6 +449,50 @@ mod tests {
                 .as_deref()
                 .map_or(true, |p| p.starts_with("/scope/"))),
             "scoped search leaked out-of-scope files: {hits:?}"
+        );
+    }
+
+    /// Phase consistency: if a file is reindexed (new chunk ids) WHILE a search
+    /// is between retrieval and phase-2 revalidation, the stale pre-rewrite chunk
+    /// must not be returned. The reranker runs in exactly that window, so a
+    /// reranker that reindexes deterministically forces the race.
+    #[tokio::test]
+    async fn search_drops_chunk_reindexed_during_rerank() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        #[derive(Debug)]
+        struct ReindexingReranker {
+            db: Arc<Db>,
+            fired: AtomicBool,
+        }
+        impl Reranker for ReindexingReranker {
+            fn rerank(&self, _q: &str, docs: &[String]) -> anyhow::Result<Vec<f32>> {
+                // First call = the search under test. Reindex /a.md with new
+                // content (delete+insert ⇒ new chunk ids), as a concurrent writer
+                // would. The lock is released during rerank, so this succeeds.
+                if !self.fired.swap(true, Ordering::SeqCst) {
+                    let w =
+                        SqliteVecStore::open_existing(self.db.clone(), Arc::new(HashEmbedder::new(384)));
+                    w.index(2, "/a.md", "totally different replacement content zzz")
+                        .unwrap();
+                }
+                Ok(vec![1.0; docs.len()])
+            }
+        }
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+            .unwrap()
+            .with_reranker(Arc::new(ReindexingReranker {
+                db: db.clone(),
+                fired: AtomicBool::new(false),
+            }));
+        store.index(2, "/a.md", "original alpha content").unwrap();
+
+        let hits = store.search("alpha", None).await.unwrap();
+        assert!(
+            hits.iter().all(|h| h.chunk.as_deref() != Some("original alpha content")),
+            "returned a stale chunk that was reindexed mid-search: {hits:?}"
         );
     }
 
