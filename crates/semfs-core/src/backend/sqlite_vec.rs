@@ -40,18 +40,17 @@ impl SqliteVecStore {
     /// Build a store and ensure the vec0 tables exist at the embedder's width.
     pub fn new(db: Arc<Db>, embedder: Arc<dyn Embedder>) -> anyhow::Result<Self> {
         let identity = embedder.identity();
-        // A model swap at the SAME width leaves old vectors in place (their width
-        // is unchanged), so they'd be searched against the new query space. If the
-        // recorded identity differs, drop the stale vectors before re-stamping —
-        // the writer then re-embeds under the new identity. (A width change is
-        // already a different identity, and ensure_vector_tables handles the
-        // table rebuild.)
-        let prior = db.embed_identity();
         db.ensure_vector_tables(embedder.dimensions(), None)?;
-        if prior.as_deref().is_some_and(|p| p != identity) {
-            db.reset_text_index()?;
+        // Stamp the model identity on FIRST creation only. On a model swap we must
+        // NOT overwrite the stamp: leaving the old stamp makes `is_searchable()`
+        // see a mismatch and fall back to cloud, while the old vectors are
+        // preserved (non-destructive — reverting the model makes them valid
+        // again, and there is no automatic re-embed of unchanged files here, so
+        // wiping would cause a search blackout). Local search resumes under a new
+        // model only after a deliberate reindex re-stamps a fresh index.
+        if db.embed_identity().is_none() {
+            db.record_embed_identity(&identity)?;
         }
-        db.record_embed_identity(&identity)?;
         Ok(Self {
             db,
             embedder,

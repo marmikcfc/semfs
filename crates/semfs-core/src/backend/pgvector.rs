@@ -427,8 +427,15 @@ mod tests {
     use super::*;
     use crate::embed::HashEmbedder;
 
+    /// Serializes pglite server *startup*: parallel `temporary()` servers race
+    /// while first populating pglite-oxide's SHARED on-disk template/extension
+    /// cache (archive extraction isn't concurrency-safe). Only `start()` is
+    /// serialized — the independent servers then run their test bodies in parallel.
+    static PG_START_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Start a temporary embedded Postgres with pgvector enabled.
     fn pg() -> pglite_oxide::PgliteServer {
+        let _g = PG_START_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         pglite_oxide::PgliteServer::builder()
             .temporary()
             .tcp("127.0.0.1:0".parse().unwrap())

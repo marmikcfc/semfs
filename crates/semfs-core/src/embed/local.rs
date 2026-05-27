@@ -22,8 +22,11 @@ pub struct LocalEmbedder {
     // we guard the model behind a Mutex (embedding is sequential anyway).
     model: Mutex<TextEmbedding>,
     dims: usize,
-    /// Source model directory — its identity, so a reader can detect a model swap.
-    model_id: String,
+    /// Content-derived identity (basename + dims + a hash of the actual ONNX and
+    /// tokenizer bytes). A reader compares this to detect a model swap — including
+    /// in-place artifact replacement or symlink retargeting that keeps the same
+    /// directory name, which a path-only identity would miss.
+    identity: String,
 }
 
 impl LocalEmbedder {
@@ -38,25 +41,58 @@ impl LocalEmbedder {
         let special = std::fs::read(dir.join("special_tokens_map.json"))
             .unwrap_or_else(|_| DEFAULT_SPECIAL_TOKENS_MAP.as_bytes().to_vec());
 
+        let onnx = read("onnx/model.onnx")?;
+        let tokenizer = read("tokenizer.json")?;
+        let config = read("config.json")?;
+        let tokenizer_config = read("tokenizer_config.json")?;
+
+        // Fingerprint the actual artifacts so an in-place model swap (same dir
+        // name / retargeted symlink) is detected. Hash sizes + a sample of each
+        // file's bytes — cheap and stable, sufficient to distinguish models.
+        let basename = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| dir.to_string_lossy().into_owned());
+        let mut fp = FnvHasher::new();
+        for bytes in [&onnx, &tokenizer, &config, &tokenizer_config] {
+            fp.update(&(bytes.len() as u64).to_le_bytes());
+            fp.update(bytes);
+        }
+        let identity = format!("local:{basename}:{dims}:{:016x}", fp.finish());
+
         let tokenizer_files = TokenizerFiles {
-            tokenizer_file: read("tokenizer.json")?,
-            config_file: read("config.json")?,
+            tokenizer_file: tokenizer,
+            config_file: config,
             special_tokens_map_file: special,
-            tokenizer_config_file: read("tokenizer_config.json")?,
+            tokenizer_config_file: tokenizer_config,
         };
-        let model = UserDefinedEmbeddingModel::new(read("onnx/model.onnx")?, tokenizer_files)
-            .with_pooling(Pooling::Mean);
+        let model =
+            UserDefinedEmbeddingModel::new(onnx, tokenizer_files).with_pooling(Pooling::Mean);
         let model = TextEmbedding::try_new_from_user_defined(model, InitOptionsUserDefined::default())?;
         Ok(Self {
             model: Mutex::new(model),
             dims,
-            // The directory name identifies which model produced the vectors;
-            // more portable than the absolute path if the index moves machines.
-            model_id: dir
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| dir.to_string_lossy().into_owned()),
+            identity,
         })
+    }
+}
+
+/// FNV-1a over a byte stream — deterministic across runs and Rust versions, so
+/// the same model artifacts always fingerprint identically.
+struct FnvHasher(u64);
+
+impl FnvHasher {
+    fn new() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+    fn update(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 ^= *b as u64;
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    fn finish(&self) -> u64 {
+        self.0
     }
 }
 
@@ -74,7 +110,7 @@ impl Embedder for LocalEmbedder {
     }
 
     fn identity(&self) -> String {
-        format!("local:{}:{}", self.model_id, self.dims)
+        self.identity.clone()
     }
 
     fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
