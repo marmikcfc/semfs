@@ -581,3 +581,28 @@ cd crates && cargo build && cargo test
 **Mental model:** `bash/src/backends/sqlite-vec.ts` is the spec. Porting it into the Rust cache turns
 the FUSE mount from "POSIX-offline + search-online" into a fully local, offline semantic filesystem —
 closing the Rust FR3/FR5 gaps. That is the single highest-leverage next move.
+
+---
+
+## 9. Changing the embedding model on an existing index (operational note)
+
+The local index records the embedder **identity** (model + dims; for local models a
+content fingerprint of the ONNX/tokenizer bytes — `Embedder::identity()`). Both backends
+**fail closed** when the current embedder doesn't match the index's recorded identity, so a
+model swap can **never silently corrupt search**:
+
+- **SQLite** (`grep` reader): `SqliteVecStore::is_searchable()` returns false on an
+  identity mismatch (or an empty index) → `grep` falls back to cloud search.
+- **Postgres**: `PgVectorStore::connect()` errors on an identity mismatch (parity with the
+  existing dimension-drift check).
+
+**To switch embedding models, start with a fresh index** (delete the cache DB / remount):
+a fresh index has no identity stamp, so it adopts the new model cleanly. The old vectors are
+never mutated or deleted in place — reverting to the prior model makes the existing index
+searchable again.
+
+**Deferred (by decision):** there is intentionally **no automatic backfill** that re-embeds
+already-indexed files when the model changes. That would be a daemon feature (walk + re-embed
++ restamp, with blocking-vs-background / progress / trigger semantics) and is out of scope for
+the backend-agnostic-store work. Until it exists, local search under a *changed* model on a
+*reused* index is unavailable (degrades to cloud) until a fresh reindex — by design, safe.
