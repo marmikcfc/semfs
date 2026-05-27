@@ -137,6 +137,36 @@ impl PgVectorStore {
             }
         }
 
+        // Embedder-identity guard (parity with the SQLite backend): a same-WIDTH
+        // model swap would otherwise silently search old vectors against the new
+        // query space. Stamp the identity on first creation; fail closed if a
+        // reopen presents a different model — recovery is a fresh index.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        )
+        .execute(&mut conn)
+        .await?;
+        let identity = embedder.identity();
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT value FROM index_meta WHERE key = 'text_embed_model'")
+                .fetch_optional(&mut conn)
+                .await?;
+        match stored {
+            None => {
+                sqlx::query(
+                    "INSERT INTO index_meta (key, value) VALUES ('text_embed_model', $1)",
+                )
+                .bind(&identity)
+                .execute(&mut conn)
+                .await?;
+            }
+            Some(s) if s != identity => anyhow::bail!(
+                "existing index was built with embedder '{s}' but the current embedder is \
+                 '{identity}'; rebuild the index or use a matching model"
+            ),
+            Some(_) => {}
+        }
+
         Ok(Self {
             conn: Mutex::new(conn),
             embedder,
@@ -570,6 +600,47 @@ mod tests {
         assert!(
             mismatched.is_err(),
             "connect must reject a 256-d embedder against an existing vector(384) table"
+        );
+
+        let _ = server.shutdown();
+    }
+
+    /// Reusing a database with a SAME-width but DIFFERENT model fails fast at
+    /// connect (identity guard), rather than silently searching stale vectors.
+    #[tokio::test]
+    async fn pg_connect_rejects_model_swap() {
+        #[derive(Debug)]
+        struct TaggedEmbedder {
+            dims: usize,
+            id: String,
+        }
+        impl crate::embed::Embedder for TaggedEmbedder {
+            fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
+                Ok(texts.iter().map(|_| vec![0.0; self.dims]).collect())
+            }
+            fn dimensions(&self) -> usize {
+                self.dims
+            }
+            fn identity(&self) -> String {
+                self.id.clone()
+            }
+        }
+
+        let server = pg();
+        let first = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+            .await
+            .expect("first connect stamps identity hash:384");
+        drop(first);
+
+        // Same width (384), different identity → must be refused.
+        let swapped = PgVectorStore::connect(
+            &server.database_url(),
+            Arc::new(TaggedEmbedder { dims: 384, id: "other-model:384".into() }),
+        )
+        .await;
+        assert!(
+            swapped.is_err(),
+            "connect must reject a same-width but different-model embedder"
         );
 
         let _ = server.shutdown();
