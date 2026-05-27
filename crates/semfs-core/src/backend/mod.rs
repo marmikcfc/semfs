@@ -5,6 +5,7 @@
 pub(crate) mod cloud;
 pub mod chunk;
 pub mod graph;
+pub mod rank;
 pub mod sqlite_vec;
 pub use cloud::CloudIndex;
 pub use sqlite_vec::SqliteVecStore;

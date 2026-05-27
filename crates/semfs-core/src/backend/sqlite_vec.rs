@@ -15,8 +15,6 @@ use crate::cache::Db;
 use crate::embed::Embedder;
 use crate::rerank::Reranker;
 
-/// RRF constant. score contribution per ranked list = 1 / (RRF_K + rank).
-const RRF_K: f64 = 60.0;
 /// Over-fetch per ranked list before collapsing chunks → files.
 const SEARCH_POOL: usize = 80;
 
@@ -232,7 +230,7 @@ impl SemanticIndex for SqliteVecStore {
             })?;
             for (rank, row) in rows.enumerate() {
                 let (fp, text) = row?;
-                rrf_bump(&mut by_file, fp, text, rank);
+                super::rank::rrf_bump(&mut by_file, fp, text, rank);
             }
         }
 
@@ -248,7 +246,7 @@ impl SemanticIndex for SqliteVecStore {
                 }) {
                     for (rank, row) in rows.enumerate() {
                         if let Ok((fp, text)) = row {
-                            rrf_bump(&mut by_file, fp, text, rank);
+                            super::rank::rrf_bump(&mut by_file, fp, text, rank);
                         }
                     }
                 }
@@ -256,102 +254,37 @@ impl SemanticIndex for SqliteVecStore {
         }
         drop(conn);
 
-        let mut hits: Vec<SearchHit> = by_file
-            .into_iter()
-            .filter(|(fp, _)| filepath.map_or(true, |pref| fp.starts_with(pref)))
-            .map(|(fp, (chunk, score))| SearchHit {
-                filepath: Some(fp),
-                memory: None,
-                chunk: Some(chunk),
-                similarity: score,
-            })
-            .collect();
-        hits.sort_by(|a, b| {
-            b.similarity
-                .partial_cmp(&a.similarity)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let mut hits = super::rank::to_hits(by_file, filepath);
 
-        // L5: rerank the candidates (already collapsed to files, so a modest set)
-        // by their representative chunk text, then re-sort by the reranker score.
-        // For very large candidate sets a top-N cap should precede this call.
+        // L5 rerank: replace RRF scores with cross-encoder scores, then re-sort.
         if let Some(reranker) = &self.reranker {
-            if !hits.is_empty() {
-                let docs: Vec<String> = hits
-                    .iter()
-                    .map(|h| {
-                        h.chunk
-                            .clone()
-                            .or_else(|| h.filepath.clone())
-                            .unwrap_or_default()
-                    })
-                    .collect();
-                let scores = reranker.rerank(query, &docs)?;
-                for (h, s) in hits.iter_mut().zip(scores) {
-                    h.similarity = s as f64;
-                }
-                hits.sort_by(|a, b| {
-                    b.similarity
-                        .partial_cmp(&a.similarity)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-            }
+            super::rank::apply_reranker(&mut hits, reranker.as_ref(), query)?;
         }
 
-        // L6 salience: multiply each hit by its recency/access nudge, computed
-        // from the STORED stats (before bumping), so a recently-written or
-        // more-used file wins ties. Then bump the returned files' stats.
+        // L7 co-mention boost + L6 salience (computed from STORED stats, before
+        // bumping, so a recent/used file wins ties), then bump access — one lock.
         {
             let now = now_ms();
             let conn = self.db.conn.lock();
-
-            // L7 graph boost (co-mention): a hit file that SHARES an extracted
-            // entity with another hit file gets a small nudge — files about the
-            // same things are mutually relevant. Fail-soft.
-            use std::collections::{HashMap, HashSet};
-            let hitpaths: Vec<String> = hits.iter().filter_map(|h| h.filepath.clone()).collect();
-            let mut entities_of: HashMap<String, HashSet<String>> = HashMap::new();
-            for fp in &hitpaths {
-                let set = conn
-                    .prepare("SELECT to_path FROM edges WHERE from_path = ?1")
+            super::rank::apply_comention_boost(&mut hits, |fp| {
+                conn.prepare("SELECT to_path FROM edges WHERE from_path = ?1")
                     .and_then(|mut stmt| {
                         stmt.query_map([fp], |r| r.get::<_, String>(0)).map(|rows| {
-                            rows.filter_map(|r| r.ok()).collect::<HashSet<String>>()
+                            rows.filter_map(|r| r.ok())
+                                .collect::<std::collections::HashSet<String>>()
                         })
                     })
-                    .unwrap_or_default();
-                entities_of.insert(fp.clone(), set);
-            }
-            for h in hits.iter_mut() {
-                if let Some(fp) = &h.filepath {
-                    if let Some(mine) = entities_of.get(fp) {
-                        let shares = !mine.is_empty()
-                            && hitpaths.iter().any(|other| {
-                                other != fp
-                                    && entities_of
-                                        .get(other)
-                                        .is_some_and(|o| !o.is_disjoint(mine))
-                            });
-                        if shares {
-                            h.similarity *= 1.05;
-                        }
-                    }
-                }
-            }
-
-            for h in hits.iter_mut() {
-                if let Some(fp) = &h.filepath {
-                    let (last, count): (Option<i64>, i64) = conn
-                        .query_row(
-                            "SELECT MAX(last_accessed_at), COALESCE(SUM(access_count), 0) \
-                             FROM chunks WHERE filepath = ?1",
-                            [fp],
-                            |r| Ok((r.get(0)?, r.get(1)?)),
-                        )
-                        .unwrap_or((None, 0));
-                    h.similarity *= salience(now, last, count);
-                }
-            }
+                    .unwrap_or_default()
+            });
+            super::rank::apply_salience(&mut hits, now, |fp| {
+                conn.query_row(
+                    "SELECT MAX(last_accessed_at), COALESCE(SUM(access_count), 0) \
+                     FROM chunks WHERE filepath = ?1",
+                    [fp],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap_or((None, 0))
+            });
             for h in hits.iter() {
                 if let Some(fp) = &h.filepath {
                     let _ = conn.execute(
@@ -362,17 +295,10 @@ impl SemanticIndex for SqliteVecStore {
                 }
             }
         }
-        hits.sort_by(|a, b| {
-            b.similarity
-                .partial_cmp(&a.similarity)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        super::rank::sort_desc(&mut hits);
         Ok(hits)
     }
 }
-
-/// Salience half-life: a file's recency weight halves every this-many days.
-const SALIENCE_HALF_LIFE_DAYS: f64 = 14.0;
 
 /// Epoch milliseconds now.
 fn now_ms() -> i64 {
@@ -381,30 +307,6 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
-}
-
-/// L6 salience multiplier — recency (exponential decay) + log-damped access.
-/// Bounded to a narrow band around 1.0 so it **nudges** ranking, never dominates
-/// the semantic/rerank score: fresher or more-used files win ties and close calls.
-fn salience(now_ms: i64, last_accessed_ms: Option<i64>, access_count: i64) -> f64 {
-    let recency = match last_accessed_ms {
-        Some(t) => {
-            let age_days = ((now_ms - t).max(0) as f64) / 86_400_000.0;
-            0.5f64.powf(age_days / SALIENCE_HALF_LIFE_DAYS) // 1.0 fresh → 0.5 at half-life
-        }
-        None => 0.5, // unknown → neutral
-    };
-    let access = (1.0 + access_count.max(0) as f64).ln(); // 0, 0.69, 1.10, …
-    1.0 + 0.2 * (recency - 0.5) + 0.05 * access
-}
-
-/// Reciprocal Rank Fusion: add `1/(RRF_K + rank)` for a file, keeping the first
-/// (strongest) chunk text seen as its representative.
-fn rrf_bump(acc: &mut HashMap<String, (String, f64)>, fp: String, chunk: String, rank: usize) {
-    let s = 1.0 / (RRF_K + rank as f64);
-    acc.entry(fp)
-        .and_modify(|e| e.1 += s)
-        .or_insert((chunk, s));
 }
 
 /// Build a safe fts5 MATCH expression: quoted, OR-joined alphanumeric tokens.
@@ -468,21 +370,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1, "re-index must replace, not accumulate, chunks");
-    }
-
-    #[test]
-    fn salience_rewards_recency_and_access_but_stays_bounded() {
-        let now = 1_000_000_000_000i64;
-        let day = 86_400_000i64;
-        // recency: a file touched today beats one touched 60 days ago.
-        assert!(salience(now, Some(now), 0) > salience(now, Some(now - 60 * day), 0));
-        // access: more-used beats unused at equal recency.
-        assert!(salience(now, Some(now), 25) > salience(now, Some(now), 0));
-        // bounded: always a nudge, never a takeover.
-        for (last, acc) in [(Some(now), 0i64), (Some(now - 365 * day), 0), (Some(now), 1000), (None, 0)] {
-            let s = salience(now, last, acc);
-            assert!(s > 0.85 && s < 1.5, "salience {s} escaped the nudge band");
-        }
     }
 
     /// L7 edge lifecycle (LLM extraction itself is gated/tested in `graph.rs`):
