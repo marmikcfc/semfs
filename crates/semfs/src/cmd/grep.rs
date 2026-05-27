@@ -15,12 +15,17 @@ use std::sync::Arc;
 /// matching embedder (`local_indexing_enabled` — same resolver the daemon used).
 /// Otherwise falls back to the cloud (`CloudIndex`). No `validate_key`, so a
 /// local search needs neither credentials nor connectivity.
+///
+/// Returns `(index, used_local)`. `used_local` lets the caller retry through the
+/// cloud if a local query fails at runtime (e.g. a cloud-backed query embedder
+/// hits a provider outage) — a degraded-dependency state that should fall back,
+/// not abort the command.
 fn resolve_index(
     db_path: Option<&str>,
     api_url: &str,
     key: Option<&str>,
     tag: &str,
-) -> Result<Arc<dyn SemanticIndex>> {
+) -> Result<(Arc<dyn SemanticIndex>, bool)> {
     let env = super::resolve::ResolveEnv::from_env();
     if super::resolve::local_indexing_enabled(&env) {
         if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
@@ -28,7 +33,7 @@ fn resolve_index(
             // fall back to cloud, not abort grep — so local init errors are
             // logged and we continue rather than `?`-propagating.
             match build_local_store(&env, p) {
-                Ok(Some(store)) => return Ok(Arc::new(store)),
+                Ok(Some(store)) => return Ok((Arc::new(store), true)),
                 Ok(None) => tracing::warn!(
                     "local index at {p} is missing or model-incompatible; \
                      falling back to cloud search"
@@ -40,6 +45,11 @@ fn resolve_index(
         }
     }
     // Cloud fallback (Supermemory) — requires a key.
+    Ok((Arc::new(cloud_index(api_url, key, tag)?), false))
+}
+
+/// Build the Supermemory-backed cloud search index. Requires an API key.
+fn cloud_index(api_url: &str, key: Option<&str>, tag: &str) -> Result<CloudIndex> {
     let key = key.ok_or_else(|| {
         anyhow::anyhow!(
             "no local index for this container and no API key for cloud search \
@@ -47,7 +57,7 @@ fn resolve_index(
         )
     })?;
     let api = Arc::new(semfs_core::api::ApiClient::new(api_url, key, tag));
-    Ok(Arc::new(CloudIndex::new(api)))
+    Ok(CloudIndex::new(api))
 }
 
 /// Build the local SQLite store for `grep`, or `Ok(None)` if the on-disk index
@@ -320,7 +330,7 @@ pub async fn run(args: Args) -> Result<()> {
         .and_then(|m| m.db_path.as_deref())
         .or_else(|| path_marker.as_ref().and_then(|m| m.db_path.as_deref()));
 
-    let index = resolve_index(db_path, &api_url, key.as_deref(), &tag)?;
+    let (index, used_local) = resolve_index(db_path, &api_url, key.as_deref(), &tag)?;
 
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
@@ -392,7 +402,19 @@ pub async fn run(args: Args) -> Result<()> {
         args.query.clone()
     };
 
-    let hits = index.search(&effective_query, filepath.as_deref()).await?;
+    // If the local backend fails at query time (e.g. a cloud-backed query
+    // embedder hits a provider outage or revoked key), degrade to cloud search
+    // when a key is available rather than aborting the command.
+    let hits = match index.search(&effective_query, filepath.as_deref()).await {
+        Ok(hits) => hits,
+        Err(e) if used_local && key.is_some() => {
+            tracing::warn!("local search failed ({e}); falling back to cloud search");
+            cloud_index(&api_url, key.as_deref(), &tag)?
+                .search(&effective_query, filepath.as_deref())
+                .await?
+        }
+        Err(e) => return Err(e),
+    };
 
     if hits.is_empty() {
         eprintln!(

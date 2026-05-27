@@ -39,10 +39,19 @@ pub struct SqliteVecStore {
 impl SqliteVecStore {
     /// Build a store and ensure the vec0 tables exist at the embedder's width.
     pub fn new(db: Arc<Db>, embedder: Arc<dyn Embedder>) -> anyhow::Result<Self> {
+        let identity = embedder.identity();
+        // A model swap at the SAME width leaves old vectors in place (their width
+        // is unchanged), so they'd be searched against the new query space. If the
+        // recorded identity differs, drop the stale vectors before re-stamping —
+        // the writer then re-embeds under the new identity. (A width change is
+        // already a different identity, and ensure_vector_tables handles the
+        // table rebuild.)
+        let prior = db.embed_identity();
         db.ensure_vector_tables(embedder.dimensions(), None)?;
-        // Stamp the model identity so a reader can detect a model swap at the
-        // same width (which would silently corrupt relevance).
-        db.record_embed_identity(&embedder.identity())?;
+        if prior.as_deref().is_some_and(|p| p != identity) {
+            db.reset_text_index()?;
+        }
+        db.record_embed_identity(&identity)?;
         Ok(Self {
             db,
             embedder,
@@ -76,18 +85,24 @@ impl SqliteVecStore {
     /// a same-width but different model produces an incompatible vector space, so
     /// dimension agreement alone is not enough. A missing stamp (an index this
     /// code never wrote) is treated as incompatible.
+    ///
+    /// Finally requires the index to be NON-EMPTY: a freshly-created or just-reset
+    /// (post model-swap) index has no vectors yet, so searching it would return
+    /// nothing while the cloud may have results — fall back until reindex repopulates.
     pub fn is_searchable(&self) -> bool {
         if self.db.embed_identity().as_deref() != Some(self.embedder.identity().as_str()) {
             return false;
         }
         let probe = vec_to_blob(&vec![0.0f32; self.embedder.dimensions()]);
         let conn = self.db.conn.lock();
+        // One vec0 MATCH: errors on a missing table or width mismatch, and yields
+        // ≥1 row only when the index actually holds vectors.
         conn.prepare("SELECT rowid FROM vchunks WHERE embedding MATCH ?1 AND k = 1")
             .and_then(|mut stmt| {
-                stmt.query_map(rusqlite::params![probe], |_| Ok(()))?
-                    .try_for_each(|r| r.map(|_| ()))
+                let mut rows = stmt.query(rusqlite::params![probe])?;
+                Ok(rows.next()?.is_some())
             })
-            .is_ok()
+            .unwrap_or(false)
     }
 
     /// Attach an L5 reranker. Search reranks the post-RRF candidates by their

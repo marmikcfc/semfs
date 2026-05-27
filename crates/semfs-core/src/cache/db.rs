@@ -239,6 +239,17 @@ impl Db {
         Ok(())
     }
 
+    /// Clear all local text-index state (chunks + their vec0/fts rows + edges).
+    /// Used when the embedder identity changes at the same vector width: the old
+    /// vectors are from a different model/space and must not be searched, so we
+    /// drop them and let the writer re-embed under the new identity.
+    pub(crate) fn reset_text_index(&self) -> anyhow::Result<()> {
+        self.conn.lock().execute_batch(
+            "DELETE FROM vchunks; DELETE FROM ffts; DELETE FROM chunks; DELETE FROM edges;",
+        )?;
+        Ok(())
+    }
+
     /// The embedder identity recorded by the writer, if any.
     pub(crate) fn embed_identity(&self) -> Option<String> {
         self.conn
