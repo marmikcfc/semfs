@@ -237,15 +237,14 @@ impl PgVectorStore {
         }
         let mut conn = self.conn.lock().await;
         let mut tx = conn.begin().await?;
-        // Lock both endpoints, in a stable order, so two opposite renames can't
-        // deadlock and a concurrent reindex of either path is serialized.
+        // Lock both endpoints in a stable order so two opposite renames (A→B and
+        // B→A) can't deadlock, and a concurrent reindex of either path is
+        // serialized. Acquired in SEPARATE sequential statements: Postgres does
+        // not define evaluation order within one statement's target list, so
+        // combining both calls in a single SELECT would NOT guarantee lo-then-hi.
         let (lo, hi) = if old <= new { (old, new) } else { (new, old) };
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint), \
-                     pg_advisory_xact_lock(hashtext($2)::bigint)")
-            .bind(lo)
-            .bind(hi)
-            .execute(&mut *tx)
-            .await?;
+        lock_path(&mut tx, lo).await?;
+        lock_path(&mut tx, hi).await?;
         sqlx::query("DELETE FROM chunks WHERE filepath = $1")
             .bind(new)
             .execute(&mut *tx)
