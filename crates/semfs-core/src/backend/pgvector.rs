@@ -39,6 +39,19 @@ pub(crate) fn vec_literal(v: &[f32]) -> String {
     s
 }
 
+/// Take a transaction-scoped advisory lock keyed by `filepath`, released on
+/// commit/rollback. Serializes same-file writers across connections/processes.
+async fn lock_path(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    filepath: &str,
+) -> anyhow::Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)")
+        .bind(filepath)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -156,6 +169,12 @@ impl PgVectorStore {
         let now = now_ms();
         let mut conn = self.conn.lock().await;
         let mut tx = conn.begin().await?;
+        // Serialize same-file writers ACROSS connections/processes (the in-process
+        // Mutex only covers this store). A transaction-scoped advisory lock keyed
+        // by the path makes the delete+insert "replace by path" atomic against a
+        // concurrent reindex/remove/rename — otherwise two writers on different
+        // MVCC snapshots could both commit and leave duplicate/mixed chunks.
+        lock_path(&mut tx, filepath).await?;
         sqlx::query("DELETE FROM chunks WHERE filepath = $1")
             .bind(filepath)
             .execute(&mut *tx)
@@ -197,6 +216,7 @@ impl PgVectorStore {
     pub async fn remove(&self, filepath: &str) -> anyhow::Result<()> {
         let mut conn = self.conn.lock().await;
         let mut tx = conn.begin().await?;
+        lock_path(&mut tx, filepath).await?;
         sqlx::query("DELETE FROM chunks WHERE filepath = $1")
             .bind(filepath)
             .execute(&mut *tx)
@@ -217,6 +237,15 @@ impl PgVectorStore {
         }
         let mut conn = self.conn.lock().await;
         let mut tx = conn.begin().await?;
+        // Lock both endpoints, in a stable order, so two opposite renames can't
+        // deadlock and a concurrent reindex of either path is serialized.
+        let (lo, hi) = if old <= new { (old, new) } else { (new, old) };
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint), \
+                     pg_advisory_xact_lock(hashtext($2)::bigint)")
+            .bind(lo)
+            .bind(hi)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM chunks WHERE filepath = $1")
             .bind(new)
             .execute(&mut *tx)
