@@ -233,7 +233,9 @@ impl SemanticIndex for SqliteVecStore {
         // Scope predicate pushed into each lane so a `/prefix/` query can't be
         // crowded out of the candidate pool by out-of-scope files (a false-
         // negative bug if filtered only after the global LIMIT). `None` = no scope.
-        let glob = filepath.map(|p| format!("{p}*"));
+        // Uses `instr(filepath, prefix) = 1` for a LITERAL prefix match — GLOB
+        // would treat `*`, `?`, `[` in real paths as wildcards and over-match.
+        let scope = filepath.map(|p| p.to_string());
 
         // filepath -> (representative chunk, summed RRF score)
         let mut by_file: HashMap<String, (String, f64)> = HashMap::new();
@@ -241,17 +243,17 @@ impl SemanticIndex for SqliteVecStore {
         let conn = self.db.conn.lock();
 
         // Vector KNN (vec0). vec0 only post-filters the global k-nearest on
-        // joined columns, so when scoped we raise k and GLOB-filter rather than
+        // joined columns, so when scoped we raise k and prefix-filter rather than
         // letting out-of-scope files consume the pool.
         {
-            let k = if glob.is_some() { SCOPED_KNN_POOL } else { SEARCH_POOL };
+            let k = if scope.is_some() { SCOPED_KNN_POOL } else { SEARCH_POOL };
             let mut stmt = conn.prepare(
                 "SELECT c.filepath, c.text FROM vchunks v \
                  JOIN chunks c ON c.id = v.rowid \
                  WHERE v.embedding MATCH ?1 AND k = ?2 \
-                 AND (?3 IS NULL OR c.filepath GLOB ?3) ORDER BY distance",
+                 AND (?3 IS NULL OR instr(c.filepath, ?3) = 1) ORDER BY distance",
             )?;
-            let rows = stmt.query_map(rusqlite::params![qblob, k as i64, glob], |r| {
+            let rows = stmt.query_map(rusqlite::params![qblob, k as i64, scope], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })?;
             for (rank, row) in rows.enumerate() {
@@ -265,11 +267,11 @@ impl SemanticIndex for SqliteVecStore {
             if let Ok(mut stmt) = conn.prepare(
                 "SELECT c.filepath, c.text FROM ffts \
                  JOIN chunks c ON c.id = ffts.rowid \
-                 WHERE ffts MATCH ?1 AND (?3 IS NULL OR c.filepath GLOB ?3) \
+                 WHERE ffts MATCH ?1 AND (?3 IS NULL OR instr(c.filepath, ?3) = 1) \
                  ORDER BY rank LIMIT ?2",
             ) {
                 if let Ok(rows) =
-                    stmt.query_map(rusqlite::params![fq, SEARCH_POOL as i64, glob], |r| {
+                    stmt.query_map(rusqlite::params![fq, SEARCH_POOL as i64, scope], |r| {
                         Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
                     })
                 {
@@ -295,6 +297,29 @@ impl SemanticIndex for SqliteVecStore {
         {
             let now = now_ms();
             let conn = self.db.conn.lock();
+
+            // Revalidate: the lock was released for reranking, so a concurrent
+            // rename/remove/reindex may have invalidated a hit's path. Drop hits
+            // whose backing chunks no longer exist instead of returning ghosts.
+            let paths: Vec<String> = hits.iter().filter_map(|h| h.filepath.clone()).collect();
+            if !paths.is_empty() {
+                let placeholders = vec!["?"; paths.len()].join(",");
+                let sql =
+                    format!("SELECT DISTINCT filepath FROM chunks WHERE filepath IN ({placeholders})");
+                if let Ok(mut stmt) = conn.prepare(&sql) {
+                    if let Ok(rows) = stmt.query_map(
+                        rusqlite::params_from_iter(paths.iter()),
+                        |r| r.get::<_, String>(0),
+                    ) {
+                        let existing: std::collections::HashSet<String> =
+                            rows.filter_map(|r| r.ok()).collect();
+                        hits.retain(|h| {
+                            h.filepath.as_ref().is_some_and(|fp| existing.contains(fp))
+                        });
+                    }
+                }
+            }
+
             super::rank::apply_comention_boost(&mut hits, |fp| {
                 conn.prepare("SELECT to_path FROM edges WHERE from_path = ?1")
                     .and_then(|mut stmt| {
@@ -409,6 +434,26 @@ mod tests {
                 .as_deref()
                 .map_or(true, |p| p.starts_with("/scope/"))),
             "scoped search leaked out-of-scope files: {hits:?}"
+        );
+    }
+
+    /// Scope prefixes containing GLOB metacharacters (`*`, `?`, `[`) must match
+    /// literally — not as wildcards that over-match unrelated paths.
+    #[tokio::test]
+    async fn scoped_search_treats_glob_metachars_literally() {
+        let s = store();
+        s.index(2, "/x/[a]/f.md", "alpha shared keyword").unwrap();
+        // `/x/a.md` matches the GLOB pattern `/x/[a]*` but not the literal prefix.
+        s.index(3, "/x/a.md", "alpha shared keyword").unwrap();
+
+        let hits = s.search("alpha shared keyword", Some("/x/[a]/")).await.unwrap();
+        assert!(
+            hits.iter().any(|h| h.filepath.as_deref() == Some("/x/[a]/f.md")),
+            "literal in-scope file missing: {hits:?}"
+        );
+        assert!(
+            hits.iter().all(|h| h.filepath.as_deref() != Some("/x/a.md")),
+            "GLOB metachar prefix over-matched a sibling: {hits:?}"
         );
     }
 

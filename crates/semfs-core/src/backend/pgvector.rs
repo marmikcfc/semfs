@@ -256,7 +256,9 @@ impl SemanticIndex for PgVectorStore {
         // Scope predicate pushed into each retrieval lane so a `/prefix/` query
         // can't be crowded out of the global top-K by out-of-scope files (a
         // false-negative bug if filtered only after `LIMIT`). NULL = unscoped.
-        let like = filepath.map(|p| format!("{p}%"));
+        // Uses `starts_with` for a LITERAL prefix match — `LIKE` would treat `%`
+        // and `_` in real paths as wildcards and over-match.
+        let scope = filepath.map(|p| p.to_string());
 
         let mut by_file: HashMap<String, (String, f64)> = HashMap::new();
 
@@ -267,11 +269,11 @@ impl SemanticIndex for PgVectorStore {
             // Vector KNN (cosine distance operator).
             let rows = sqlx::query(
                 "SELECT filepath, text FROM chunks \
-                 WHERE ($2::text IS NULL OR filepath LIKE $2) \
+                 WHERE ($2::text IS NULL OR starts_with(filepath, $2)) \
                  ORDER BY embedding <=> $1::vector LIMIT $3",
             )
             .bind(&qlit)
-            .bind(&like)
+            .bind(&scope)
             .bind(SEARCH_POOL)
             .fetch_all(&mut *conn)
             .await?;
@@ -283,13 +285,13 @@ impl SemanticIndex for PgVectorStore {
             if let Ok(rows) = sqlx::query(
                 "SELECT filepath, text FROM chunks \
                  WHERE to_tsvector('simple', text) @@ plainto_tsquery('simple', $1) \
-                 AND ($3::text IS NULL OR filepath LIKE $3) \
+                 AND ($3::text IS NULL OR starts_with(filepath, $3)) \
                  ORDER BY ts_rank(to_tsvector('simple', text), plainto_tsquery('simple', $1)) DESC \
                  LIMIT $2",
             )
             .bind(query)
             .bind(SEARCH_POOL)
-            .bind(&like)
+            .bind(&scope)
             .fetch_all(&mut *conn)
             .await
             {
@@ -316,6 +318,7 @@ impl SemanticIndex for PgVectorStore {
         let now = now_ms();
         if !paths.is_empty() {
             let mut conn = self.conn.lock().await;
+            let mut revalidated = false;
             if let Ok(srows) = sqlx::query(
                 "SELECT filepath, MAX(last_accessed_at), COALESCE(SUM(access_count), 0)::bigint \
                  FROM chunks WHERE filepath = ANY($1) GROUP BY filepath",
@@ -327,6 +330,15 @@ impl SemanticIndex for PgVectorStore {
                 for row in &srows {
                     stats.insert(row.get(0), (row.get(1), row.get(2)));
                 }
+                revalidated = true;
+            }
+            // Revalidate: the lock was released for reranking, so a concurrent
+            // rename/remove/reindex may have invalidated a hit's path. The stats
+            // query above only returns paths that still have chunks; drop any hit
+            // whose path vanished instead of returning a ghost. Skip if the query
+            // errored (don't nuke results on a transient failure).
+            if revalidated {
+                hits.retain(|h| h.filepath.as_ref().is_some_and(|fp| stats.contains_key(fp)));
             }
             if let Ok(erows) =
                 sqlx::query("SELECT from_path, to_path FROM edges WHERE from_path = ANY($1)")
@@ -439,6 +451,41 @@ mod tests {
                 .as_deref()
                 .map_or(true, |p| p.starts_with("/scope/"))),
             "scoped search leaked out-of-scope files"
+        );
+
+        drop(store);
+        let _ = server.shutdown();
+    }
+
+    /// Scope prefixes containing LIKE wildcards (`%`, `_`) must match literally,
+    /// not as wildcards that over-match unrelated paths.
+    #[tokio::test]
+    async fn pg_scoped_search_treats_like_wildcards_literally() {
+        let server = pg();
+        let store = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+            .await
+            .expect("connect");
+        store
+            .index(2, "/r/100%/f.md", "alpha shared keyword")
+            .await
+            .unwrap();
+        // `/r/100x/y.md` matches the LIKE pattern `/r/100%/%` but not the literal prefix.
+        store
+            .index(3, "/r/100x/y.md", "alpha shared keyword")
+            .await
+            .unwrap();
+
+        let hits = store
+            .search("alpha shared keyword", Some("/r/100%/"))
+            .await
+            .unwrap();
+        assert!(
+            hits.iter().any(|h| h.filepath.as_deref() == Some("/r/100%/f.md")),
+            "literal in-scope file missing"
+        );
+        assert!(
+            hits.iter().all(|h| h.filepath.as_deref() != Some("/r/100x/y.md")),
+            "LIKE wildcard prefix over-matched a sibling"
         );
 
         drop(store);
