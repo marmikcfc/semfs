@@ -5,6 +5,8 @@
 pub(crate) mod cloud;
 pub mod chunk;
 pub mod graph;
+#[cfg(feature = "pg-local")]
+pub mod pgvector;
 pub mod rank;
 pub mod sqlite_vec;
 pub use cloud::CloudIndex;
