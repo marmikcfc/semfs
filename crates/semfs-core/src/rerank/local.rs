@@ -14,7 +14,7 @@ use fastembed::{
     OnnxSource, RerankInitOptionsUserDefined, RerankerModel, TextRerank, TokenizerFiles,
     UserDefinedRerankingModel,
 };
-use hf_hub::{api::sync::ApiBuilder, Cache};
+use hf_hub::{api::sync::ApiBuilder, Cache, Repo, RepoType};
 
 use super::Reranker;
 
@@ -26,13 +26,17 @@ pub struct LocalReranker {
 
 impl LocalReranker {
     /// Load a SPECIFIC ONNX variant of a fastembed registry reranker (e.g.
-    /// `onnx/model_int8.onnx`). The variant + tokenizer files are fetched from the
-    /// model's HF repo via hf-hub (cached under fastembed's cache dir) and loaded
-    /// through the user-defined path — this is how we use the int8 build, since
-    /// the registry's own loader is pinned to the full-precision `onnx/model.onnx`.
+    /// `onnx/model_int8.onnx`) at a PINNED `revision` (commit SHA). The variant +
+    /// tokenizer files are fetched from the model's HF repo via hf-hub (cached
+    /// under fastembed's cache dir) and loaded through the user-defined path —
+    /// this is how we use the int8 build, since the registry's own loader is
+    /// pinned to the full-precision `onnx/model.onnx`. Pinning the revision keeps
+    /// the assets reproducible across builds/machines (an HF HEAD update can't
+    /// silently swap the model or its tokenizer underneath us).
     pub fn from_registry_onnx(
         model: RerankerModel,
         onnx_file: &str,
+        revision: &str,
         cache_dir: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
         let cache = Cache::new(cache_dir.unwrap_or_else(|| PathBuf::from(fastembed::get_cache_dir())));
@@ -40,8 +44,12 @@ impl LocalReranker {
             .with_progress(false)
             .build()
             .map_err(|e| anyhow::anyhow!("hf-hub api init: {e}"))?;
-        // `RerankerModel`'s Display is its HF repo id (model_code).
-        let repo = api.model(model.to_string());
+        // `RerankerModel`'s Display is its HF repo id (model_code); pin the revision.
+        let repo = api.repo(Repo::with_revision(
+            model.to_string(),
+            RepoType::Model,
+            revision.to_string(),
+        ));
 
         let fetch = |file: &str| -> anyhow::Result<PathBuf> {
             repo.get(file)
@@ -113,6 +121,7 @@ mod tests {
         let r = LocalReranker::from_registry_onnx(
             RerankerModel::JINARerankerV2BaseMultiligual,
             "onnx/model_int8.onnx",
+            "9cfeff2df7d40d1b78e75e5e9cebec92a99813c9",
             None,
         )
         .unwrap();

@@ -20,6 +20,9 @@ const RERANK_MODEL: RerankerModel = RerankerModel::JINARerankerV2BaseMultiligual
 /// The int8-quantized ONNX of the reranker (smaller/faster than the registry's
 /// pinned full-precision `onnx/model.onnx`), fetched from the model's HF repo.
 const RERANK_ONNX: &str = "onnx/model_int8.onnx";
+/// Pinned commit of `jinaai/jina-reranker-v2-base-multilingual` so the int8 ONNX
+/// + tokenizer are reproducible (an HF HEAD update can't swap them underneath us).
+const RERANK_REV: &str = "9cfeff2df7d40d1b78e75e5e9cebec92a99813c9";
 /// Cloud OpenAI embedding fallback dims (text-embedding-3-small) + hash floor dims.
 const CLOUD_OPENAI_DIMS: usize = 1536;
 const HASH_DIMS: usize = 384;
@@ -146,9 +149,12 @@ pub fn build_llm(env: &ResolveEnv) -> Option<semfs_core::llm::LlmClient> {
 /// Build the resolved reranker, or `None` to skip L5.
 pub fn build_reranker(env: &ResolveEnv) -> Result<Option<Arc<dyn Reranker>>> {
     Ok(match choose_rerank(env) {
-        RerankChoice::Local => {
-            Some(Arc::new(LocalReranker::from_registry_onnx(RERANK_MODEL, RERANK_ONNX, None)?))
-        }
+        RerankChoice::Local => Some(Arc::new(LocalReranker::from_registry_onnx(
+            RERANK_MODEL,
+            RERANK_ONNX,
+            RERANK_REV,
+            None,
+        )?)),
         RerankChoice::Cohere => Some(Arc::new(CohereReranker::openrouter(
             env.openrouter_key.clone().ok_or_else(|| {
                 anyhow::anyhow!("SEMFS_RERANK_BACKEND=cohere but OPENROUTER_API_KEY not set")

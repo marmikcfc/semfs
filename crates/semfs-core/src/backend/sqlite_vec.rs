@@ -198,6 +198,27 @@ impl SqliteVecStore {
                 return false;
             }
         }
+        // (5) When the code lane IS active, validate it the same way as the text
+        // lane: a MATCH at the code width must not error. Otherwise a missing or
+        // corrupt `vchunks_code` would let `search()` silently swallow the code
+        // KNN and serve BM25-only/empty results for code content while reporting
+        // "searchable" — fail closed to cloud instead.
+        if code_active {
+            if let Some(code) = &self.code_embedder {
+                let cblob = vec_to_blob(&vec![0.0f32; code.dimensions()]);
+                let code_ok = conn
+                    .prepare("SELECT rowid FROM vchunks_code WHERE embedding MATCH ?1 AND k = 1")
+                    .and_then(|mut stmt| {
+                        let mut rows = stmt.query(rusqlite::params![cblob])?;
+                        rows.next()?;
+                        Ok(())
+                    })
+                    .is_ok();
+                if !code_ok {
+                    return false;
+                }
+            }
+        }
         true
     }
 
@@ -912,6 +933,30 @@ mod tests {
         assert!(
             reader.is_searchable(),
             "mixed cache must stay searchable via the text lane when code lane is inactive"
+        );
+    }
+
+    /// An ACTIVE but broken code lane (matching code embedder, but a missing/
+    /// corrupt vchunks_code) must fall back to cloud — not silently drop the code
+    /// KNN and serve degraded results — when code content depends on that lane.
+    #[tokio::test]
+    async fn active_but_broken_code_lane_falls_back() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        w.index(2, "/src/a.rs", "fn a() {}").unwrap(); // code lane only
+        drop(w);
+
+        // Corrupt: drop the code vec0 table but keep `chunks` + the code stamp.
+        db.conn.lock().execute_batch("DROP TABLE vchunks_code;").unwrap();
+
+        // Reader WITH the matching code embedder → code lane "active", but the
+        // vec0 table is gone → the readiness probe errors → not searchable.
+        let reader = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)))
+            .with_code_embedder(Arc::new(HashEmbedder::new(256)));
+        assert!(
+            !reader.is_searchable(),
+            "broken active code lane must fall back, not serve degraded results"
         );
     }
 
