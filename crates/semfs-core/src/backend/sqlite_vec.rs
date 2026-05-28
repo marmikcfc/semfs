@@ -45,21 +45,31 @@ impl SqliteVecStore {
     /// Build a store and ensure the vec0 tables exist at the embedder's width.
     pub fn new(db: Arc<Db>, embedder: Arc<dyn Embedder>) -> anyhow::Result<Self> {
         let identity = embedder.identity();
+        // REFUSE to open a WRITER under a different text model than the one that
+        // built this index. Otherwise `index()` would write new-model vectors into
+        // the old `vchunks`, mixing two vector spaces — and a later rollback to the
+        // old model would silently search that mixed table. The index is invalid
+        // under the new model; require a fresh reindex. (Mirrors the code-lane
+        // guard in `enable_code_indexing`.) The daemon fails open on this error
+        // (mounts with local indexing disabled), leaving the old index untouched.
+        // Checked BEFORE any schema mutation so the existing index is preserved.
+        if let Some(stored) = db.embed_identity() {
+            if stored != identity {
+                anyhow::bail!(
+                    "existing index was built with text embedder '{stored}' but the current \
+                     embedder is '{identity}'; rebuild the index (fresh cache) or restore the \
+                     previous model"
+                );
+            }
+        }
         // PRESERVE any existing code lane: passing `None` here would make
-        // `ensure_vector_tables` drop `vchunks_code` ("code embedder removed"),
-        // which — combined with fail-open code-lane setup — could permanently
-        // destroy code vectors if the code model is transiently unavailable.
+        // `ensure_vector_tables` drop `vchunks_code` ("code embedder removed").
         // Carry the stored code width through; `enable_code_indexing` rebuilds it
         // at the real width afterward (a no-op when unchanged).
         let existing_code_dims = db.code_embed_dims();
         db.ensure_vector_tables(embedder.dimensions(), existing_code_dims)?;
-        // Stamp the model identity on FIRST creation only. On a model swap we must
-        // NOT overwrite the stamp: leaving the old stamp makes `is_searchable()`
-        // see a mismatch and fall back to cloud, while the old vectors are
-        // preserved (non-destructive — reverting the model makes them valid
-        // again, and there is no automatic re-embed of unchanged files here, so
-        // wiping would cause a search blackout). Local search resumes under a new
-        // model only after a deliberate reindex re-stamps a fresh index.
+        // Stamp the text identity on first creation (the drift guard above means
+        // any existing stamp already equals `identity`).
         if db.embed_identity().is_none() {
             db.record_embed_identity(&identity)?;
         }
@@ -218,6 +228,18 @@ impl SqliteVecStore {
                     return false;
                 }
             }
+        }
+        // (6) Vector-count invariant: every chunk has exactly one vec0 row (text
+        // OR code). If the totals diverge, vectors were lost — e.g. a vec0 table
+        // was dropped and a writer recreated it EMPTY (the MATCH probe can't catch
+        // that, an empty table matches fine). Fail closed so a silently degraded
+        // index falls back to cloud instead of returning BM25-only/empty results.
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap_or(-1) };
+        let chunk_n = count("SELECT count(*) FROM chunks");
+        let text_n = count("SELECT count(*) FROM vchunks");
+        let code_n = if code_table { count("SELECT count(*) FROM vchunks_code") } else { 0 };
+        if chunk_n < 0 || text_n < 0 || code_n < 0 || chunk_n != text_n + code_n {
+            return false;
         }
         true
     }
