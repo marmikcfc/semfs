@@ -114,20 +114,62 @@ impl SqliteVecStore {
     ///
     /// A missing identity stamp (an index this code never wrote) counts as a mismatch.
     pub fn is_searchable(&self) -> bool {
+        // (1) Text identity must match.
         if self.db.embed_identity().as_deref() != Some(self.embedder.identity().as_str()) {
             return false;
         }
-        if let Some(code) = &self.code_embedder {
-            if self.db.code_embed_identity().as_deref() != Some(code.identity().as_str()) {
+        // (2) Code identity is enforced ONLY when this DB advertises a code lane
+        // (a code stamp is present). A missing code stamp means a text-only index
+        // — still searchable via the text lane — so we must NOT reject it just
+        // because the reader happens to have a code embedder attached (version skew).
+        let has_code_lane = self.db.code_embed_identity().is_some();
+        if has_code_lane {
+            let ok = self
+                .code_embedder
+                .as_ref()
+                .is_some_and(|c| self.db.code_embed_identity().as_deref() == Some(c.identity().as_str()));
+            if !ok {
                 return false;
             }
         }
-        // Non-empty check on the plain `chunks` table covers both lanes (every
-        // text or code chunk has a row here) and avoids a vec0-specific probe.
+
         let conn = self.db.conn.lock();
-        conn.query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| r.get::<_, i64>(0))
+        // (3) Non-empty — nothing to return from a fresh/just-reset cache.
+        let non_empty = conn
+            .query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| r.get::<_, i64>(0))
             .map(|n| n == 1)
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if !non_empty {
+            return false;
+        }
+        // (4) vec0 readiness per active lane: a MATCH at the lane's width errors
+        // on a missing or wrong-width table (e.g. a partially-migrated cache with
+        // populated `chunks` but a dropped/rebuilt `vchunks`), so we fall back to
+        // cloud instead of hard-failing at query time. We only require the probe
+        // to NOT error (0 rows is fine — a code-only index has an empty text lane).
+        let probe_ok = |table: &str, dims: usize| -> bool {
+            let blob = vec_to_blob(&vec![0.0f32; dims]);
+            conn.prepare(&format!(
+                "SELECT rowid FROM {table} WHERE embedding MATCH ?1 AND k = 1"
+            ))
+            .and_then(|mut stmt| {
+                let mut rows = stmt.query(rusqlite::params![blob])?;
+                rows.next()?;
+                Ok(())
+            })
+            .is_ok()
+        };
+        if !probe_ok("vchunks", self.embedder.dimensions()) {
+            return false;
+        }
+        if has_code_lane {
+            if let Some(code) = &self.code_embedder {
+                if !probe_ok("vchunks_code", code.dimensions()) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Attach an L5 reranker. Search reranks the post-RRF candidates by their
@@ -641,6 +683,24 @@ mod tests {
             })
             .unwrap();
         assert_eq!(n, 1, "re-index replaces code-lane chunks");
+    }
+
+    /// Upgrade compat: a TEXT-ONLY index (no code stamp — e.g. written before the
+    /// code lane shipped) must stay searchable even when the reader attaches a
+    /// code embedder (as grep does). Missing code metadata = text-only, not a
+    /// hard incompatibility.
+    #[test]
+    fn text_only_index_searchable_with_code_embedder_attached() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.index(2, "/a.md", "hello world").unwrap();
+        // No code stamp was written. Reader attaches a code embedder anyway.
+        let reader = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)))
+            .with_code_embedder(Arc::new(HashEmbedder::new(256)));
+        assert!(
+            reader.is_searchable(),
+            "text-only index must remain searchable with a code embedder attached"
+        );
     }
 
     /// `is_searchable` gates the grep→local-backend decision: true only when the

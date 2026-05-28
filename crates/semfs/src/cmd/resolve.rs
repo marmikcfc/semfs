@@ -91,6 +91,18 @@ pub fn local_indexing_enabled(env: &ResolveEnv) -> bool {
 
 /// Build the resolved TEXT embedder.
 pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
+    // Non-silent default: if we're defaulting to local registry models while a
+    // cloud key is present (and no backend was explicitly chosen), say so — local
+    // is the intended default but the switch shouldn't surprise a key-only config.
+    if env.embed_backend.is_none()
+        && choose_embed(env) == EmbedChoice::Local
+        && (env.openai_key.is_some() || env.openrouter_key.is_some())
+    {
+        tracing::info!(
+            "defaulting to local fastembed models (downloads on first use); \
+             set SEMFS_EMBED_BACKEND=openrouter|openai to use a cloud embedder"
+        );
+    }
     Ok(match choose_embed(env) {
         EmbedChoice::Local => Arc::new(LocalEmbedder::from_registry(TEXT_EMBED_MODEL, None)?),
         EmbedChoice::CloudOpenAi => Arc::new(OpenAiEmbedder::new(
