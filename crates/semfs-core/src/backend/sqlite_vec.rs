@@ -301,13 +301,28 @@ impl SqliteVecStore {
         drop_file_chunks(&tx, new)?;
 
         // A cheap relabel keeps the existing vectors — but those vectors live in
-        // the lane chosen by the OLD path's extension. When dual-lane indexing is
-        // active and the rename crosses the code/text boundary (e.g. foo.md →
-        // foo.rs), the vectors would be stranded in the wrong lane (wrong model).
-        // rename() has no content to re-embed, so drop the entry instead; the next
-        // write re-indexes it into the correct lane. Same-lane renames relabel.
-        let lane_cross =
-            self.code_embedder.is_some() && is_code_path(old) != is_code_path(new);
+        // whichever lane the file was INDEXED into. If that persisted lane no
+        // longer matches the new path's expected lane, the vectors are stranded
+        // in the wrong (wrong-model) lane. Decide from PERSISTED state, NOT the
+        // live embedder: in the fail-open state the code lane can exist while no
+        // code embedder is attached, and a foo.rs→foo.md rename must still drop.
+        // rename() has no content to re-embed, so drop; the next write re-indexes
+        // into the correct lane. Same-lane renames relabel. Text-only caches (no
+        // code lane) never lane-cross — everything belongs in the text lane.
+        let code_lane_exists: bool = tx.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vchunks_code'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? > 0;
+        let lane_cross = code_lane_exists && {
+            let src_in_code: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM vchunks_code v JOIN chunks c ON c.id = v.rowid \
+                 WHERE c.filepath = ?1)",
+                [old],
+                |r| r.get::<_, i64>(0),
+            )? == 1;
+            src_in_code != is_code_path(new)
+        };
         if lane_cross {
             drop_file_chunks(&tx, old)?;
         } else {
@@ -787,6 +802,38 @@ mod tests {
             })
             .unwrap();
         assert_eq!(kept, 1, "same-lane rename relabels (kept)");
+    }
+
+    /// Lane-cross rename must decide from PERSISTED lane membership, not the live
+    /// embedder: in the fail-open state (code-model mismatch left the code lane
+    /// inert / unattached) the old vchunks_code rows still exist, so a foo.rs →
+    /// foo.md rename must still DROP rather than strand code vectors on a text path.
+    #[tokio::test]
+    async fn lane_crossing_rename_drops_even_when_code_lane_inert() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        // Writer 1: code lane with model A; index a .rs file into the code lane.
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-A:256".into() }))
+            .unwrap();
+        w.index(2, "/src/lib.rs", "fn f() {}").unwrap();
+        drop(w);
+
+        // Writer 2: mismatched code model → enable fails open (code_embedder stays
+        // None), but vchunks_code + the .rs vectors persist.
+        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let _ = w2.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-B:256".into() }));
+
+        // .rs → .md: persisted lane is code, new path is text → must DROP.
+        w2.rename("/src/lib.rs", "/src/lib.md").unwrap();
+        let conn = db.conn.lock();
+        let old_n: i64 = conn
+            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/lib.rs'", [], |r| r.get(0))
+            .unwrap();
+        let new_n: i64 = conn
+            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/lib.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(old_n, 0, "old path cleared");
+        assert_eq!(new_n, 0, "dropped even though the code embedder is inert (persisted lane)");
     }
 
     /// Upgrade compat: a TEXT-ONLY index (no code stamp — e.g. written before the
