@@ -65,20 +65,21 @@ impl SqliteVecStore {
         })
     }
 
-    /// WRITER: attach a code embedder, ensuring the `vchunks_code` vec0 table at
-    /// the code embedder's width and stamping its identity (first creation only).
-    /// Code-like files then index into the code lane. Mutates the schema, so only
-    /// the daemon (writer) should call this — readers use [`with_code_embedder`].
-    pub fn with_code_indexing(self, code: Arc<dyn Embedder>) -> anyhow::Result<Self> {
+    /// WRITER: enable code indexing — ensure the `vchunks_code` vec0 table at the
+    /// code embedder's width and stamp its identity (first creation only), then
+    /// route code-like files to the code lane. Mutates the schema, so only the
+    /// daemon (writer) should call this — readers use [`with_code_embedder`].
+    ///
+    /// Takes `&mut self` (not a consuming builder) so the caller can FAIL-OPEN:
+    /// on error the store is untouched and text-lane indexing continues.
+    pub fn enable_code_indexing(&mut self, code: Arc<dyn Embedder>) -> anyhow::Result<()> {
         self.db
             .ensure_vector_tables(self.embedder.dimensions(), Some(code.dimensions()))?;
         if self.db.code_embed_identity().is_none() {
             self.db.record_code_embed_identity(&code.identity())?;
         }
-        Ok(Self {
-            code_embedder: Some(code),
-            ..self
-        })
+        self.code_embedder = Some(code);
+        Ok(())
     }
 
     /// READER: attach a code embedder WITHOUT touching the schema, so a reader
@@ -643,9 +644,9 @@ mod tests {
     #[tokio::test]
     async fn code_files_route_to_code_lane() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
-            .unwrap()
-            .with_code_indexing(Arc::new(HashEmbedder::new(256)))
+        let mut store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        store
+            .enable_code_indexing(Arc::new(HashEmbedder::new(256)))
             .unwrap();
 
         // .rs → code lane (256-d); .md → text lane (384-d). Both must succeed.

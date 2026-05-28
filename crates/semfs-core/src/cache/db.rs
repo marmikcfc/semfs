@@ -260,6 +260,13 @@ impl Db {
         Ok(())
     }
 
+    /// Whether this cache advertises a code lane (a `code_embed_model` stamp was
+    /// written by a code-indexing writer). Lets a reader decide whether it even
+    /// needs a code embedder before paying to construct one.
+    pub fn has_code_lane(&self) -> bool {
+        self.code_embed_identity().is_some()
+    }
+
     /// The code embedder identity recorded by the writer, if any.
     pub(crate) fn code_embed_identity(&self) -> Option<String> {
         self.conn

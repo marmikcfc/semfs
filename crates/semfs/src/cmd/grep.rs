@@ -70,11 +70,17 @@ fn build_local_store(
 ) -> Result<Option<SqliteVecStore>> {
     let db = Arc::new(semfs_core::cache::Db::open(Path::new(p))?);
     let embedder = super::resolve::build_embedder(env)?;
-    let mut store = SqliteVecStore::open_existing(db, embedder);
-    // Reader path: attach the code embedder so the code lane is searched + its
-    // identity validated. Does NOT touch the schema (with_code_embedder).
-    if let Some(code) = super::resolve::build_code_embedder(env)? {
-        store = store.with_code_embedder(code);
+    let mut store = SqliteVecStore::open_existing(db.clone(), embedder);
+    // Reader path: only construct the code embedder if the cache actually
+    // advertises a code lane. A text-only cache needs no code model — building
+    // one would pay a download AND, if it failed, abort local search for a cache
+    // the text lane could have answered. If the lane IS present, attach it (so
+    // the code lane is searched + its identity validated); a build failure there
+    // means we genuinely can't serve the code lane, so fall back via is_searchable.
+    if db.has_code_lane() {
+        if let Some(code) = super::resolve::build_code_embedder(env)? {
+            store = store.with_code_embedder(code);
+        }
     }
     match super::resolve::build_reranker(env) {
         Ok(Some(reranker)) => store = store.with_reranker(reranker),

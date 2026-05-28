@@ -36,9 +36,16 @@ fn build_local_indexer(
     let mut store = semfs_core::backend::SqliteVecStore::new(db, embedder)?;
     // Attach the code embedder (writer path: ensures the vchunks_code vec0 table
     // + stamps its identity) so code-like files index into the code lane.
-    if let Some(code) = crate::cmd::resolve::build_code_embedder(env)? {
-        store = store.with_code_indexing(code)?;
-        eprintln!("code embedder enabled (vchunks_code lane)");
+    // FAIL-OPEN: if the code model can't be built/initialized (e.g. download or
+    // cache failure), keep indexing the text lane rather than failing the mount —
+    // code files then fall back to the text embedder. The text lane is the floor.
+    match crate::cmd::resolve::build_code_embedder(env) {
+        Ok(Some(code)) => match store.enable_code_indexing(code) {
+            Ok(()) => eprintln!("code embedder enabled (vchunks_code lane)"),
+            Err(e) => eprintln!("code lane unavailable ({e}); indexing text lane only"),
+        },
+        Ok(None) => {}
+        Err(e) => eprintln!("code embedder unavailable ({e}); indexing text lane only"),
     }
     // L7: when an LLM is available, attach the entity-graph extractor so writes
     // populate file→entity edges.
