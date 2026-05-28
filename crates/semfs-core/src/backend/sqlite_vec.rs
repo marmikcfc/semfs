@@ -146,6 +146,9 @@ impl SqliteVecStore {
         if self.db.embed_identity().as_deref() != Some(self.embedder.identity().as_str()) {
             return false;
         }
+        // Compute code-lane activity BEFORE locking `conn` (it locks internally).
+        let code_active = self.code_lane_active();
+
         let conn = self.db.conn.lock();
         // (2) Non-empty — nothing to return from a fresh/just-reset cache.
         let non_empty = conn
@@ -159,13 +162,39 @@ impl SqliteVecStore {
         // or wrong-width `vchunks` (e.g. a partially-migrated cache), so we fall
         // back to cloud instead of hard-failing at query time. 0 rows is fine.
         let blob = vec_to_blob(&vec![0.0f32; self.embedder.dimensions()]);
-        conn.prepare("SELECT rowid FROM vchunks WHERE embedding MATCH ?1 AND k = 1")
+        let text_ok = conn
+            .prepare("SELECT rowid FROM vchunks WHERE embedding MATCH ?1 AND k = 1")
             .and_then(|mut stmt| {
                 let mut rows = stmt.query(rusqlite::params![blob])?;
                 rows.next()?;
                 Ok(())
             })
-            .is_ok()
+            .is_ok();
+        if !text_ok {
+            return false;
+        }
+        // (4) Don't claim local searchability if the cache holds code-lane content
+        // we CANNOT search (no/mismatched code embedder). Otherwise a code-only or
+        // code-heavy cache would silently degrade to BM25-only/empty semantic
+        // results while reporting "searchable" — better to fall back to cloud.
+        let code_table = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vchunks_code'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if code_table && !code_active {
+            let code_rows = conn
+                .query_row("SELECT EXISTS(SELECT 1 FROM vchunks_code)", [], |r| r.get::<_, i64>(0))
+                .map(|n| n == 1)
+                .unwrap_or(false);
+            if code_rows {
+                return false;
+            }
+        }
+        true
     }
 
     /// Whether the code lane should be queried: a code embedder is attached AND
@@ -834,6 +863,31 @@ mod tests {
             .unwrap();
         assert_eq!(old_n, 0, "old path cleared");
         assert_eq!(new_n, 0, "dropped even though the code embedder is inert (persisted lane)");
+    }
+
+    /// A code-only cache (all content in the code lane) must NOT report local
+    /// searchability when the code lane is inactive — otherwise grep silently
+    /// serves empty/BM25-only semantic results. With a matching code embedder it
+    /// is searchable.
+    #[tokio::test]
+    async fn code_only_cache_unsearchable_when_code_lane_inactive() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        w.index(2, "/src/only.rs", "fn only() {}").unwrap(); // code lane only
+        drop(w);
+
+        // Reader with NO code embedder → code lane inactive, all content stranded.
+        let inert = SqliteVecStore::open_existing(db.clone(), Arc::new(HashEmbedder::new(384)));
+        assert!(
+            !inert.is_searchable(),
+            "code-only cache must fall back when the code lane can't be searched"
+        );
+
+        // Reader WITH the matching code embedder → code lane active → searchable.
+        let active = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)))
+            .with_code_embedder(Arc::new(HashEmbedder::new(256)));
+        assert!(active.is_searchable(), "active code lane → searchable");
     }
 
     /// Upgrade compat: a TEXT-ONLY index (no code stamp — e.g. written before the

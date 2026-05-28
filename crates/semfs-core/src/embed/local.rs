@@ -12,6 +12,13 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 
 use super::Embedder;
 
+/// fastembed registry revision folded into the embedder identity so a fastembed
+/// upgrade that re-bundles a model's ONNX/tokenizer under the SAME `model_code`
+/// invalidates existing caches and forces a reindex (the registry exposes no
+/// per-model checksum). MUST be bumped to match `fastembed` in Cargo.toml.
+/// (Full artifact-hash fingerprinting is deferred with the BYO-ONNX work.)
+const FASTEMBED_REV: &str = "fe5.13";
+
 /// A local ONNX embedder backed by a fastembed registry model.
 pub struct LocalEmbedder {
     // fastembed's `embed` takes `&mut self`; the `Embedder` trait is `&self`, so
@@ -33,7 +40,7 @@ impl LocalEmbedder {
             .find(|m| m.model == model)
             .ok_or_else(|| anyhow::anyhow!("embedding model {model:?} not in fastembed registry"))?;
         let dims = info.dim;
-        let identity = format!("fastembed:{}:{}", info.model_code, dims);
+        let identity = format!("fastembed:{FASTEMBED_REV}:{}:{}", info.model_code, dims);
 
         let mut opts = InitOptions::new(model).with_show_download_progress(false);
         if let Some(dir) = cache_dir {
