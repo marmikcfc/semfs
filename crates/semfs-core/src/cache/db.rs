@@ -239,12 +239,33 @@ impl Db {
         Ok(())
     }
 
-    /// The embedder identity recorded by the writer, if any.
+    /// The text embedder identity recorded by the writer, if any.
     pub(crate) fn embed_identity(&self) -> Option<String> {
         self.conn
             .lock()
             .query_row(
                 "SELECT value FROM fs_config WHERE key = 'text_embed_model'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+    }
+
+    /// Record the CODE embedder identity (separate vector space / vec0 table).
+    pub(crate) fn record_code_embed_identity(&self, identity: &str) -> anyhow::Result<()> {
+        self.conn.lock().execute(
+            "INSERT OR REPLACE INTO fs_config (key, value) VALUES ('code_embed_model', ?1)",
+            [identity],
+        )?;
+        Ok(())
+    }
+
+    /// The code embedder identity recorded by the writer, if any.
+    pub(crate) fn code_embed_identity(&self) -> Option<String> {
+        self.conn
+            .lock()
+            .query_row(
+                "SELECT value FROM fs_config WHERE key = 'code_embed_model'",
                 [],
                 |r| r.get::<_, String>(0),
             )

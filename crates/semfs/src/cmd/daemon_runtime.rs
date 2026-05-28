@@ -34,6 +34,12 @@ fn build_local_indexer(
 ) -> anyhow::Result<Arc<dyn semfs_core::cache::LocalIndexer>> {
     let embedder = crate::cmd::resolve::build_embedder(env)?;
     let mut store = semfs_core::backend::SqliteVecStore::new(db, embedder)?;
+    // Attach the code embedder (writer path: ensures the vchunks_code vec0 table
+    // + stamps its identity) so code-like files index into the code lane.
+    if let Some(code) = crate::cmd::resolve::build_code_embedder(env)? {
+        store = store.with_code_indexing(code)?;
+        eprintln!("code embedder enabled (vchunks_code lane)");
+    }
     // L7: when an LLM is available, attach the entity-graph extractor so writes
     // populate file→entity edges.
     if let Some(llm) = crate::cmd::resolve::build_llm(env) {

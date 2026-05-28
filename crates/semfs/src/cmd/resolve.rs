@@ -15,6 +15,7 @@ use semfs_core::rerank::{CohereReranker, LocalReranker, RelaceReranker, Reranker
 
 /// The fastembed-rs registry models we standardize on (project goal).
 const TEXT_EMBED_MODEL: EmbeddingModel = EmbeddingModel::SnowflakeArcticEmbedS; // 384d
+const CODE_EMBED_MODEL: EmbeddingModel = EmbeddingModel::JinaEmbeddingsV2BaseCode; // 768d
 const RERANK_MODEL: RerankerModel = RerankerModel::JINARerankerV2BaseMultiligual;
 /// Cloud OpenAI embedding fallback dims (text-embedding-3-small) + hash floor dims.
 const CLOUD_OPENAI_DIMS: usize = 1536;
@@ -106,6 +107,16 @@ pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
             })?,
         )),
         EmbedChoice::Hash => Arc::new(HashEmbedder::new(HASH_DIMS)),
+    })
+}
+
+/// Build the resolved CODE embedder, or `None` when the active embed backend has
+/// no separate code lane (only the local fastembed registry routes code files to
+/// a dedicated model; cloud/hash embed everything with the single text embedder).
+pub fn build_code_embedder(env: &ResolveEnv) -> Result<Option<Arc<dyn Embedder>>> {
+    Ok(match choose_embed(env) {
+        EmbedChoice::Local => Some(Arc::new(LocalEmbedder::from_registry(CODE_EMBED_MODEL, None)?)),
+        _ => None,
     })
 }
 

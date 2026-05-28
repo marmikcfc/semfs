@@ -28,7 +28,12 @@ const SCOPED_KNN_POOL: usize = 4096;
 #[derive(Debug)]
 pub struct SqliteVecStore {
     db: Arc<Db>,
+    /// Text embedder → `vchunks` (float[text_dims]). Always present.
     embedder: Arc<dyn Embedder>,
+    /// Optional code embedder → `vchunks_code` (float[code_dims]). When present,
+    /// code-like files route here (own model + own vector space) and search also
+    /// queries the code lane.
+    code_embedder: Option<Arc<dyn Embedder>>,
     /// Optional L5 reranker, applied to candidates after RRF in `search`.
     reranker: Option<Arc<dyn Reranker>>,
     /// Optional L7 graph extractor (LLM). When present, `index` extracts typed
@@ -54,9 +59,33 @@ impl SqliteVecStore {
         Ok(Self {
             db,
             embedder,
+            code_embedder: None,
             reranker: None,
             graph_llm: None,
         })
+    }
+
+    /// WRITER: attach a code embedder, ensuring the `vchunks_code` vec0 table at
+    /// the code embedder's width and stamping its identity (first creation only).
+    /// Code-like files then index into the code lane. Mutates the schema, so only
+    /// the daemon (writer) should call this — readers use [`with_code_embedder`].
+    pub fn with_code_indexing(self, code: Arc<dyn Embedder>) -> anyhow::Result<Self> {
+        self.db
+            .ensure_vector_tables(self.embedder.dimensions(), Some(code.dimensions()))?;
+        if self.db.code_embed_identity().is_none() {
+            self.db.record_code_embed_identity(&code.identity())?;
+        }
+        Ok(Self {
+            code_embedder: Some(code),
+            ..self
+        })
+    }
+
+    /// READER: attach a code embedder WITHOUT touching the schema, so a reader
+    /// (`grep`) can query the code lane + validate the code identity.
+    pub fn with_code_embedder(mut self, code: Arc<dyn Embedder>) -> Self {
+        self.code_embedder = Some(code);
+        self
     }
 
     /// Open over an EXISTING index without touching the schema — for readers
@@ -68,39 +97,36 @@ impl SqliteVecStore {
         Self {
             db,
             embedder,
+            code_embedder: None,
             reranker: None,
             graph_llm: None,
         }
     }
 
-    /// Probe whether this store can actually answer a search: the vec0 table
-    /// must exist AND match the embedder's dimensions. A reader (`grep`) calls
-    /// this before committing to the local backend so an un-indexed cache or a
-    /// dimension mismatch falls back to cloud instead of erroring at query time.
-    /// A single vec0 MATCH with a correctly-sized vector catches both a missing
-    /// `vchunks` table ("no such table") and a width mismatch (vec0 errors).
+    /// Whether a reader (`grep`) should commit to this local index, or fall back
+    /// to cloud. True only when:
+    /// 1. the stored TEXT embedder identity matches this store's text embedder
+    ///    (the identity string encodes the model + dims, so a model swap OR a
+    ///    width change is caught here — no separate dimension probe needed);
+    /// 2. if a code embedder is attached, the stored CODE identity matches too;
+    /// 3. the index is NON-EMPTY — a fresh/just-reset cache has nothing to return,
+    ///    so we prefer cloud until the writer (re)populates it.
     ///
-    /// Also requires the stored embedder identity to match this store's embedder:
-    /// a same-width but different model produces an incompatible vector space, so
-    /// dimension agreement alone is not enough. A missing stamp (an index this
-    /// code never wrote) is treated as incompatible.
-    ///
-    /// Finally requires the index to be NON-EMPTY: a freshly-created or just-reset
-    /// (post model-swap) index has no vectors yet, so searching it would return
-    /// nothing while the cloud may have results — fall back until reindex repopulates.
+    /// A missing identity stamp (an index this code never wrote) counts as a mismatch.
     pub fn is_searchable(&self) -> bool {
         if self.db.embed_identity().as_deref() != Some(self.embedder.identity().as_str()) {
             return false;
         }
-        let probe = vec_to_blob(&vec![0.0f32; self.embedder.dimensions()]);
+        if let Some(code) = &self.code_embedder {
+            if self.db.code_embed_identity().as_deref() != Some(code.identity().as_str()) {
+                return false;
+            }
+        }
+        // Non-empty check on the plain `chunks` table covers both lanes (every
+        // text or code chunk has a row here) and avoids a vec0-specific probe.
         let conn = self.db.conn.lock();
-        // One vec0 MATCH: errors on a missing table or width mismatch, and yields
-        // ≥1 row only when the index actually holds vectors.
-        conn.prepare("SELECT rowid FROM vchunks WHERE embedding MATCH ?1 AND k = 1")
-            .and_then(|mut stmt| {
-                let mut rows = stmt.query(rusqlite::params![probe])?;
-                Ok(rows.next()?.is_some())
-            })
+        conn.query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| r.get::<_, i64>(0))
+            .map(|n| n == 1)
             .unwrap_or(false)
     }
 
@@ -124,7 +150,15 @@ impl SqliteVecStore {
     /// rowid-linked vec0/fts rows). Removing a file = `index` with empty content.
     pub fn index(&self, ino: u64, filepath: &str, content: &str) -> anyhow::Result<()> {
         let chunks = super::chunk::recursive_chunks(content, &super::chunk::ChunkOptions::default());
-        let vectors = self.embedder.embed(&chunks)?;
+        // Route code-like files to the code embedder + `vchunks_code` lane when a
+        // code embedder is attached; everything else uses the text lane.
+        let use_code = self.code_embedder.is_some() && is_code_path(filepath);
+        let embedder = match (&self.code_embedder, use_code) {
+            (Some(code), true) => code.as_ref(),
+            _ => self.embedder.as_ref(),
+        };
+        let vec_table = if use_code { "vchunks_code" } else { "vchunks" };
+        let vectors = embedder.embed(&chunks)?;
 
         // L7: extract entities via the LLM BEFORE locking the db (network call).
         // Fail-open — a write never fails because extraction did.
@@ -156,8 +190,10 @@ impl SqliteVecStore {
                 rusqlite::params![ino as i64, filepath, ord as i64, text, now],
             )?;
             let id = tx.last_insert_rowid();
+            // `vec_table` is a fixed internal identifier (never user input), so
+            // the format! is safe; vec0 virtual tables can't be bound as params.
             tx.execute(
-                "INSERT INTO vchunks(rowid, embedding) VALUES (?1, ?2)",
+                &format!("INSERT INTO {vec_table}(rowid, embedding) VALUES (?1, ?2)"),
                 rusqlite::params![id, vec_to_blob(vec)],
             )?;
             tx.execute(
@@ -229,14 +265,43 @@ impl SqliteVecStore {
 }
 
 /// Delete a file's chunks and their rowid-linked vec0/fts rows within a txn.
+/// Classify a path as code-like by extension — routes it to the code embedder +
+/// `vchunks_code` lane. Markup/prose/config (md, txt, json, yaml, html, css, …)
+/// stay on the text lane. Only files with an actual extension can be code.
+fn is_code_path(filepath: &str) -> bool {
+    let base = filepath.rsplit('/').next().unwrap_or("");
+    if !base.contains('.') {
+        return false;
+    }
+    let ext = base.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "go" | "java" | "kt" | "kts"
+            | "scala" | "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "rb" | "php" | "swift"
+            | "m" | "mm" | "sh" | "bash" | "zsh" | "sql" | "lua" | "r" | "jl" | "pl" | "pm" | "ex"
+            | "exs" | "erl" | "clj" | "cljs" | "hs" | "ml" | "fs" | "dart" | "vue" | "svelte"
+            | "proto" | "tf"
+    )
+}
+
 fn drop_file_chunks(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Result<()> {
     let ids: Vec<i64> = {
         let mut stmt = tx.prepare("SELECT id FROM chunks WHERE filepath = ?1")?;
         let rows = stmt.query_map([filepath], |r| r.get::<_, i64>(0))?;
         rows.collect::<Result<_, _>>()?
     };
+    // `vchunks_code` only exists when a code embedder has been attached; a chunk
+    // id lives in exactly one vec0 lane, so delete from both where present.
+    let code_table: bool = tx.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vchunks_code'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
     for id in ids {
         tx.execute("DELETE FROM vchunks WHERE rowid = ?1", [id])?;
+        if code_table {
+            tx.execute("DELETE FROM vchunks_code WHERE rowid = ?1", [id])?;
+        }
         tx.execute("DELETE FROM ffts WHERE rowid = ?1", [id])?;
     }
     tx.execute("DELETE FROM chunks WHERE filepath = ?1", [filepath])?;
@@ -272,6 +337,15 @@ impl SemanticIndex for SqliteVecStore {
             .pop()
             .unwrap_or_default();
         let qblob = vec_to_blob(&qvec);
+        // Embed the query in the CODE vector space too (if a code embedder is
+        // attached) so the `vchunks_code` lane is searchable. Done before locking
+        // the db — embedding must never run while holding the connection.
+        let code_qblob = match &self.code_embedder {
+            Some(code) => Some(vec_to_blob(
+                &code.embed(&[query.to_string()])?.pop().unwrap_or_default(),
+            )),
+            None => None,
+        };
         // Scope predicate pushed into each lane so a `/prefix/` query can't be
         // crowded out of the candidate pool by out-of-scope files (a false-
         // negative bug if filtered only after the global LIMIT). `None` = no scope.
@@ -306,6 +380,32 @@ impl SemanticIndex for SqliteVecStore {
                 let (id, fp, text) = row?;
                 rep_chunk.entry(fp.clone()).or_insert(id);
                 super::rank::rrf_bump(&mut by_file, fp, text, rank);
+            }
+        }
+
+        // Code vector KNN (vchunks_code) — only when a code embedder is attached.
+        // The query is embedded in the code space; its candidates union into the
+        // same RRF map as the text lane and FTS.
+        if let Some(cqblob) = &code_qblob {
+            let k = if scope.is_some() { SCOPED_KNN_POOL } else { SEARCH_POOL };
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT c.id, c.filepath, c.text FROM vchunks_code v \
+                 JOIN chunks c ON c.id = v.rowid \
+                 WHERE v.embedding MATCH ?1 AND k = ?2 \
+                 AND (?3 IS NULL OR instr(c.filepath, ?3) = 1) ORDER BY distance",
+            ) {
+                if let Ok(rows) =
+                    stmt.query_map(rusqlite::params![cqblob, k as i64, scope], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                    })
+                {
+                    for (rank, row) in rows.enumerate() {
+                        if let Ok((id, fp, text)) = row {
+                            rep_chunk.entry(fp.clone()).or_insert(id);
+                            super::rank::rrf_bump(&mut by_file, fp, text, rank);
+                        }
+                    }
+                }
             }
         }
 
@@ -492,6 +592,55 @@ mod tests {
                 .map_or(true, |p| p.starts_with("/scope/"))),
             "scoped search leaked out-of-scope files: {hits:?}"
         );
+    }
+
+    /// Code/text routing: a code-like path indexes into the code lane, prose into
+    /// the text lane. Uses distinct widths (text=384, code=256) so the routing is
+    /// proven by construction — a mis-routed code file would try to insert a
+    /// 256-d vector into the 384-d `vchunks` table and fail. Offline (HashEmbedder).
+    #[tokio::test]
+    async fn code_files_route_to_code_lane() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+            .unwrap()
+            .with_code_indexing(Arc::new(HashEmbedder::new(256)))
+            .unwrap();
+
+        // .rs → code lane (256-d); .md → text lane (384-d). Both must succeed.
+        store
+            .index(2, "/src/parser.rs", "fn tokenize(input: &str) -> Vec<Token> { todo!() }")
+            .unwrap();
+        store
+            .index(3, "/docs/overview.md", "the parser turns source text into tokens")
+            .unwrap();
+
+        {
+            let conn = db.conn.lock();
+            let files: i64 = conn
+                .query_row("SELECT count(DISTINCT filepath) FROM chunks", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(files, 2, "both files indexed");
+        }
+        assert!(store.is_searchable(), "dual-lane index with matching identities");
+
+        // Both lanes are queried + fused: each file is findable by its own terms.
+        let code_hits = store.search("tokenize tokens parser", None).await.unwrap();
+        assert!(code_hits.iter().any(|h| h.filepath.as_deref() == Some("/src/parser.rs")));
+        let text_hits = store.search("source text into tokens", None).await.unwrap();
+        assert!(text_hits.iter().any(|h| h.filepath.as_deref() == Some("/docs/overview.md")));
+
+        // Re-indexing the code file replaces (not accumulates) its code-lane rows.
+        store
+            .index(2, "/src/parser.rs", "fn parse(tokens: Vec<Token>) -> Ast { todo!() }")
+            .unwrap();
+        let n: i64 = db
+            .conn
+            .lock()
+            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/parser.rs'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(n, 1, "re-index replaces code-lane chunks");
     }
 
     /// `is_searchable` gates the grep→local-backend decision: true only when the

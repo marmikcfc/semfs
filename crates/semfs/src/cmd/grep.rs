@@ -71,6 +71,11 @@ fn build_local_store(
     let db = Arc::new(semfs_core::cache::Db::open(Path::new(p))?);
     let embedder = super::resolve::build_embedder(env)?;
     let mut store = SqliteVecStore::open_existing(db, embedder);
+    // Reader path: attach the code embedder so the code lane is searched + its
+    // identity validated. Does NOT touch the schema (with_code_embedder).
+    if let Some(code) = super::resolve::build_code_embedder(env)? {
+        store = store.with_code_embedder(code);
+    }
     match super::resolve::build_reranker(env) {
         Ok(Some(reranker)) => store = store.with_reranker(reranker),
         Ok(None) => {}

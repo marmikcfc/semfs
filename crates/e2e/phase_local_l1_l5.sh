@@ -35,8 +35,19 @@ echo "building semfs..."; (cd "$REPO/crates" && cargo build -p semfs >/dev/null 
 echo "== mount (registry local embed+rerank) =="
 "$BIN" mount "$TAG" --path "$MNT" --key "$SUPERMEMORY_API_KEY" --no-sync --foreground >/tmp/semfs_holistic.log 2>&1 &
 DPID=$!
-sleep 6
-kill -0 "$DPID" 2>/dev/null || { echo "FAIL: daemon exited"; cat /tmp/semfs_holistic.log; exit 1; }
+# Wait for the NFS layer to actually mount before seeding. The daemon downloads
+# the embedder at startup (fastembed downloads at construction), which delays
+# readiness — a fixed sleep would race it, and writes to a not-yet-mounted dir
+# bypass the indexer entirely. Poll the mount table (up to ~5 min for download).
+echo "waiting for mount to become ready (may download the embedder)..."
+ready=0
+for i in $(seq 1 60); do
+  kill -0 "$DPID" 2>/dev/null || { echo "FAIL: daemon exited"; cat /tmp/semfs_holistic.log; exit 1; }
+  if mount | grep -q "$TAG"; then ready=1; break; fi
+  sleep 5
+done
+[ "$ready" = 1 ] || { echo "FAIL: mount never became ready"; tail -20 /tmp/semfs_holistic.log; exit 1; }
+echo "mount ready after ~$((i*5))s"
 
 echo "== POSIX ops through the mount =="
 # create
@@ -46,6 +57,9 @@ printf '%s\n' "scratch file to be removed"                                      
 # mkdir + nested write
 mkdir -p "$MNT/notes"
 printf '%s\n' "rebase your branch onto main and force-push to update the pull request" > "$MNT/notes/git.md"
+# a CODE file -> routes to the jina-code lane (vchunks_code)
+mkdir -p "$MNT/src"
+printf '%s\n' "fn tokenize(input: &str) -> Vec<Token> { input.split_whitespace().map(Token::new).collect() }" > "$MNT/src/lexer.rs"
 # list
 echo "-- ls --"; ls -la "$MNT" | awk '{print $1, $NF}'
 echo "-- ls notes --"; ls "$MNT/notes"
@@ -69,13 +83,18 @@ for i in $(seq 1 40); do
   if echo "$OUT" | grep -q "auth.md"; then break; fi
   echo "  attempt $i: not searchable yet (model download / index lag)"
 done
-echo "-- grep output --"; echo "$OUT"
-echo "-- daemon log tail --"; tail -8 /tmp/semfs_holistic.log
+echo "-- grep output (text query) --"; echo "$OUT"
 
-if echo "$OUT" | grep -q "auth.md"; then
-  echo "PASS: holistic local registry pipeline (POSIX + semantic grep) works"
-  exit 0
-else
-  echo "FAIL: auth.md not found via local semantic search"
-  exit 1
+# Code-lane query: a code file should be found via the jina-code lane.
+COUT="$( "$BIN" grep "function that splits source text into lexical tokens" "$MNT/" 2>/dev/null || true )"
+echo "-- grep output (code query) --"; echo "$COUT"
+echo "-- daemon log tail --"; tail -10 /tmp/semfs_holistic.log
+
+if ! echo "$OUT" | grep -q "auth.md"; then
+  echo "FAIL: auth.md not found via local semantic search (text lane)"; exit 1
 fi
+if ! echo "$COUT" | grep -q "lexer.rs"; then
+  echo "FAIL: lexer.rs not found via local semantic search (code lane)"; exit 1
+fi
+echo "PASS: holistic local registry pipeline — POSIX + text lane + code lane work"
+exit 0
