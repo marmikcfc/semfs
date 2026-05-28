@@ -53,13 +53,31 @@ impl SqliteVecStore {
         // guard in `enable_code_indexing`.) The daemon fails open on this error
         // (mounts with local indexing disabled), leaving the old index untouched.
         // Checked BEFORE any schema mutation so the existing index is preserved.
-        if let Some(stored) = db.embed_identity() {
-            if stored != identity {
-                anyhow::bail!(
-                    "existing index was built with text embedder '{stored}' but the current \
-                     embedder is '{identity}'; rebuild the index (fresh cache) or restore the \
-                     previous model"
-                );
+        let stored = db.embed_identity();
+        match &stored {
+            Some(s) if *s != identity => anyhow::bail!(
+                "existing index was built with text embedder '{s}' but the current embedder is \
+                 '{identity}'; rebuild the index (fresh cache) or restore the previous model"
+            ),
+            Some(_) => {} // matching stamp — safe to open
+            None => {
+                // No stamp is only safe on a PROVABLY brand-new text lane. Existing
+                // `chunks` rows mean vectors were indexed under an unknown model
+                // (a legacy or partially-recovered cache); adopting it would let
+                // `index()` mix spaces or `ensure_vector_tables` drop/recreate on a
+                // width change. Refuse — require a fresh reindex.
+                let has_rows = db
+                    .conn
+                    .lock()
+                    .query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| r.get::<_, i64>(0))
+                    .map(|n| n == 1)
+                    .unwrap_or(false);
+                if has_rows {
+                    anyhow::bail!(
+                        "existing index has chunks but no recorded text embedder identity \
+                         (legacy/corrupt cache); rebuild the index (fresh cache)"
+                    );
+                }
             }
         }
         // PRESERVE any existing code lane: passing `None` here would make
@@ -68,9 +86,8 @@ impl SqliteVecStore {
         // at the real width afterward (a no-op when unchanged).
         let existing_code_dims = db.code_embed_dims();
         db.ensure_vector_tables(embedder.dimensions(), existing_code_dims)?;
-        // Stamp the text identity on first creation (the drift guard above means
-        // any existing stamp already equals `identity`).
-        if db.embed_identity().is_none() {
+        // Stamp the text identity on first creation (brand-new lane, verified above).
+        if stored.is_none() {
             db.record_embed_identity(&identity)?;
         }
         Ok(Self {
@@ -95,18 +112,48 @@ impl SqliteVecStore {
         // two vector spaces; non-destructively (mirroring the text lane) we instead
         // leave the old lane inert and bail so the caller fails open — code files
         // fall back to the text lane until a fresh index. Recovery = fresh index.
-        if let Some(stored) = self.db.code_embed_identity() {
-            if stored != code.identity() {
-                anyhow::bail!(
-                    "existing code lane was built with '{stored}' but the current code model is \
-                     '{}'; code lane disabled until a fresh reindex",
-                    code.identity()
-                );
+        let stored = self.db.code_embed_identity();
+        match &stored {
+            Some(s) if *s != code.identity() => anyhow::bail!(
+                "existing code lane was built with '{s}' but the current code model is '{}'; \
+                 code lane disabled until a fresh reindex",
+                code.identity()
+            ),
+            Some(_) => {} // matching stamp — safe
+            None => {
+                // No code stamp is only safe on a brand-new code lane. Existing
+                // `vchunks_code` rows without a stamp = legacy/corrupt → refuse
+                // (don't adopt + mix). The daemon fails open (text lane only).
+                let has_rows = {
+                    let conn = self.db.conn.lock();
+                    let table = conn
+                        .query_row(
+                            "SELECT count(*) FROM sqlite_master WHERE type='table' AND \
+                             name='vchunks_code'",
+                            [],
+                            |r| r.get::<_, i64>(0),
+                        )
+                        .map(|n| n > 0)
+                        .unwrap_or(false);
+                    table
+                        && conn
+                            .query_row("SELECT EXISTS(SELECT 1 FROM vchunks_code)", [], |r| {
+                                r.get::<_, i64>(0)
+                            })
+                            .map(|n| n == 1)
+                            .unwrap_or(false)
+                };
+                if has_rows {
+                    anyhow::bail!(
+                        "existing code lane has vectors but no recorded code embedder identity \
+                         (legacy/corrupt); rebuild the index"
+                    );
+                }
             }
         }
         self.db
             .ensure_vector_tables(self.embedder.dimensions(), Some(code.dimensions()))?;
-        if self.db.code_embed_identity().is_none() {
+        if stored.is_none() {
             self.db.record_code_embed_identity(&code.identity())?;
         }
         self.code_embedder = Some(code);
@@ -837,6 +884,44 @@ mod tests {
             .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/a.rs'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1, "old code-lane chunks preserved");
+    }
+
+    /// A legacy/corrupt cache — chunks present but the text identity stamp is gone
+    /// — must be refused by the writer, not silently adopted under the current
+    /// model (which could mix spaces or drop/recreate the vec table).
+    #[tokio::test]
+    async fn writer_refuses_index_with_chunks_but_no_text_stamp() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+            .unwrap()
+            .index(2, "/a.md", "hello")
+            .unwrap();
+        // Wipe the text identity stamp, keeping chunks/vectors (legacy/corrupt).
+        db.conn
+            .lock()
+            .execute("DELETE FROM fs_config WHERE key='text_embed_model'", [])
+            .unwrap();
+        let res = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384)));
+        assert!(res.is_err(), "must refuse a populated index with no text stamp");
+    }
+
+    /// Same for the code lane: vchunks_code rows present but the code stamp gone
+    /// → enable_code_indexing must refuse rather than adopt.
+    #[tokio::test]
+    async fn writer_refuses_code_lane_with_rows_but_no_code_stamp() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        w.index(2, "/a.rs", "fn a() {}").unwrap(); // populates vchunks_code
+        drop(w);
+        db.conn
+            .lock()
+            .execute("DELETE FROM fs_config WHERE key='code_embed_model'", [])
+            .unwrap();
+        // new() succeeds (text stamp intact); enable_code_indexing must refuse.
+        let mut w2 = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).unwrap();
+        let res = w2.enable_code_indexing(Arc::new(HashEmbedder::new(256)));
+        assert!(res.is_err(), "must refuse a populated code lane with no code stamp");
     }
 
     /// A rename crossing the code/text extension boundary drops the index entry
