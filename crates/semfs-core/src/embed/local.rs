@@ -89,6 +89,30 @@ mod tests {
     use super::*;
     use crate::embed::cosine;
 
+    /// Enforce that FASTEMBED_REV tracks the pinned `fastembed` version (it's the
+    /// cache-busting key folded into the embedder identity). Fails on a fastembed
+    /// minor/major bump until someone updates the const — which is exactly when
+    /// re-bundled model artifacts must invalidate existing caches.
+    #[test]
+    fn fastembed_rev_tracks_dependency() {
+        let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
+            .expect("read workspace Cargo.lock");
+        let ver = lock
+            .split("name = \"fastembed\"")
+            .nth(1)
+            .and_then(|s| s.split("version = \"").nth(1))
+            .and_then(|s| s.split('"').next())
+            .expect("fastembed version in Cargo.lock");
+        let mut parts = ver.split('.');
+        let major = parts.next().unwrap();
+        let minor = parts.next().unwrap_or("0");
+        assert_eq!(
+            super::FASTEMBED_REV,
+            format!("fe{major}.{minor}"),
+            "fastembed is {ver}; bump FASTEMBED_REV to fe{major}.{minor} (forces cache reindex)"
+        );
+    }
+
     /// Live (network) test: downloads the text model and checks semantic order.
     /// Gated behind RUN_FASTEMBED so the default `cargo test` stays offline/fast.
     #[test]
