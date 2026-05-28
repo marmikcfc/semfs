@@ -230,11 +230,11 @@ impl SqliteVecStore {
         if !text_ok {
             return false;
         }
-        // (4) Fall back to cloud only when ALL searchable content is stranded in
-        // an inactive code lane — i.e. the code lane has rows we can't query AND
-        // the TEXT lane is empty. The text lane stays the floor: a mixed cache
-        // (some prose, some code) remains locally searchable via text even when
-        // the code embedder is unavailable; `search()` simply skips the code KNN.
+        // (4) Any POPULATED code lane that we cannot search forces cloud fallback —
+        // even on a mixed cache. If `vchunks_code` has rows but the code lane is
+        // not active (no/mismatched/unstamped code embedder), serving text-only
+        // would silently drop code recall (false negatives for code-heavy queries).
+        // Fail closed so the cloud — which has everything — answers instead.
         let code_table = conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vchunks_code'",
@@ -243,17 +243,13 @@ impl SqliteVecStore {
             )
             .map(|n| n > 0)
             .unwrap_or(false);
-        if code_table && !code_active {
-            let exists = |sql: &str| -> bool {
-                conn.query_row(sql, [], |r| r.get::<_, i64>(0))
-                    .map(|n| n == 1)
-                    .unwrap_or(false)
-            };
-            let code_rows = exists("SELECT EXISTS(SELECT 1 FROM vchunks_code)");
-            let text_rows = exists("SELECT EXISTS(SELECT 1 FROM vchunks)");
-            if code_rows && !text_rows {
-                return false;
-            }
+        let code_rows = code_table
+            && conn
+                .query_row("SELECT EXISTS(SELECT 1 FROM vchunks_code)", [], |r| r.get::<_, i64>(0))
+                .map(|n| n == 1)
+                .unwrap_or(false);
+        if code_rows && !code_active {
+            return false;
         }
         // (5) When the code lane IS active, validate it the same way as the text
         // lane: a MATCH at the code width must not error. Otherwise a missing or
@@ -1022,25 +1018,31 @@ mod tests {
         assert!(active.is_searchable(), "active code lane → searchable");
     }
 
-    /// A MIXED cache (prose + code) stays locally searchable via the text lane
-    /// even when the code lane is inactive — the text lane is the floor, and only
-    /// a fully-stranded (text-empty) code lane forces cloud fallback.
+    /// A MIXED cache (prose + code) with a POPULATED but inactive code lane must
+    /// fail closed to cloud — serving text-only would silently drop code recall.
+    /// (When the code lane is active, it's searchable; when EMPTY, the text lane
+    /// alone suffices — both covered elsewhere.)
     #[tokio::test]
-    async fn mixed_cache_searchable_via_text_when_code_lane_inactive() {
+    async fn mixed_cache_with_populated_inactive_code_lane_falls_back() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
         w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
         w.index(2, "/docs/readme.md", "prose content about the project").unwrap(); // text lane
-        w.index(3, "/src/lib.rs", "fn lib() {}").unwrap(); // code lane
+        w.index(3, "/src/lib.rs", "fn lib() {}").unwrap(); // code lane (has rows)
         drop(w);
 
-        // Reader with NO code embedder → code lane inactive, but the text lane has
-        // content, so local search stays viable (code KNN simply skipped).
-        let reader = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)));
+        // Reader with NO code embedder → code lane inactive but populated → must
+        // fall back to cloud rather than silently serve text-only results.
+        let inert = SqliteVecStore::open_existing(db.clone(), Arc::new(HashEmbedder::new(384)));
         assert!(
-            reader.is_searchable(),
-            "mixed cache must stay searchable via the text lane when code lane is inactive"
+            !inert.is_searchable(),
+            "populated inactive code lane must force cloud fallback even on a mixed cache"
         );
+
+        // With the matching code embedder → code lane active → searchable.
+        let active = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)))
+            .with_code_embedder(Arc::new(HashEmbedder::new(256)));
+        assert!(active.is_searchable(), "active code lane → searchable");
     }
 
     /// An ACTIVE but broken code lane (matching code embedder, but a missing/

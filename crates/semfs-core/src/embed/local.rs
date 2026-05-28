@@ -15,9 +15,10 @@ use super::Embedder;
 /// fastembed registry revision folded into the embedder identity so a fastembed
 /// upgrade that re-bundles a model's ONNX/tokenizer under the SAME `model_code`
 /// invalidates existing caches and forces a reindex (the registry exposes no
-/// per-model checksum). MUST be bumped to match `fastembed` in Cargo.toml.
-/// (Full artifact-hash fingerprinting is deferred with the BYO-ONNX work.)
-const FASTEMBED_REV: &str = "fe5.13";
+/// per-model checksum). EXACT version incl. patch — a 5.13.x→5.13.y rebundle must
+/// also invalidate. Enforced by `fastembed_rev_tracks_dependency` against the
+/// lockfile. (Full artifact-hash fingerprinting is deferred with the BYO-ONNX work.)
+const FASTEMBED_REV: &str = "fe5.13.4";
 
 /// A local ONNX embedder backed by a fastembed registry model.
 pub struct LocalEmbedder {
@@ -103,13 +104,11 @@ mod tests {
             .and_then(|s| s.split("version = \"").nth(1))
             .and_then(|s| s.split('"').next())
             .expect("fastembed version in Cargo.lock");
-        let mut parts = ver.split('.');
-        let major = parts.next().unwrap();
-        let minor = parts.next().unwrap_or("0");
+        // EXACT match (incl. patch) — a patch-level rebundle must invalidate caches.
         assert_eq!(
             super::FASTEMBED_REV,
-            format!("fe{major}.{minor}"),
-            "fastembed is {ver}; bump FASTEMBED_REV to fe{major}.{minor} (forces cache reindex)"
+            format!("fe{ver}"),
+            "fastembed is {ver}; bump FASTEMBED_REV to fe{ver} (forces cache reindex)"
         );
     }
 
