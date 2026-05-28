@@ -94,17 +94,17 @@ impl SqliteVecStore {
                 }
                 drop(conn);
                 // The identity stamp (matched above) encodes the true width, so the
-                // separate `text_embed_dims` metadata MUST agree. If it's corrupted/
-                // stale, `ensure_vector_tables` below would DROP the populated, valid
-                // `vchunks` based on that bad metadata — refuse instead of trusting it.
-                if let Some(d) = db.text_embed_dims() {
-                    if d != embedder.dimensions() {
-                        anyhow::bail!(
-                            "stamped cache text_embed_dims={d} disagrees with the embedder width \
-                             {} (corrupt metadata); rebuild the index",
-                            embedder.dimensions()
-                        );
-                    }
+                // separate `text_embed_dims` metadata MUST be present AND agree. A
+                // corrupt OR MISSING dims row (partial restore) would let
+                // `ensure_vector_tables` leave a wrong-width / drop the populated
+                // `vchunks` — refuse instead of trusting (or recreating from) it.
+                match db.text_embed_dims() {
+                    Some(d) if d == embedder.dimensions() => {}
+                    other => anyhow::bail!(
+                        "stamped cache has text_embed_dims={other:?} but the embedder width is {} \
+                         (corrupt/missing dims metadata); rebuild the index",
+                        embedder.dimensions()
+                    ),
                 }
             }
             None => {
@@ -126,6 +126,17 @@ impl SqliteVecStore {
                     );
                 }
             }
+        }
+        // Guard the CODE lane's metadata before the schema mutation below. If the
+        // code lane is stamped but its dims row was lost (partial restore), the
+        // `existing_code_dims = None` we'd pass to `ensure_vector_tables` would
+        // make it DROP the populated `vchunks_code` ("code embedder removed").
+        // Refuse on that inconsistency instead of silently destroying the lane.
+        if db.code_embed_identity().is_some() && db.code_embed_dims().is_none() {
+            anyhow::bail!(
+                "code lane is stamped but code_embed_dims is missing (corrupt metadata); \
+                 rebuild the index"
+            );
         }
         // PRESERVE any existing code lane: passing `None` here would make
         // `ensure_vector_tables` drop `vchunks_code` ("code embedder removed").
@@ -167,18 +178,17 @@ impl SqliteVecStore {
                 code.identity()
             ),
             Some(_) => {
-                // Matching code stamp: the stored code width MUST agree with the
-                // embedder (the stamp encodes it). A divergent `code_embed_dims`
-                // would make ensure_vector_tables DROP the populated `vchunks_code`
-                // — refuse on corrupt metadata instead.
-                if let Some(d) = self.db.code_embed_dims() {
-                    if d != code.dimensions() {
-                        anyhow::bail!(
-                            "code lane code_embed_dims={d} disagrees with the code embedder width \
-                             {} (corrupt metadata); rebuild the index",
-                            code.dimensions()
-                        );
-                    }
+                // Matching code stamp: the stored code width MUST be present AND
+                // agree with the embedder (the stamp encodes it). A corrupt OR
+                // MISSING `code_embed_dims` would make ensure_vector_tables drop /
+                // leave a wrong-width `vchunks_code` — refuse instead.
+                match self.db.code_embed_dims() {
+                    Some(d) if d == code.dimensions() => {}
+                    other => anyhow::bail!(
+                        "code lane has code_embed_dims={other:?} but the code embedder width is \
+                         {} (corrupt/missing dims metadata); rebuild the index",
+                        code.dimensions()
+                    ),
                 }
             }
             None => {
@@ -659,29 +669,27 @@ impl SemanticIndex for SqliteVecStore {
             }
         }
 
-        // Code vector KNN (vchunks_code) — only when a code embedder is attached.
-        // The query is embedded in the code space; its candidates union into the
-        // same RRF map as the text lane and FTS.
+        // Code vector KNN (vchunks_code) — only when the code lane is ACTIVE
+        // (code_qblob is Some). Unlike the fail-soft FTS lane, errors here
+        // PROPAGATE: the reader committed to a searchable code lane via
+        // is_searchable(), so a runtime vec0 failure (e.g. vchunks_code dropped/
+        // corrupted concurrently after the probe) must surface so the caller
+        // (grep) falls back to cloud rather than silently serve text-only results.
         if let Some(cqblob) = &code_qblob {
             let k = if scope.is_some() { SCOPED_KNN_POOL } else { SEARCH_POOL };
-            if let Ok(mut stmt) = conn.prepare(
+            let mut stmt = conn.prepare(
                 "SELECT c.id, c.filepath, c.text FROM vchunks_code v \
                  JOIN chunks c ON c.id = v.rowid \
                  WHERE v.embedding MATCH ?1 AND k = ?2 \
                  AND (?3 IS NULL OR instr(c.filepath, ?3) = 1) ORDER BY distance",
-            ) {
-                if let Ok(rows) =
-                    stmt.query_map(rusqlite::params![cqblob, k as i64, scope], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-                    })
-                {
-                    for (rank, row) in rows.enumerate() {
-                        if let Ok((id, fp, text)) = row {
-                            rep_chunk.entry(fp.clone()).or_insert(id);
-                            super::rank::rrf_bump(&mut by_file, fp, text, rank);
-                        }
-                    }
-                }
+            )?;
+            let rows = stmt.query_map(rusqlite::params![cqblob, k as i64, scope], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })?;
+            for (rank, row) in rows.enumerate() {
+                let (id, fp, text) = row?;
+                rep_chunk.entry(fp.clone()).or_insert(id);
+                super::rank::rrf_bump(&mut by_file, fp, text, rank);
             }
         }
 
@@ -1091,6 +1099,68 @@ mod tests {
             .query_row("SELECT count(*) FROM vchunks_code", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1, "vchunks_code rows preserved (no destructive recreate)");
+    }
+
+    /// Missing (not just mismatched) text_embed_dims on a stamped cache must be
+    /// refused — ensure_vector_tables would otherwise treat None as compatible.
+    #[tokio::test]
+    async fn writer_refuses_missing_text_embed_dims() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+            .unwrap()
+            .index(2, "/a.md", "hello")
+            .unwrap();
+        db.conn
+            .lock()
+            .execute("DELETE FROM fs_config WHERE key='text_embed_dims'", [])
+            .unwrap();
+        assert!(
+            SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).is_err(),
+            "stamped cache with missing text_embed_dims must be refused"
+        );
+    }
+
+    /// Missing code_embed_dims on a stamped code lane must be refused by new()
+    /// BEFORE ensure_vector_tables (which would drop the populated vchunks_code).
+    #[tokio::test]
+    async fn writer_refuses_missing_code_embed_dims() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        w.index(2, "/a.rs", "fn a() {}").unwrap();
+        drop(w);
+        db.conn
+            .lock()
+            .execute("DELETE FROM fs_config WHERE key='code_embed_dims'", [])
+            .unwrap();
+        assert!(
+            SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).is_err(),
+            "stamped code lane with missing code_embed_dims must be refused"
+        );
+        // vchunks_code preserved — refused before any destructive recreate.
+        let n: i64 = db
+            .conn
+            .lock()
+            .query_row("SELECT count(*) FROM vchunks_code", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "vchunks_code rows preserved");
+    }
+
+    /// A code-lane vec0 failure AFTER is_searchable committed (e.g. vchunks_code
+    /// dropped concurrently) must make search() return Err — so grep falls back to
+    /// cloud — rather than silently degrade to text-only results.
+    #[tokio::test]
+    async fn search_errors_when_active_code_lane_fails_at_query_time() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let mut store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        store.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        store.index(2, "/src/a.rs", "fn a() {}").unwrap();
+        store.index(3, "/docs/b.md", "prose").unwrap();
+        assert!(store.is_searchable(), "healthy dual cache is searchable");
+        // Simulate a concurrent corruption AFTER the readiness check.
+        db.conn.lock().execute_batch("DROP TABLE vchunks_code;").unwrap();
+        let res = store.search("anything", None).await;
+        assert!(res.is_err(), "active code-lane query failure must propagate, not be swallowed");
     }
 
     /// A rename crossing the code/text extension boundary drops the index entry
