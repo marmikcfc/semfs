@@ -80,6 +80,20 @@ impl SqliteVecStore {
     /// Takes `&mut self` (not a consuming builder) so the caller can FAIL-OPEN:
     /// on error the store is untouched and text-lane indexing continues.
     pub fn enable_code_indexing(&mut self, code: Arc<dyn Embedder>) -> anyhow::Result<()> {
+        // Refuse to enable the code lane if it was built with a DIFFERENT model
+        // (even at the same width). Re-stamping + reusing `vchunks_code` would mix
+        // two vector spaces; non-destructively (mirroring the text lane) we instead
+        // leave the old lane inert and bail so the caller fails open — code files
+        // fall back to the text lane until a fresh index. Recovery = fresh index.
+        if let Some(stored) = self.db.code_embed_identity() {
+            if stored != code.identity() {
+                anyhow::bail!(
+                    "existing code lane was built with '{stored}' but the current code model is \
+                     '{}'; code lane disabled until a fresh reindex",
+                    code.identity()
+                );
+            }
+        }
         self.db
             .ensure_vector_tables(self.embedder.dimensions(), Some(code.dimensions()))?;
         if self.db.code_embed_identity().is_none() {
@@ -285,20 +299,32 @@ impl SqliteVecStore {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         // Overwrite: clear the destination's existing index rows.
         drop_file_chunks(&tx, new)?;
-        tx.execute(
-            "UPDATE chunks SET filepath = ?2 WHERE filepath = ?1",
-            rusqlite::params![old, new],
-        )?;
-        tx.execute(
-            "UPDATE edges SET from_path = ?2 WHERE from_path = ?1",
-            rusqlite::params![old, new],
-        )?;
+
+        // A cheap relabel keeps the existing vectors — but those vectors live in
+        // the lane chosen by the OLD path's extension. When dual-lane indexing is
+        // active and the rename crosses the code/text boundary (e.g. foo.md →
+        // foo.rs), the vectors would be stranded in the wrong lane (wrong model).
+        // rename() has no content to re-embed, so drop the entry instead; the next
+        // write re-indexes it into the correct lane. Same-lane renames relabel.
+        let lane_cross =
+            self.code_embedder.is_some() && is_code_path(old) != is_code_path(new);
+        if lane_cross {
+            drop_file_chunks(&tx, old)?;
+        } else {
+            tx.execute(
+                "UPDATE chunks SET filepath = ?2 WHERE filepath = ?1",
+                rusqlite::params![old, new],
+            )?;
+            tx.execute(
+                "UPDATE edges SET from_path = ?2 WHERE from_path = ?1",
+                rusqlite::params![old, new],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
 }
 
-/// Delete a file's chunks and their rowid-linked vec0/fts rows within a txn.
 /// Classify a path as code-like by extension — routes it to the code embedder +
 /// `vchunks_code` lane. Markup/prose/config (md, txt, json, yaml, html, css, …)
 /// stay on the text lane. Only files with an actual extension can be code.
@@ -318,6 +344,7 @@ fn is_code_path(filepath: &str) -> bool {
     )
 }
 
+/// Delete a file's chunks and their rowid-linked vec0/fts rows within a txn.
 fn drop_file_chunks(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Result<()> {
     let ids: Vec<i64> = {
         let mut stmt = tx.prepare("SELECT id FROM chunks WHERE filepath = ?1")?;
@@ -678,6 +705,90 @@ mod tests {
         assert_eq!(n, 1, "re-index replaces code-lane chunks");
     }
 
+    #[derive(Debug)]
+    struct TaggedEmbedder {
+        dims: usize,
+        id: String,
+    }
+    impl crate::embed::Embedder for TaggedEmbedder {
+        fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![0.0; self.dims]).collect())
+        }
+        fn dimensions(&self) -> usize {
+            self.dims
+        }
+        fn identity(&self) -> String {
+            self.id.clone()
+        }
+    }
+
+    /// A code-model swap at the SAME width must be refused non-destructively: the
+    /// writer won't mix new-model vectors into the old code lane or re-stamp it.
+    #[tokio::test]
+    async fn code_model_swap_disables_code_lane_nondestructively() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-A:256".into() }))
+            .unwrap();
+        w.index(2, "/src/a.rs", "fn a() {}").unwrap();
+        drop(w);
+
+        // Reopen with the SAME width (256) but a DIFFERENT code model → must bail.
+        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let res =
+            w2.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-B:256".into() }));
+        assert!(res.is_err(), "same-width code-model swap must be refused");
+
+        // The old code lane + its vectors are preserved (not dropped or mixed).
+        let n: i64 = db
+            .conn
+            .lock()
+            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/a.rs'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "old code-lane chunks preserved");
+    }
+
+    /// A rename crossing the code/text extension boundary drops the index entry
+    /// (re-indexed into the correct lane on next write) rather than stranding
+    /// vectors in the wrong lane. Same-lane renames still relabel cheaply.
+    #[tokio::test]
+    async fn lane_crossing_rename_drops_entry() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let mut store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        store.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        store.index(2, "/notes/readme.md", "documentation about parsing tokens").unwrap();
+
+        // Cross-lane (.md text → .rs code): drop, not relabel.
+        store.rename("/notes/readme.md", "/notes/readme.rs").unwrap();
+        {
+            let conn = db.conn.lock();
+            let old_n: i64 = conn
+                .query_row("SELECT count(*) FROM chunks WHERE filepath='/notes/readme.md'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            let new_n: i64 = conn
+                .query_row("SELECT count(*) FROM chunks WHERE filepath='/notes/readme.rs'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(old_n, 0, "old path cleared");
+            assert_eq!(new_n, 0, "lane-cross rename drops (re-index on next write), not relabel");
+        }
+
+        // Same-lane (.md → .md): relabel (kept).
+        store.index(3, "/notes/guide.md", "more docs").unwrap();
+        store.rename("/notes/guide.md", "/notes/manual.md").unwrap();
+        let kept: i64 = db
+            .conn
+            .lock()
+            .query_row("SELECT count(*) FROM chunks WHERE filepath='/notes/manual.md'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(kept, 1, "same-lane rename relabels (kept)");
+    }
+
     /// Upgrade compat: a TEXT-ONLY index (no code stamp — e.g. written before the
     /// code lane shipped) must stay searchable even when the reader attaches a
     /// code embedder (as grep does). Missing code metadata = text-only, not a
@@ -714,22 +825,6 @@ mod tests {
 
         // Same width (384) but a DIFFERENT model identity → NOT searchable
         // (a same-dimension model swap would silently corrupt relevance).
-        #[derive(Debug)]
-        struct TaggedEmbedder {
-            dims: usize,
-            id: String,
-        }
-        impl crate::embed::Embedder for TaggedEmbedder {
-            fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
-                Ok(texts.iter().map(|_| vec![0.0; self.dims]).collect())
-            }
-            fn dimensions(&self) -> usize {
-                self.dims
-            }
-            fn identity(&self) -> String {
-                self.id.clone()
-            }
-        }
         let other_model = SqliteVecStore::open_existing(
             db.clone(),
             Arc::new(TaggedEmbedder { dims: 384, id: "other-model:384".into() }),
