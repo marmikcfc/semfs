@@ -92,6 +92,20 @@ impl SqliteVecStore {
                          (vec table missing/undercounted — corruption); rebuild the index"
                     );
                 }
+                drop(conn);
+                // The identity stamp (matched above) encodes the true width, so the
+                // separate `text_embed_dims` metadata MUST agree. If it's corrupted/
+                // stale, `ensure_vector_tables` below would DROP the populated, valid
+                // `vchunks` based on that bad metadata — refuse instead of trusting it.
+                if let Some(d) = db.text_embed_dims() {
+                    if d != embedder.dimensions() {
+                        anyhow::bail!(
+                            "stamped cache text_embed_dims={d} disagrees with the embedder width \
+                             {} (corrupt metadata); rebuild the index",
+                            embedder.dimensions()
+                        );
+                    }
+                }
             }
             None => {
                 // No stamp is only safe on a PROVABLY brand-new text lane. Existing
@@ -152,7 +166,21 @@ impl SqliteVecStore {
                  code lane disabled until a fresh reindex",
                 code.identity()
             ),
-            Some(_) => {} // matching stamp — safe
+            Some(_) => {
+                // Matching code stamp: the stored code width MUST agree with the
+                // embedder (the stamp encodes it). A divergent `code_embed_dims`
+                // would make ensure_vector_tables DROP the populated `vchunks_code`
+                // — refuse on corrupt metadata instead.
+                if let Some(d) = self.db.code_embed_dims() {
+                    if d != code.dimensions() {
+                        anyhow::bail!(
+                            "code lane code_embed_dims={d} disagrees with the code embedder width \
+                             {} (corrupt metadata); rebuild the index",
+                            code.dimensions()
+                        );
+                    }
+                }
+            }
             None => {
                 // No code stamp is only safe on a brand-new code lane. Existing
                 // `vchunks_code` rows without a stamp = legacy/corrupt → refuse
@@ -1014,6 +1042,55 @@ mod tests {
         db.conn.lock().execute_batch("DROP TABLE vchunks;").unwrap();
         let res = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384)));
         assert!(res.is_err(), "stamped cache with chunks but missing vchunks must be refused");
+    }
+
+    /// Corrupt `text_embed_dims` metadata (identity stamp + counts still
+    /// consistent) must make the writer REFUSE — not let ensure_vector_tables drop
+    /// the populated `vchunks` based on the bad metadata.
+    #[tokio::test]
+    async fn writer_refuses_corrupt_text_embed_dims() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+            .unwrap()
+            .index(2, "/a.md", "hello")
+            .unwrap();
+        db.conn
+            .lock()
+            .execute("UPDATE fs_config SET value='256' WHERE key='text_embed_dims'", [])
+            .unwrap();
+        let res = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)));
+        assert!(res.is_err(), "corrupt text_embed_dims must be refused");
+        // The vectors must NOT have been dropped (writer refused before mutating).
+        let n: i64 = db
+            .conn
+            .lock()
+            .query_row("SELECT count(*) FROM vchunks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "vchunks rows preserved (no destructive recreate)");
+    }
+
+    /// Corrupt `code_embed_dims` must make `enable_code_indexing` REFUSE rather
+    /// than let ensure_vector_tables drop the populated `vchunks_code`.
+    #[tokio::test]
+    async fn writer_refuses_corrupt_code_embed_dims() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        w.index(2, "/a.rs", "fn a() {}").unwrap();
+        drop(w);
+        db.conn
+            .lock()
+            .execute("UPDATE fs_config SET value='128' WHERE key='code_embed_dims'", [])
+            .unwrap();
+        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let res = w2.enable_code_indexing(Arc::new(HashEmbedder::new(256)));
+        assert!(res.is_err(), "corrupt code_embed_dims must be refused");
+        let n: i64 = db
+            .conn
+            .lock()
+            .query_row("SELECT count(*) FROM vchunks_code", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "vchunks_code rows preserved (no destructive recreate)");
     }
 
     /// A rename crossing the code/text extension boundary drops the index entry

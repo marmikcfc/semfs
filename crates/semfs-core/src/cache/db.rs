@@ -267,6 +267,20 @@ impl Db {
         self.code_embed_identity().is_some()
     }
 
+    /// The stored text vec0 width, if recorded. Used to detect corrupted dims
+    /// metadata before `ensure_vector_tables` could drop a populated `vchunks`.
+    pub(crate) fn text_embed_dims(&self) -> Option<usize> {
+        self.conn
+            .lock()
+            .query_row(
+                "SELECT value FROM fs_config WHERE key = 'text_embed_dims'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|s| s.parse().ok())
+    }
+
     /// The stored code vec0 width, if a code lane was ever created. Lets the
     /// text-only writer fast path preserve an existing `vchunks_code` instead of
     /// dropping it (a fail-open daemon must not destroy code vectors).
