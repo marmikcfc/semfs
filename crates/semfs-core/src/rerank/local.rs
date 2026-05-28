@@ -18,10 +18,6 @@ use hf_hub::{api::sync::ApiBuilder, Cache};
 
 use super::Reranker;
 
-/// Standard BERT/MiniLM special tokens, used when a model repo omits
-/// `special_tokens_map.json`.
-const DEFAULT_SPECIAL_TOKENS_MAP: &str = r#"{"unk_token":"[UNK]","sep_token":"[SEP]","pad_token":"[PAD]","cls_token":"[CLS]","mask_token":"[MASK]"}"#;
-
 /// A local ONNX cross-encoder reranker backed by a fastembed registry model.
 pub struct LocalReranker {
     // fastembed `rerank` borrows the model mutably; the trait is `&self`.
@@ -54,15 +50,14 @@ impl LocalReranker {
         let read = |file: &str| -> anyhow::Result<Vec<u8>> { Ok(std::fs::read(fetch(file)?)?) };
 
         let onnx_path = fetch(onnx_file)?;
-        let special_tokens_map_file = repo
-            .get("special_tokens_map.json")
-            .ok()
-            .and_then(|p| std::fs::read(p).ok())
-            .unwrap_or_else(|| DEFAULT_SPECIAL_TOKENS_MAP.as_bytes().to_vec());
+        // All four tokenizer files are required and hard-fail on any fetch/read
+        // error: a swallowed `special_tokens_map.json` failure would silently
+        // substitute generic BERT special tokens, producing wrong rerank scores
+        // with no signal. On error the caller fails open to NO rerank instead.
         let tokenizer_files = TokenizerFiles {
             tokenizer_file: read("tokenizer.json")?,
             config_file: read("config.json")?,
-            special_tokens_map_file,
+            special_tokens_map_file: read("special_tokens_map.json")?,
             tokenizer_config_file: read("tokenizer_config.json")?,
         };
 
