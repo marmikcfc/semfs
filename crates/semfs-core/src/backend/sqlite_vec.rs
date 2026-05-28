@@ -59,7 +59,40 @@ impl SqliteVecStore {
                 "existing index was built with text embedder '{s}' but the current embedder is \
                  '{identity}'; rebuild the index (fresh cache) or restore the previous model"
             ),
-            Some(_) => {} // matching stamp — safe to open
+            Some(_) => {
+                // Matching stamp: the vec tables must already be CONSISTENT with
+                // `chunks`. `ensure_vector_tables` below would silently recreate a
+                // missing vec table EMPTY (CREATE IF NOT EXISTS), stranding existing
+                // chunks vectorless on a partial restore/corruption. Validate the
+                // count invariant BEFORE that mutation and refuse if vectors are
+                // missing — require a rebuild rather than a silent empty repair.
+                let conn = db.conn.lock();
+                let count = |sql: &str| -> i64 {
+                    conn.query_row(sql, [], |r| r.get(0)).unwrap_or(-1)
+                };
+                let has = |name: &str| -> bool {
+                    conn.query_row(
+                        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                        [name],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .map(|n| n > 0)
+                    .unwrap_or(false)
+                };
+                let chunk_n = count("SELECT count(*) FROM chunks");
+                let text_n = if has("vchunks") { count("SELECT count(*) FROM vchunks") } else { 0 };
+                let code_n = if has("vchunks_code") {
+                    count("SELECT count(*) FROM vchunks_code")
+                } else {
+                    0
+                };
+                if chunk_n < 0 || text_n < 0 || code_n < 0 || chunk_n != text_n + code_n {
+                    anyhow::bail!(
+                        "stamped cache has {chunk_n} chunks but {text_n}+{code_n} vectors \
+                         (vec table missing/undercounted — corruption); rebuild the index"
+                    );
+                }
+            }
             None => {
                 // No stamp is only safe on a PROVABLY brand-new text lane. Existing
                 // `chunks` rows mean vectors were indexed under an unknown model
@@ -316,10 +349,29 @@ impl SqliteVecStore {
     /// Re-indexing the same `filepath` replaces its prior chunks (and their
     /// rowid-linked vec0/fts rows). Removing a file = `index` with empty content.
     pub fn index(&self, ino: u64, filepath: &str, content: &str) -> anyhow::Result<()> {
+        let path_is_code = is_code_path(filepath);
+        // If the cache ADVERTISES a code lane but this writer has no active code
+        // embedder (fail-open state: code-model init failed, or a model-mismatch
+        // bail), DO NOT index a code-like file into the text lane — that would
+        // strand its vectors in the wrong space permanently. Drop any prior entry
+        // (so we don't keep stale/wrong-lane vectors) and skip; the file is
+        // re-indexed correctly once a valid code embedder is available.
+        if path_is_code && self.code_embedder.is_none() && self.db.code_embed_identity().is_some() {
+            let mut conn = self.db.conn.lock();
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            drop_file_chunks(&tx, filepath)?;
+            tx.commit()?;
+            tracing::warn!(
+                "code lane advertised but no active code embedder; skipping code file {filepath} \
+                 (re-index when the code model is available)"
+            );
+            return Ok(());
+        }
+
         let chunks = super::chunk::recursive_chunks(content, &super::chunk::ChunkOptions::default());
         // Route code-like files to the code embedder + `vchunks_code` lane when a
         // code embedder is attached; everything else uses the text lane.
-        let use_code = self.code_embedder.is_some() && is_code_path(filepath);
+        let use_code = self.code_embedder.is_some() && path_is_code;
         let embedder = match (&self.code_embedder, use_code) {
             (Some(code), true) => code.as_ref(),
             _ => self.embedder.as_ref(),
@@ -918,6 +970,50 @@ mod tests {
         let mut w2 = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).unwrap();
         let res = w2.enable_code_indexing(Arc::new(HashEmbedder::new(256)));
         assert!(res.is_err(), "must refuse a populated code lane with no code stamp");
+    }
+
+    /// Fail-open writer (code lane advertised, but no active code embedder) must
+    /// NOT index code-like files into the text lane — it skips them (dropping any
+    /// stale entry) so vectors aren't stranded in the wrong space. Text files
+    /// still index normally.
+    #[tokio::test]
+    async fn code_file_skipped_when_lane_advertised_but_no_code_embedder() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        // Writer 1 establishes the code lane (stamp), no files yet.
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        drop(w);
+
+        // Writer 2: fail-open — code lane advertised but NO code embedder attached.
+        let w2 = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        w2.index(2, "/src/x.rs", "fn x() {}").unwrap(); // code path → must be skipped
+        w2.index(3, "/docs/y.md", "hello world").unwrap(); // text path → indexed
+
+        let conn = db.conn.lock();
+        let code_n: i64 = conn
+            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/x.rs'", [], |r| r.get(0))
+            .unwrap();
+        let text_n: i64 = conn
+            .query_row("SELECT count(*) FROM chunks WHERE filepath='/docs/y.md'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(code_n, 0, "code file must be skipped, not stranded in the text lane");
+        assert_eq!(text_n, 1, "text file still indexes");
+    }
+
+    /// A stamped cache whose vec table is missing/undercounted (partial restore /
+    /// corruption) must be refused by the writer — NOT silently recreated empty
+    /// (which would strand existing chunks vectorless).
+    #[tokio::test]
+    async fn writer_refuses_stamped_cache_with_missing_vectors() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+            .unwrap()
+            .index(2, "/a.md", "hello")
+            .unwrap(); // chunks + vchunks populated, stamp present
+        // Corrupt: drop vchunks (vectors gone) but keep chunks + the stamp.
+        db.conn.lock().execute_batch("DROP TABLE vchunks;").unwrap();
+        let res = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384)));
+        assert!(res.is_err(), "stamped cache with chunks but missing vchunks must be refused");
     }
 
     /// A rename crossing the code/text extension boundary drops the index entry
