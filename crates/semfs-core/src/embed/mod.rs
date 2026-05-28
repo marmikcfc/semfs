@@ -13,6 +13,9 @@ pub use cloud::OpenAiEmbedder;
 pub use hash::HashEmbedder;
 pub use local::LocalEmbedder;
 
+/// Re-exported so callers can name registry models without a direct fastembed dep.
+pub use fastembed::EmbeddingModel;
+
 /// Turns text into fixed-width vectors.
 ///
 /// Synchronous on purpose: embedding is CPU-bound and the fastembed-backed impl

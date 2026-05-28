@@ -1,27 +1,32 @@
 //! Capability-based backend resolution (Phase 5).
 //!
-//! Picks the embedder and reranker for each stage from available signals — local
-//! model dirs and API keys — rather than a monolithic `--offline` flag. Each
-//! stage resolves independently, so "local embedder + cloud reranker" is just
-//! what you get when a model dir is present and an OpenRouter key is set.
-//!
-//! The `choose_*` functions are pure (no I/O) and table-tested; `build_*` turn a
-//! choice into a live backend. Both the daemon (indexing) and `grep` (search)
-//! resolve through here so they always agree on the embedder (and thus dims).
+//! The DEFAULT embedder and reranker are local **fastembed-rs registry** models
+//! (auto-downloaded + cached); cloud providers are opt-in via the
+//! `SEMFS_EMBED_BACKEND` / `SEMFS_RERANK_BACKEND` env vars. The `choose_*`
+//! functions are pure (no I/O) and table-tested; `build_*` turn a choice into a
+//! live backend. Both the daemon (indexing) and `grep` (search) resolve through
+//! here so they always agree on the embedder (and thus the vector space).
 
-use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
-use semfs_core::embed::{Embedder, HashEmbedder, LocalEmbedder, OpenAiEmbedder};
-use semfs_core::rerank::{CohereReranker, LocalReranker, RelaceReranker, Reranker};
+use semfs_core::embed::{Embedder, EmbeddingModel, HashEmbedder, LocalEmbedder, OpenAiEmbedder};
+use semfs_core::rerank::{CohereReranker, LocalReranker, RelaceReranker, Reranker, RerankerModel};
 
-/// Signals the resolver reads: local model dirs + API keys.
-#[derive(Debug, Clone)]
+/// The fastembed-rs registry models we standardize on (project goal).
+const TEXT_EMBED_MODEL: EmbeddingModel = EmbeddingModel::SnowflakeArcticEmbedS; // 384d
+const RERANK_MODEL: RerankerModel = RerankerModel::JINARerankerV2BaseMultiligual;
+/// Cloud OpenAI embedding fallback dims (text-embedding-3-small) + hash floor dims.
+const CLOUD_OPENAI_DIMS: usize = 1536;
+const HASH_DIMS: usize = 384;
+
+/// Signals the resolver reads from the environment.
+#[derive(Debug, Clone, Default)]
 pub struct ResolveEnv {
-    pub embed_model_dir: Option<String>,
-    pub embed_dims: usize,
-    pub rerank_model_dir: Option<String>,
+    /// `SEMFS_EMBED_BACKEND`: `local` (default) | `openai` | `openrouter` | `hash`.
+    pub embed_backend: Option<String>,
+    /// `SEMFS_RERANK_BACKEND`: `local` (default) | `cohere` | `relace` | `none`.
+    pub rerank_backend: Option<String>,
     pub openrouter_key: Option<String>,
     pub relace_key: Option<String>,
     pub openai_key: Option<String>,
@@ -32,11 +37,8 @@ impl ResolveEnv {
     pub fn from_env() -> Self {
         let var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
         Self {
-            embed_model_dir: var("SEMFS_EMBED_MODEL_DIR"),
-            embed_dims: var("SEMFS_EMBED_DIMS")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(384),
-            rerank_model_dir: var("SEMFS_RERANK_MODEL_DIR"),
+            embed_backend: var("SEMFS_EMBED_BACKEND"),
+            rerank_backend: var("SEMFS_RERANK_BACKEND"),
             openrouter_key: var("OPENROUTER_API_KEY"),
             relace_key: var("RELACE_API_KEY"),
             openai_key: var("OPENAI_API_KEY"),
@@ -54,37 +56,29 @@ pub enum EmbedChoice {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RerankChoice {
+    Local,
     Cohere,
     Relace,
-    Local,
     None,
 }
 
-/// Embedder precedence: a local model dir wins (offline, free), then a cloud key,
-/// else the deterministic hash floor (dev only — no real semantics).
+/// Embedder choice — local fastembed registry by default; cloud/hash opt-in.
 pub fn choose_embed(env: &ResolveEnv) -> EmbedChoice {
-    if env.embed_model_dir.is_some() {
-        EmbedChoice::Local
-    } else if env.openai_key.is_some() {
-        EmbedChoice::CloudOpenAi
-    } else if env.openrouter_key.is_some() {
-        EmbedChoice::CloudOpenRouter
-    } else {
-        EmbedChoice::Hash
+    match env.embed_backend.as_deref() {
+        Some("hash") => EmbedChoice::Hash,
+        Some("openai") => EmbedChoice::CloudOpenAi,
+        Some("openrouter") => EmbedChoice::CloudOpenRouter,
+        _ => EmbedChoice::Local,
     }
 }
 
-/// Reranker precedence: a cloud cross-encoder (higher quality) when a key is
-/// present, then a local model dir, else skip L5.
+/// Reranker choice — local fastembed registry by default; cloud/none opt-in.
 pub fn choose_rerank(env: &ResolveEnv) -> RerankChoice {
-    if env.openrouter_key.is_some() {
-        RerankChoice::Cohere
-    } else if env.relace_key.is_some() {
-        RerankChoice::Relace
-    } else if env.rerank_model_dir.is_some() {
-        RerankChoice::Local
-    } else {
-        RerankChoice::None
+    match env.rerank_backend.as_deref() {
+        Some("none") => RerankChoice::None,
+        Some("cohere") => RerankChoice::Cohere,
+        Some("relace") => RerankChoice::Relace,
+        _ => RerankChoice::Local,
     }
 }
 
@@ -94,23 +88,24 @@ pub fn local_indexing_enabled(env: &ResolveEnv) -> bool {
     choose_embed(env) != EmbedChoice::Hash
 }
 
-/// Build the resolved embedder.
+/// Build the resolved TEXT embedder.
 pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
     Ok(match choose_embed(env) {
-        EmbedChoice::Local => {
-            let dir = env.embed_model_dir.as_deref().unwrap();
-            Arc::new(LocalEmbedder::from_dir(Path::new(dir), env.embed_dims)?)
-        }
+        EmbedChoice::Local => Arc::new(LocalEmbedder::from_registry(TEXT_EMBED_MODEL, None)?),
         EmbedChoice::CloudOpenAi => Arc::new(OpenAiEmbedder::new(
-            env.openai_key.clone().unwrap(),
+            env.openai_key.clone().ok_or_else(|| {
+                anyhow::anyhow!("SEMFS_EMBED_BACKEND=openai but OPENAI_API_KEY not set")
+            })?,
             "https://api.openai.com/v1".to_string(),
             "text-embedding-3-small".to_string(),
-            1536,
+            CLOUD_OPENAI_DIMS,
         )),
-        EmbedChoice::CloudOpenRouter => {
-            Arc::new(OpenAiEmbedder::openrouter(env.openrouter_key.clone().unwrap()))
-        }
-        EmbedChoice::Hash => Arc::new(HashEmbedder::new(env.embed_dims)),
+        EmbedChoice::CloudOpenRouter => Arc::new(OpenAiEmbedder::openrouter(
+            env.openrouter_key.clone().ok_or_else(|| {
+                anyhow::anyhow!("SEMFS_EMBED_BACKEND=openrouter but OPENROUTER_API_KEY not set")
+            })?,
+        )),
+        EmbedChoice::Hash => Arc::new(HashEmbedder::new(HASH_DIMS)),
     })
 }
 
@@ -125,14 +120,17 @@ pub fn build_llm(env: &ResolveEnv) -> Option<semfs_core::llm::LlmClient> {
 /// Build the resolved reranker, or `None` to skip L5.
 pub fn build_reranker(env: &ResolveEnv) -> Result<Option<Arc<dyn Reranker>>> {
     Ok(match choose_rerank(env) {
+        RerankChoice::Local => Some(Arc::new(LocalReranker::from_registry(RERANK_MODEL, None)?)),
         RerankChoice::Cohere => Some(Arc::new(CohereReranker::openrouter(
-            env.openrouter_key.clone().unwrap(),
+            env.openrouter_key.clone().ok_or_else(|| {
+                anyhow::anyhow!("SEMFS_RERANK_BACKEND=cohere but OPENROUTER_API_KEY not set")
+            })?,
         ))),
-        RerankChoice::Relace => Some(Arc::new(RelaceReranker::new(env.relace_key.clone().unwrap()))),
-        RerankChoice::Local => {
-            let dir = env.rerank_model_dir.as_deref().unwrap();
-            Some(Arc::new(LocalReranker::from_dir(Path::new(dir))?))
-        }
+        RerankChoice::Relace => Some(Arc::new(RelaceReranker::new(
+            env.relace_key.clone().ok_or_else(|| {
+                anyhow::anyhow!("SEMFS_RERANK_BACKEND=relace but RELACE_API_KEY not set")
+            })?,
+        ))),
         RerankChoice::None => None,
     })
 }
@@ -141,58 +139,40 @@ pub fn build_reranker(env: &ResolveEnv) -> Result<Option<Arc<dyn Reranker>>> {
 mod tests {
     use super::*;
 
-    fn env() -> ResolveEnv {
+    #[test]
+    fn defaults_to_local_registry() {
+        let e = ResolveEnv::default();
+        assert_eq!(choose_embed(&e), EmbedChoice::Local);
+        assert_eq!(choose_rerank(&e), RerankChoice::Local);
+        assert!(local_indexing_enabled(&e));
+    }
+
+    fn with_embed(backend: &str) -> ResolveEnv {
         ResolveEnv {
-            embed_model_dir: None,
-            embed_dims: 384,
-            rerank_model_dir: None,
-            openrouter_key: None,
-            relace_key: None,
-            openai_key: None,
+            embed_backend: Some(backend.into()),
+            ..Default::default()
+        }
+    }
+    fn with_rerank(backend: &str) -> ResolveEnv {
+        ResolveEnv {
+            rerank_backend: Some(backend.into()),
+            ..Default::default()
         }
     }
 
     #[test]
-    fn local_dir_wins_for_embed() {
-        let mut e = env();
-        e.embed_model_dir = Some("/m".into());
-        e.openai_key = Some("k".into());
-        assert_eq!(choose_embed(&e), EmbedChoice::Local);
+    fn embed_backend_overrides_select_cloud_or_hash() {
+        assert_eq!(choose_embed(&with_embed("hash")), EmbedChoice::Hash);
+        assert!(!local_indexing_enabled(&with_embed("hash")));
+        assert_eq!(choose_embed(&with_embed("openrouter")), EmbedChoice::CloudOpenRouter);
+        assert_eq!(choose_embed(&with_embed("openai")), EmbedChoice::CloudOpenAi);
     }
 
     #[test]
-    fn cloud_embed_when_only_key() {
-        let mut e = env();
-        e.openrouter_key = Some("k".into());
-        assert_eq!(choose_embed(&e), EmbedChoice::CloudOpenRouter);
-        e.openai_key = Some("k".into());
-        assert_eq!(choose_embed(&e), EmbedChoice::CloudOpenAi); // openai precedence
-    }
-
-    #[test]
-    fn hash_floor_when_nothing() {
-        assert_eq!(choose_embed(&env()), EmbedChoice::Hash);
-        assert!(!local_indexing_enabled(&env()));
-    }
-
-    #[test]
-    fn the_target_config_local_embed_cloud_rerank() {
-        // SEMFS_EMBED_MODEL_DIR set + OPENROUTER_API_KEY → local embed, Cohere rerank.
-        let mut e = env();
-        e.embed_model_dir = Some("/m".into());
-        e.openrouter_key = Some("k".into());
-        assert_eq!(choose_embed(&e), EmbedChoice::Local);
-        assert_eq!(choose_rerank(&e), RerankChoice::Cohere);
-        assert!(local_indexing_enabled(&e));
-    }
-
-    #[test]
-    fn rerank_precedence_and_none() {
-        assert_eq!(choose_rerank(&env()), RerankChoice::None);
-        let mut e = env();
-        e.relace_key = Some("k".into());
-        assert_eq!(choose_rerank(&e), RerankChoice::Relace);
-        e.openrouter_key = Some("k".into());
-        assert_eq!(choose_rerank(&e), RerankChoice::Cohere); // cohere over relace
+    fn rerank_backend_overrides() {
+        assert_eq!(choose_rerank(&ResolveEnv::default()), RerankChoice::Local);
+        assert_eq!(choose_rerank(&with_rerank("none")), RerankChoice::None);
+        assert_eq!(choose_rerank(&with_rerank("cohere")), RerankChoice::Cohere);
+        assert_eq!(choose_rerank(&with_rerank("relace")), RerankChoice::Relace);
     }
 }

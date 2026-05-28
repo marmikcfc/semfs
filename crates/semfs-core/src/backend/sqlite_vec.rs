@@ -794,18 +794,18 @@ mod tests {
     /// FULL local pipeline with the REAL model: embed → index → search on a query
     /// with ZERO lexical overlap with the stored text. HashEmbedder cannot bridge
     /// this; only a real semantic model can — so passing proves offline semantic
-    /// search works end to end. Skips if the model files aren't present.
+    /// search works end to end. Gated on RUN_FASTEMBED (downloads the registry model).
     #[tokio::test]
     async fn real_model_offline_semantic_search() {
-        use crate::embed::LocalEmbedder;
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../bash/node_modules/@huggingface/transformers/.cache/Xenova/all-MiniLM-L6-v2");
-        if !dir.join("onnx/model.onnx").exists() {
-            eprintln!("skipping real-model E2E: model not present at {dir:?}");
+        use crate::embed::{EmbeddingModel, LocalEmbedder};
+        if std::env::var("RUN_FASTEMBED").is_err() {
+            eprintln!("skipping real-model E2E: set RUN_FASTEMBED=1 to download the registry model");
             return;
         }
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let emb = Arc::new(LocalEmbedder::from_dir(&dir, 384).unwrap());
+        let emb = Arc::new(
+            LocalEmbedder::from_registry(EmbeddingModel::SnowflakeArcticEmbedS, None).unwrap(),
+        );
         let s = SqliteVecStore::new(db, emb).unwrap();
 
         s.index(
@@ -918,20 +918,18 @@ mod tests {
     }
 
     /// THE WHOLE PIPELINE to the reranker stage, over a realistic multi-doc
-    /// corpus: L1 chunk → L2 embed (real local fastembed all-MiniLM) → L3 index
+    /// corpus: L1 chunk → L2 embed (real local fastembed arctic-s) → L3 index
     /// (vec0 + fts5) → search (KNN ∪ BM25 → RRF) → L5 rerank (cloud Cohere).
     /// Query has ZERO lexical overlap with the target, so retrieval must be
-    /// semantic; the reranker then confirms/refines the order. Gated on the
-    /// local model dir AND OPENROUTER_API_KEY.
+    /// semantic; the reranker then confirms/refines the order. Gated on
+    /// RUN_FASTEMBED (downloads the registry model) AND OPENROUTER_API_KEY.
     #[tokio::test]
     async fn full_pipeline_local_embed_then_cloud_rerank() {
-        use crate::embed::LocalEmbedder;
+        use crate::embed::{EmbeddingModel, LocalEmbedder};
         use crate::rerank::CohereReranker;
 
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../bash/node_modules/@huggingface/transformers/.cache/Xenova/all-MiniLM-L6-v2");
-        if !dir.join("onnx/model.onnx").exists() {
-            eprintln!("skipping full-pipeline test: local model not present");
+        if std::env::var("RUN_FASTEMBED").is_err() {
+            eprintln!("skipping full-pipeline test: set RUN_FASTEMBED=1 to download the model");
             return;
         }
         let Ok(key) = std::env::var("OPENROUTER_API_KEY") else {
@@ -940,7 +938,8 @@ mod tests {
         };
 
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let embedder = Arc::new(LocalEmbedder::from_dir(&dir, 384).unwrap());
+        let embedder =
+            Arc::new(LocalEmbedder::from_registry(EmbeddingModel::SnowflakeArcticEmbedS, None).unwrap());
         let store = SqliteVecStore::new(db, embedder)
             .unwrap()
             .with_reranker(Arc::new(CohereReranker::openrouter(key)));
