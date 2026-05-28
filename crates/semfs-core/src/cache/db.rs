@@ -267,6 +267,21 @@ impl Db {
         self.code_embed_identity().is_some()
     }
 
+    /// The stored code vec0 width, if a code lane was ever created. Lets the
+    /// text-only writer fast path preserve an existing `vchunks_code` instead of
+    /// dropping it (a fail-open daemon must not destroy code vectors).
+    pub(crate) fn code_embed_dims(&self) -> Option<usize> {
+        self.conn
+            .lock()
+            .query_row(
+                "SELECT value FROM fs_config WHERE key = 'code_embed_dims'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|s| s.parse().ok())
+    }
+
     /// The code embedder identity recorded by the writer, if any.
     pub(crate) fn code_embed_identity(&self) -> Option<String> {
         self.conn

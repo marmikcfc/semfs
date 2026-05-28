@@ -45,7 +45,14 @@ impl SqliteVecStore {
     /// Build a store and ensure the vec0 tables exist at the embedder's width.
     pub fn new(db: Arc<Db>, embedder: Arc<dyn Embedder>) -> anyhow::Result<Self> {
         let identity = embedder.identity();
-        db.ensure_vector_tables(embedder.dimensions(), None)?;
+        // PRESERVE any existing code lane: passing `None` here would make
+        // `ensure_vector_tables` drop `vchunks_code` ("code embedder removed"),
+        // which — combined with fail-open code-lane setup — could permanently
+        // destroy code vectors if the code model is transiently unavailable.
+        // Carry the stored code width through; `enable_code_indexing` rebuilds it
+        // at the real width afterward (a no-op when unchanged).
+        let existing_code_dims = db.code_embed_dims();
+        db.ensure_vector_tables(embedder.dimensions(), existing_code_dims)?;
         // Stamp the model identity on FIRST creation only. On a model swap we must
         // NOT overwrite the stamp: leaving the old stamp makes `is_searchable()`
         // see a mismatch and fall back to cloud, while the old vectors are
@@ -115,27 +122,18 @@ impl SqliteVecStore {
     ///
     /// A missing identity stamp (an index this code never wrote) counts as a mismatch.
     pub fn is_searchable(&self) -> bool {
-        // (1) Text identity must match.
+        // The TEXT lane is the floor: local search is viable iff the text lane is
+        // healthy. The code lane is purely additive/best-effort (queried in
+        // `search` only when its identity matches), so a missing, stale, or broken
+        // code lane must NOT disable local search when the text lane is fine.
+        //
+        // (1) Text identity must match (the string encodes model + dims, so a
+        //     model swap or width change is caught — no separate dim check needed).
         if self.db.embed_identity().as_deref() != Some(self.embedder.identity().as_str()) {
             return false;
         }
-        // (2) Code identity is enforced ONLY when this DB advertises a code lane
-        // (a code stamp is present). A missing code stamp means a text-only index
-        // — still searchable via the text lane — so we must NOT reject it just
-        // because the reader happens to have a code embedder attached (version skew).
-        let has_code_lane = self.db.code_embed_identity().is_some();
-        if has_code_lane {
-            let ok = self
-                .code_embedder
-                .as_ref()
-                .is_some_and(|c| self.db.code_embed_identity().as_deref() == Some(c.identity().as_str()));
-            if !ok {
-                return false;
-            }
-        }
-
         let conn = self.db.conn.lock();
-        // (3) Non-empty — nothing to return from a fresh/just-reset cache.
+        // (2) Non-empty — nothing to return from a fresh/just-reset cache.
         let non_empty = conn
             .query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| r.get::<_, i64>(0))
             .map(|n| n == 1)
@@ -143,34 +141,27 @@ impl SqliteVecStore {
         if !non_empty {
             return false;
         }
-        // (4) vec0 readiness per active lane: a MATCH at the lane's width errors
-        // on a missing or wrong-width table (e.g. a partially-migrated cache with
-        // populated `chunks` but a dropped/rebuilt `vchunks`), so we fall back to
-        // cloud instead of hard-failing at query time. We only require the probe
-        // to NOT error (0 rows is fine — a code-only index has an empty text lane).
-        let probe_ok = |table: &str, dims: usize| -> bool {
-            let blob = vec_to_blob(&vec![0.0f32; dims]);
-            conn.prepare(&format!(
-                "SELECT rowid FROM {table} WHERE embedding MATCH ?1 AND k = 1"
-            ))
+        // (3) Text vec0 readiness: a MATCH at the text width errors on a missing
+        // or wrong-width `vchunks` (e.g. a partially-migrated cache), so we fall
+        // back to cloud instead of hard-failing at query time. 0 rows is fine.
+        let blob = vec_to_blob(&vec![0.0f32; self.embedder.dimensions()]);
+        conn.prepare("SELECT rowid FROM vchunks WHERE embedding MATCH ?1 AND k = 1")
             .and_then(|mut stmt| {
                 let mut rows = stmt.query(rusqlite::params![blob])?;
                 rows.next()?;
                 Ok(())
             })
             .is_ok()
-        };
-        if !probe_ok("vchunks", self.embedder.dimensions()) {
-            return false;
-        }
-        if has_code_lane {
-            if let Some(code) = &self.code_embedder {
-                if !probe_ok("vchunks_code", code.dimensions()) {
-                    return false;
-                }
-            }
-        }
-        true
+    }
+
+    /// Whether the code lane should be queried: a code embedder is attached AND
+    /// its identity matches the stamp the writer recorded (so we never search
+    /// code vectors with a different model — silent corruption). Best-effort: a
+    /// mismatch/absence simply means text-only results, never a hard failure.
+    fn code_lane_active(&self) -> bool {
+        self.code_embedder
+            .as_ref()
+            .is_some_and(|c| self.db.code_embed_identity().as_deref() == Some(c.identity().as_str()))
     }
 
     /// Attach an L5 reranker. Search reranks the post-RRF candidates by their
@@ -380,14 +371,15 @@ impl SemanticIndex for SqliteVecStore {
             .pop()
             .unwrap_or_default();
         let qblob = vec_to_blob(&qvec);
-        // Embed the query in the CODE vector space too (if a code embedder is
-        // attached) so the `vchunks_code` lane is searchable. Done before locking
-        // the db — embedding must never run while holding the connection.
-        let code_qblob = match &self.code_embedder {
-            Some(code) => Some(vec_to_blob(
+        // Embed the query in the CODE vector space too — but only when the code
+        // lane is ACTIVE (embedder attached + identity matches the stamp), so a
+        // stale/mismatched code lane is silently skipped (text-only results)
+        // rather than searched with the wrong model. Done before locking the db.
+        let code_qblob = match (&self.code_embedder, self.code_lane_active()) {
+            (Some(code), true) => Some(vec_to_blob(
                 &code.embed(&[query.to_string()])?.pop().unwrap_or_default(),
             )),
-            None => None,
+            _ => None,
         };
         // Scope predicate pushed into each lane so a `/prefix/` query can't be
         // crowded out of the candidate pool by out-of-scope files (a false-
