@@ -36,6 +36,11 @@ reqwest = { workspace = true }
 rusqlite = { workspace = true }
 sqlite-vec = { workspace = true }
 fastembed = { workspace = true }
+# Fetch a SPECIFIC reranker ONNX variant (int8) from the model's HF repo —
+# fastembed's reranker registry is pinned to full-precision onnx/model.onnx.
+# Match fastembed's hf-hub features (ureq sync client + native-tls) to share one
+# resolved dependency + TLS backend.
+hf-hub = { version = "0.5", default-features = false, features = ["ureq", "native-tls"] }
 ureq = { workspace = true }
 regex = { workspace = true }
 directories = { workspace = true }

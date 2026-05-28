@@ -4125,6 +4125,7 @@ dependencies = [
  "fs2",
  "fuser",
  "futures",
+ "hf-hub",
  "libc",
  "lru",
  "nfsserve",
