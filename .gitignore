@@ -42,6 +42,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# fastembed registry model cache (downloaded ONNX models, ~GBs) — never commit.
+# Unanchored so it matches the dir at the repo root AND under crates/.
+.fastembed_cache/
+
 .plan/
 .claude/
 docs/
