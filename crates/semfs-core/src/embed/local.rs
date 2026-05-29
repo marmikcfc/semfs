@@ -87,13 +87,10 @@ impl Embedder for LocalEmbedder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::embed::cosine;
-
-    /// Enforce that FASTEMBED_REV tracks the pinned `fastembed` version (it's the
-    /// cache-busting key folded into the embedder identity). Fails on a fastembed
-    /// minor/major bump until someone updates the const — which is exactly when
-    /// re-bundled model artifacts must invalidate existing caches.
+    /// Enforce that FASTEMBED_REV tracks the EXACT pinned `fastembed` version (it's
+    /// the cache-busting key folded into the embedder identity). Fails on any
+    /// fastembed version bump until someone updates the const — which is exactly
+    /// when re-bundled model artifacts must invalidate existing caches.
     #[test]
     fn fastembed_rev_tracks_dependency() {
         let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
@@ -112,24 +109,8 @@ mod tests {
         );
     }
 
-    /// Live (network) test: downloads the text model and checks semantic order.
-    /// Gated behind RUN_FASTEMBED so the default `cargo test` stays offline/fast.
-    #[test]
-    fn registry_text_embedder_orders_by_meaning() {
-        if std::env::var("RUN_FASTEMBED").is_err() {
-            eprintln!("skipping: set RUN_FASTEMBED=1 to download + run the registry model");
-            return;
-        }
-        let e = LocalEmbedder::from_registry(EmbeddingModel::SnowflakeArcticEmbedS, None).unwrap();
-        assert_eq!(e.dimensions(), 384);
-        let v = e
-            .embed(&[
-                "user login and credential verification".to_string(),
-                "banana bread recipe".to_string(),
-                "how does authentication work".to_string(),
-            ])
-            .unwrap();
-        // The auth query is closer to the auth doc than to the recipe.
-        assert!(cosine(&v[2], &v[0]) > cosine(&v[2], &v[1]));
-    }
+    // Real-model behaviour (arctic-s embed → index → semantic search) is validated
+    // live by the holistic e2e harness `crates/e2e/phase_local_l1_l5.sh`, which
+    // downloads the registry models and exercises them through a real mount — so
+    // there's no network/download test in the default `cargo test` here.
 }

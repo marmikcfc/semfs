@@ -1611,48 +1611,9 @@ mod tests {
         );
     }
 
-    /// FULL local pipeline with the REAL model: embed → index → search on a query
-    /// with ZERO lexical overlap with the stored text. HashEmbedder cannot bridge
-    /// this; only a real semantic model can — so passing proves offline semantic
-    /// search works end to end. Gated on RUN_FASTEMBED (downloads the registry model).
-    #[tokio::test]
-    async fn real_model_offline_semantic_search() {
-        use crate::embed::{EmbeddingModel, LocalEmbedder};
-        if std::env::var("RUN_FASTEMBED").is_err() {
-            eprintln!("skipping real-model E2E: set RUN_FASTEMBED=1 to download the registry model");
-            return;
-        }
-        let db = Arc::new(Db::open_in_memory().unwrap());
-        let emb = Arc::new(
-            LocalEmbedder::from_registry(EmbeddingModel::SnowflakeArcticEmbedS, None).unwrap(),
-        );
-        let s = SqliteVecStore::new(db, emb).unwrap();
-
-        s.index(
-            2,
-            "/notes/auth.md",
-            "the access token is refreshed by the middleware before each request",
-        )
-        .unwrap();
-        s.index(
-            3,
-            "/notes/cooking.md",
-            "fold the egg whites gently into the batter and bake until golden",
-        )
-        .unwrap();
-
-        // No word here appears in the auth note — pure semantic match.
-        let hits = s
-            .search("how does login credential renewal work", None)
-            .await
-            .unwrap();
-        assert!(!hits.is_empty(), "expected a semantic hit");
-        assert_eq!(
-            hits[0].filepath.as_deref(),
-            Some("/notes/auth.md"),
-            "real model must find the auth note for a zero-overlap login query"
-        );
-    }
+    // Real-model offline semantic search (arctic-s embed → index → search on a
+    // zero-overlap query) is validated live by `crates/e2e/phase_local_l1_l5.sh`
+    // through a real mount — kept out of `cargo test` (no download/network here).
 
     /// FULL pipeline with a CLOUD embedder: vectors come from OpenRouter
     /// (text-embedding-3-small, 1536d), but indexing + search stay local
@@ -1737,64 +1698,12 @@ mod tests {
         );
     }
 
-    /// THE WHOLE PIPELINE to the reranker stage, over a realistic multi-doc
-    /// corpus: L1 chunk → L2 embed (real local fastembed arctic-s) → L3 index
-    /// (vec0 + fts5) → search (KNN ∪ BM25 → RRF) → L5 rerank (cloud Cohere).
-    /// Query has ZERO lexical overlap with the target, so retrieval must be
-    /// semantic; the reranker then confirms/refines the order. Gated on
-    /// RUN_FASTEMBED (downloads the registry model) AND OPENROUTER_API_KEY.
-    #[tokio::test]
-    async fn full_pipeline_local_embed_then_cloud_rerank() {
-        use crate::embed::{EmbeddingModel, LocalEmbedder};
-        use crate::rerank::CohereReranker;
-
-        if std::env::var("RUN_FASTEMBED").is_err() {
-            eprintln!("skipping full-pipeline test: set RUN_FASTEMBED=1 to download the model");
-            return;
-        }
-        let Ok(key) = std::env::var("OPENROUTER_API_KEY") else {
-            eprintln!("skipping full-pipeline test: OPENROUTER_API_KEY not set");
-            return;
-        };
-
-        let db = Arc::new(Db::open_in_memory().unwrap());
-        let embedder =
-            Arc::new(LocalEmbedder::from_registry(EmbeddingModel::SnowflakeArcticEmbedS, None).unwrap());
-        let store = SqliteVecStore::new(db, embedder)
-            .unwrap()
-            .with_reranker(Arc::new(CohereReranker::openrouter(key)));
-
-        // A small workspace-like corpus across distinct topics.
-        let corpus = [
-            ("/notes/auth.md", "the access token is refreshed by the middleware before each request"),
-            ("/notes/cooking.md", "fold the egg whites gently into the batter and bake until golden"),
-            ("/notes/git.md", "rebase your branch onto main and force-push to update the pull request"),
-            ("/notes/travel.md", "the bullet train from kyoto to osaka takes about fifteen minutes"),
-            ("/notes/db.md", "create an index on the user column to speed up the slow report query"),
-        ];
-        for (i, (path, content)) in corpus.iter().enumerate() {
-            store.index((i + 2) as u64, path, content).unwrap();
-        }
-
-        // Pure semantic query — no word here appears in auth.md.
-        let hits = store
-            .search("how does login credential renewal work", None)
-            .await
-            .unwrap();
-
-        assert!(!hits.is_empty(), "pipeline returned no hits");
-        assert_eq!(
-            hits[0].filepath.as_deref(),
-            Some("/notes/auth.md"),
-            "full pipeline must rank the auth note first; got {:?}",
-            hits.iter().map(|h| (&h.filepath, h.similarity)).collect::<Vec<_>>()
-        );
-        assert!(
-            hits[0].similarity > 0.1,
-            "top score should be the reranker's, got {}",
-            hits[0].similarity
-        );
-    }
+    // The whole local pipeline to the reranker stage (real fastembed embed →
+    // index → RRF → rerank) is validated live by `crates/e2e/phase_local_l1_l5.sh`
+    // with the local int8 reranker. The local-embed + CLOUD-rerank composition is
+    // covered by its independently-tested halves (real local embed via the e2e
+    // script; cloud rerank via `search_with_cloud_reranker_applies_rerank_scores`),
+    // so no download-gated combination test lives in `cargo test`.
 
     // ── Realistic end-to-end tests (Workstream C) ───────────────────────────
 

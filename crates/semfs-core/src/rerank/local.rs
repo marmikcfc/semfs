@@ -106,31 +106,7 @@ impl Reranker for LocalReranker {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Live (network) test: downloads the int8 reranker and checks it discriminates.
-    /// Gated behind RUN_FASTEMBED so the default `cargo test` stays offline/fast.
-    #[test]
-    fn registry_int8_reranker_scores_relevant_above_irrelevant() {
-        if std::env::var("RUN_FASTEMBED").is_err() {
-            eprintln!("skipping: set RUN_FASTEMBED=1 to download + run the int8 reranker");
-            return;
-        }
-        let r = LocalReranker::from_registry_onnx(
-            RerankerModel::JINARerankerV2BaseMultiligual,
-            "onnx/model_int8.onnx",
-            "9cfeff2df7d40d1b78e75e5e9cebec92a99813c9",
-            None,
-        )
-        .unwrap();
-        let docs = vec![
-            "To reset your password, click 'forgot password' and follow the email link.".to_string(),
-            "Bananas are a good source of potassium and dietary fiber.".to_string(),
-        ];
-        let scores = r.rerank("how do I reset my account password", &docs).unwrap();
-        assert_eq!(scores.len(), 2);
-        assert!(scores[0] > scores[1], "password doc must outscore banana doc");
-    }
-}
+// The int8 reranker is validated live (download + load + score discrimination)
+// by the holistic e2e harness `crates/e2e/phase_local_l1_l5.sh`, which runs grep
+// through a real mount with this reranker in the pipeline — so there's no
+// network/download test in the default `cargo test` here.
