@@ -35,8 +35,17 @@ async fn resolve_index(
             #[cfg(feature = "pg")]
             {
                 let embedder = super::resolve::build_embedder(&env)?;
-                match super::resolve::build_pg_store(&env, embedder).await {
-                    Ok(store) => return Ok((Arc::new(store), true)),
+                match super::resolve::build_pg_store(&env, tag, embedder).await {
+                    // Gate on readiness, mirroring SQLite's is_searchable(): an
+                    // empty Postgres index would return Ok([]) (a false "no
+                    // results") and bypass the Err-only cloud retry — so fall back
+                    // to cloud unless the container actually has rows.
+                    Ok(store) if store.is_searchable().await => {
+                        return Ok((Arc::new(store), true))
+                    }
+                    Ok(_) => tracing::warn!(
+                        "pgvector index for '{tag}' is empty/unready; falling back to cloud search"
+                    ),
                     Err(e) => tracing::warn!(
                         "pgvector backend unavailable ({e}); falling back to cloud search"
                     ),

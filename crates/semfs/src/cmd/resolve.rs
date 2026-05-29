@@ -202,13 +202,15 @@ pub fn choose_storage(env: &ResolveEnv) -> StorageChoice {
 #[cfg(feature = "pg")]
 pub async fn build_pg_store(
     env: &ResolveEnv,
+    container: &str,
     embedder: Arc<dyn Embedder>,
 ) -> Result<semfs_core::backend::pgvector::PgVectorStore> {
     let url = env
         .pg_url
         .clone()
         .ok_or_else(|| anyhow::anyhow!("SEMFS_STORAGE_BACKEND=pgvector but SEMFS_PG_URL not set"))?;
-    let mut store = semfs_core::backend::pgvector::PgVectorStore::connect(&url, embedder).await?;
+    let mut store =
+        semfs_core::backend::pgvector::PgVectorStore::connect(&url, container, embedder).await?;
     if let Some(reranker) = build_reranker(env)? {
         store = store.with_reranker(reranker);
     }

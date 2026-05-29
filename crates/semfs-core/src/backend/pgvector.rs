@@ -39,14 +39,19 @@ pub(crate) fn vec_literal(v: &[f32]) -> String {
     s
 }
 
-/// Take a transaction-scoped advisory lock keyed by `filepath`, released on
-/// commit/rollback. Serializes same-file writers across connections/processes.
+/// Take a transaction-scoped advisory lock keyed by `(container, filepath)`,
+/// released on commit/rollback. Serializes same-file writers across
+/// connections/processes within a container.
 async fn lock_path(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    container: &str,
     filepath: &str,
 ) -> anyhow::Result<()> {
+    // Lock key includes the container so different mounts sharing one Postgres
+    // don't contend (or, worse, serialize) on the same path. `\x1f` (unit
+    // separator) can't appear in a validated tag or a real path.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)")
-        .bind(filepath)
+        .bind(format!("{container}\u{1f}{filepath}"))
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -61,8 +66,14 @@ fn now_ms() -> i64 {
 }
 
 /// Local/cloud-embedder-fed semantic index over Postgres + pgvector.
+///
+/// One Postgres database can hold many mounts: every row is namespaced by
+/// `container` (the mount tag), and every write/search/lock predicate filters on
+/// it — so two mounts sharing a `SEMFS_PG_URL` can't read, overwrite, or delete
+/// each other's documents even when file paths collide.
 pub struct PgVectorStore {
     conn: Mutex<PgConnection>,
+    container: String,
     embedder: Arc<dyn Embedder>,
     reranker: Option<Arc<dyn Reranker>>,
     graph_llm: Option<Arc<LlmClient>>,
@@ -71,6 +82,7 @@ pub struct PgVectorStore {
 impl std::fmt::Debug for PgVectorStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PgVectorStore")
+            .field("container", &self.container)
             .field("dimensions", &self.embedder.dimensions())
             .field("has_reranker", &self.reranker.is_some())
             .field("has_graph_extractor", &self.graph_llm.is_some())
@@ -80,9 +92,19 @@ impl std::fmt::Debug for PgVectorStore {
 
 impl PgVectorStore {
     /// Connect and ensure the schema (extension + chunks/edges tables) at the
-    /// embedder's vector width. The `vector` extension must be available in the
-    /// server (e.g. pglite-oxide started with `extensions::VECTOR`).
-    pub async fn connect(database_url: &str, embedder: Arc<dyn Embedder>) -> anyhow::Result<Self> {
+    /// embedder's vector width. `container` namespaces every row so multiple
+    /// mounts can share one database safely. The `vector` extension must be
+    /// available in the server (e.g. pglite-oxide started with `extensions::VECTOR`).
+    ///
+    /// NOTE: the schema is created with the `container` column from the start;
+    /// this backend is new, so there's no in-place migration of a pre-container
+    /// `chunks`/`edges` table (a stale schema fails fast on the first query —
+    /// rebuild the index).
+    pub async fn connect(
+        database_url: &str,
+        container: &str,
+        embedder: Arc<dyn Embedder>,
+    ) -> anyhow::Result<Self> {
         let mut conn = PgConnection::connect(database_url).await?;
         let dims = embedder.dimensions();
         sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
@@ -93,15 +115,19 @@ impl PgVectorStore {
         // the dynamic CREATE TABLE needs an explicit `AssertSqlSafe`.
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "CREATE TABLE IF NOT EXISTS chunks (\
-                id BIGSERIAL PRIMARY KEY, ino BIGINT NOT NULL, filepath TEXT NOT NULL, \
-                ord INT NOT NULL, text TEXT NOT NULL, last_accessed_at BIGINT, \
-                access_count BIGINT NOT NULL DEFAULT 0, embedding vector({dims}))"
+                id BIGSERIAL PRIMARY KEY, container TEXT NOT NULL, ino BIGINT NOT NULL, \
+                filepath TEXT NOT NULL, ord INT NOT NULL, text TEXT NOT NULL, \
+                last_accessed_at BIGINT, access_count BIGINT NOT NULL DEFAULT 0, \
+                embedding vector({dims}))"
         )))
         .execute(&mut conn)
         .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_filepath ON chunks(filepath)")
-            .execute(&mut conn)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_container_filepath \
+             ON chunks(container, filepath)",
+        )
+        .execute(&mut conn)
+        .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_chunks_fts ON chunks \
              USING gin(to_tsvector('simple', text))",
@@ -109,9 +135,9 @@ impl PgVectorStore {
         .execute(&mut conn)
         .await?;
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS edges (from_path TEXT NOT NULL, to_path TEXT NOT NULL, \
-             edge_kind TEXT NOT NULL, created_at BIGINT NOT NULL, \
-             PRIMARY KEY (from_path, to_path, edge_kind))",
+            "CREATE TABLE IF NOT EXISTS edges (container TEXT NOT NULL, from_path TEXT NOT NULL, \
+             to_path TEXT NOT NULL, edge_kind TEXT NOT NULL, created_at BIGINT NOT NULL, \
+             PRIMARY KEY (container, from_path, to_path, edge_kind))",
         )
         .execute(&mut conn)
         .await?;
@@ -169,10 +195,26 @@ impl PgVectorStore {
 
         Ok(Self {
             conn: Mutex::new(conn),
+            container: container.to_string(),
             embedder,
             reranker: None,
             graph_llm: None,
         })
+    }
+
+    /// Whether this container's index is usable for local search: it must be
+    /// NON-EMPTY (a fresh/unpopulated Postgres index would return `Ok([])`, a
+    /// false "no results"; the reader should fall back to cloud instead). The
+    /// embedder-identity + dimension guards already ran at `connect`.
+    pub async fn is_searchable(&self) -> bool {
+        let mut conn = self.conn.lock().await;
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM chunks WHERE container = $1)",
+        )
+        .bind(&self.container)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap_or(false)
     }
 
     pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
@@ -204,20 +246,23 @@ impl PgVectorStore {
         // by the path makes the delete+insert "replace by path" atomic against a
         // concurrent reindex/remove/rename — otherwise two writers on different
         // MVCC snapshots could both commit and leave duplicate/mixed chunks.
-        lock_path(&mut tx, filepath).await?;
-        sqlx::query("DELETE FROM chunks WHERE filepath = $1")
+        lock_path(&mut tx, &self.container, filepath).await?;
+        sqlx::query("DELETE FROM chunks WHERE container = $1 AND filepath = $2")
+            .bind(&self.container)
             .bind(filepath)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM edges WHERE from_path = $1")
+        sqlx::query("DELETE FROM edges WHERE container = $1 AND from_path = $2")
+            .bind(&self.container)
             .bind(filepath)
             .execute(&mut *tx)
             .await?;
         for (ord, (text, vec)) in chunks.iter().zip(vectors.iter()).enumerate() {
             sqlx::query(
-                "INSERT INTO chunks(ino, filepath, ord, text, last_accessed_at, embedding) \
-                 VALUES ($1, $2, $3, $4, $5, $6::vector)",
+                "INSERT INTO chunks(container, ino, filepath, ord, text, last_accessed_at, embedding) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7::vector)",
             )
+            .bind(&self.container)
             .bind(ino as i64)
             .bind(filepath)
             .bind(ord as i32)
@@ -229,9 +274,10 @@ impl PgVectorStore {
         }
         for ent in &entities {
             sqlx::query(
-                "INSERT INTO edges(from_path, to_path, edge_kind, created_at) \
-                 VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+                "INSERT INTO edges(container, from_path, to_path, edge_kind, created_at) \
+                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
             )
+            .bind(&self.container)
             .bind(filepath)
             .bind(graph::entity_path(&ent.name))
             .bind(&ent.kind)
@@ -246,12 +292,14 @@ impl PgVectorStore {
     pub async fn remove(&self, filepath: &str) -> anyhow::Result<()> {
         let mut conn = self.conn.lock().await;
         let mut tx = conn.begin().await?;
-        lock_path(&mut tx, filepath).await?;
-        sqlx::query("DELETE FROM chunks WHERE filepath = $1")
+        lock_path(&mut tx, &self.container, filepath).await?;
+        sqlx::query("DELETE FROM chunks WHERE container = $1 AND filepath = $2")
+            .bind(&self.container)
             .bind(filepath)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM edges WHERE from_path = $1")
+        sqlx::query("DELETE FROM edges WHERE container = $1 AND from_path = $2")
+            .bind(&self.container)
             .bind(filepath)
             .execute(&mut *tx)
             .await?;
@@ -273,22 +321,26 @@ impl PgVectorStore {
         // not define evaluation order within one statement's target list, so
         // combining both calls in a single SELECT would NOT guarantee lo-then-hi.
         let (lo, hi) = if old <= new { (old, new) } else { (new, old) };
-        lock_path(&mut tx, lo).await?;
-        lock_path(&mut tx, hi).await?;
-        sqlx::query("DELETE FROM chunks WHERE filepath = $1")
+        lock_path(&mut tx, &self.container, lo).await?;
+        lock_path(&mut tx, &self.container, hi).await?;
+        sqlx::query("DELETE FROM chunks WHERE container = $1 AND filepath = $2")
+            .bind(&self.container)
             .bind(new)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM edges WHERE from_path = $1")
+        sqlx::query("DELETE FROM edges WHERE container = $1 AND from_path = $2")
+            .bind(&self.container)
             .bind(new)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE chunks SET filepath = $2 WHERE filepath = $1")
+        sqlx::query("UPDATE chunks SET filepath = $3 WHERE container = $1 AND filepath = $2")
+            .bind(&self.container)
             .bind(old)
             .bind(new)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE edges SET from_path = $2 WHERE from_path = $1")
+        sqlx::query("UPDATE edges SET from_path = $3 WHERE container = $1 AND from_path = $2")
+            .bind(&self.container)
             .bind(old)
             .bind(new)
             .execute(&mut *tx)
@@ -328,15 +380,16 @@ impl SemanticIndex for PgVectorStore {
         {
             let mut conn = self.conn.lock().await;
 
-            // Vector KNN (cosine distance operator).
+            // Vector KNN (cosine distance operator), scoped to this container.
             let rows = sqlx::query(
                 "SELECT id, filepath, text FROM chunks \
-                 WHERE ($2::text IS NULL OR starts_with(filepath, $2)) \
+                 WHERE container = $4 AND ($2::text IS NULL OR starts_with(filepath, $2)) \
                  ORDER BY embedding <=> $1::vector LIMIT $3",
             )
             .bind(&qlit)
             .bind(&scope)
             .bind(SEARCH_POOL)
+            .bind(&self.container)
             .fetch_all(&mut *conn)
             .await?;
             for (i, row) in rows.iter().enumerate() {
@@ -348,7 +401,8 @@ impl SemanticIndex for PgVectorStore {
             // Keyword (Postgres FTS). Fail-soft — vector hits stand.
             if let Ok(rows) = sqlx::query(
                 "SELECT id, filepath, text FROM chunks \
-                 WHERE to_tsvector('simple', text) @@ plainto_tsquery('simple', $1) \
+                 WHERE container = $4 \
+                 AND to_tsvector('simple', text) @@ plainto_tsquery('simple', $1) \
                  AND ($3::text IS NULL OR starts_with(filepath, $3)) \
                  ORDER BY ts_rank(to_tsvector('simple', text), plainto_tsquery('simple', $1)) DESC \
                  LIMIT $2",
@@ -356,6 +410,7 @@ impl SemanticIndex for PgVectorStore {
             .bind(query)
             .bind(SEARCH_POOL)
             .bind(&scope)
+            .bind(&self.container)
             .fetch_all(&mut *conn)
             .await
             {
@@ -386,9 +441,10 @@ impl SemanticIndex for PgVectorStore {
             let mut conn = self.conn.lock().await;
             if let Ok(srows) = sqlx::query(
                 "SELECT filepath, MAX(last_accessed_at), COALESCE(SUM(access_count), 0)::bigint \
-                 FROM chunks WHERE filepath = ANY($1) GROUP BY filepath",
+                 FROM chunks WHERE container = $2 AND filepath = ANY($1) GROUP BY filepath",
             )
             .bind(&paths)
+            .bind(&self.container)
             .fetch_all(&mut *conn)
             .await
             {
@@ -407,11 +463,13 @@ impl SemanticIndex for PgVectorStore {
                 .filter_map(|h| h.filepath.as_ref().and_then(|fp| rep_chunk.get(fp).copied()))
                 .collect();
             if !rep_ids.is_empty() {
-                if let Ok(rows) =
-                    sqlx::query("SELECT id, filepath FROM chunks WHERE id = ANY($1)")
-                        .bind(&rep_ids)
-                        .fetch_all(&mut *conn)
-                        .await
+                if let Ok(rows) = sqlx::query(
+                    "SELECT id, filepath FROM chunks WHERE container = $2 AND id = ANY($1)",
+                )
+                .bind(&rep_ids)
+                .bind(&self.container)
+                .fetch_all(&mut *conn)
+                .await
                 {
                     let live: HashMap<i64, String> =
                         rows.iter().map(|r| (r.get(0), r.get(1))).collect();
@@ -425,11 +483,13 @@ impl SemanticIndex for PgVectorStore {
                     });
                 }
             }
-            if let Ok(erows) =
-                sqlx::query("SELECT from_path, to_path FROM edges WHERE from_path = ANY($1)")
-                    .bind(&paths)
-                    .fetch_all(&mut *conn)
-                    .await
+            if let Ok(erows) = sqlx::query(
+                "SELECT from_path, to_path FROM edges WHERE container = $2 AND from_path = ANY($1)",
+            )
+            .bind(&paths)
+            .bind(&self.container)
+            .fetch_all(&mut *conn)
+            .await
             {
                 for row in &erows {
                     ents.entry(row.get(0)).or_default().insert(row.get(1));
@@ -437,10 +497,11 @@ impl SemanticIndex for PgVectorStore {
             }
             let _ = sqlx::query(
                 "UPDATE chunks SET access_count = access_count + 1, last_accessed_at = $2 \
-                 WHERE filepath = ANY($1)",
+                 WHERE container = $3 AND filepath = ANY($1)",
             )
             .bind(&paths)
             .bind(now)
+            .bind(&self.container)
             .execute(&mut *conn)
             .await;
         }
@@ -498,7 +559,7 @@ mod tests {
     #[tokio::test]
     async fn pg_index_search_and_rename() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
             .await
             .expect("connect + schema");
 
@@ -529,12 +590,65 @@ mod tests {
         let _ = server.shutdown();
     }
 
+    /// Multi-tenancy: two containers sharing ONE Postgres database, with the SAME
+    /// file path, must not see, overwrite, or delete each other's documents.
+    ///
+    /// Connections are opened SEQUENTIALLY (one at a time): the embedded pglite
+    /// test server serves a single connection at a time, so two concurrent
+    /// `PgVectorStore`s would deadlock. (A real multi-connection Postgres is what
+    /// makes simultaneous mounts possible in production; the namespacing logic is
+    /// what this test validates, and it's connection-count-independent.)
+    #[tokio::test]
+    async fn pg_containers_are_isolated() {
+        let server = pg();
+        let url = server.database_url();
+
+        // alice indexes /README.md, then releases her connection.
+        {
+            let a = PgVectorStore::connect(&url, "alice", Arc::new(HashEmbedder::new(384)))
+                .await
+                .unwrap();
+            a.index(2, "/README.md", "alice alpha credential login secret").await.unwrap();
+        }
+        // bob indexes the SAME path with different content.
+        {
+            let b = PgVectorStore::connect(&url, "bob", Arc::new(HashEmbedder::new(384)))
+                .await
+                .unwrap();
+            b.index(2, "/README.md", "bob banana bread recipe walnuts").await.unwrap();
+            // bob sees only his own row for that path (alice's is invisible).
+            let hb = b.search("banana recipe", None).await.unwrap();
+            assert_eq!(hb.len(), 1);
+            assert!(hb[0].chunk.as_deref().unwrap().contains("bob"));
+        }
+        // alice's row survived bob's write to the same path, and her remove does
+        // not touch bob's.
+        {
+            let a = PgVectorStore::connect(&url, "alice", Arc::new(HashEmbedder::new(384)))
+                .await
+                .unwrap();
+            let ha = a.search("credential login", None).await.unwrap();
+            assert_eq!(ha.len(), 1, "alice still sees only her own /README.md");
+            assert!(ha[0].chunk.as_deref().unwrap().contains("alice"));
+            a.remove("/README.md").await.unwrap();
+            assert!(!a.is_searchable().await, "alice's index now empty");
+        }
+        {
+            let b = PgVectorStore::connect(&url, "bob", Arc::new(HashEmbedder::new(384)))
+                .await
+                .unwrap();
+            assert!(b.is_searchable().await, "bob untouched by alice's remove");
+            assert_eq!(b.search("banana recipe", None).await.unwrap().len(), 1);
+        }
+        let _ = server.shutdown();
+    }
+
     /// Scoped search returns in-scope matches even when many out-of-scope files
     /// match the same terms — the scope predicate is pushed into both lanes.
     #[tokio::test]
     async fn pg_scoped_search_survives_crowding() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
             .await
             .expect("connect");
         for i in 0..100 {
@@ -573,7 +687,7 @@ mod tests {
     #[tokio::test]
     async fn pg_scoped_search_treats_like_wildcards_literally() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
             .await
             .expect("connect");
         store
@@ -608,14 +722,14 @@ mod tests {
     #[tokio::test]
     async fn pg_connect_rejects_dimension_drift() {
         let server = pg();
-        let first = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+        let first = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
             .await
             .expect("first connect creates vector(384)");
         // Close the connection so the single-connection server is free.
         drop(first);
 
         let mismatched =
-            PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(256))).await;
+            PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(256))).await;
         assert!(
             mismatched.is_err(),
             "connect must reject a 256-d embedder against an existing vector(384) table"
@@ -646,7 +760,7 @@ mod tests {
         }
 
         let server = pg();
-        let first = PgVectorStore::connect(&server.database_url(), Arc::new(HashEmbedder::new(384)))
+        let first = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
             .await
             .expect("first connect stamps identity hash:384");
         drop(first);
@@ -654,6 +768,7 @@ mod tests {
         // Same width (384), different identity → must be refused.
         let swapped = PgVectorStore::connect(
             &server.database_url(),
+            "t",
             Arc::new(TaggedEmbedder { dims: 384, id: "other-model:384".into() }),
         )
         .await;

@@ -31,6 +31,7 @@ const ROOT_INO: u64 = 1;
 /// `SEMFS_STORAGE_BACKEND=pgvector` (requires the `pg` feature + `SEMFS_PG_URL`).
 async fn build_local_indexer(
     db: Arc<Db>,
+    container: &str,
     env: &crate::cmd::resolve::ResolveEnv,
 ) -> anyhow::Result<Arc<dyn semfs_core::cache::LocalIndexer>> {
     use crate::cmd::resolve::{choose_storage, StorageChoice};
@@ -40,13 +41,13 @@ async fn build_local_indexer(
         let _ = &db; // Postgres is the store; the local SQLite cache db is unused here.
         #[cfg(feature = "pg")]
         {
-            let store = crate::cmd::resolve::build_pg_store(env, embedder).await?;
-            eprintln!("storage backend: pgvector (Postgres)");
+            let store = crate::cmd::resolve::build_pg_store(env, container, embedder).await?;
+            eprintln!("storage backend: pgvector (Postgres), container={container}");
             return Ok(Arc::new(store));
         }
         #[cfg(not(feature = "pg"))]
         {
-            let _ = embedder;
+            let _ = (container, embedder);
             anyhow::bail!(
                 "SEMFS_STORAGE_BACKEND=pgvector but this binary was built without the `pg` \
                  feature — rebuild with `cargo build --features pg`"
@@ -238,7 +239,7 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     let fs_base = CacheFs::with_api(db.clone(), api);
     let resolve_env = crate::cmd::resolve::ResolveEnv::from_env();
     let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) {
-        match build_local_indexer(db.clone(), &resolve_env).await {
+        match build_local_indexer(db.clone(), &cfg.container_tag, &resolve_env).await {
             Ok(indexer) => {
                 eprintln!("local semantic index enabled");
                 Arc::new(fs_base.with_indexer(indexer))
