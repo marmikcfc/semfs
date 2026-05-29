@@ -24,15 +24,37 @@ use semfs_core::vfs::types::SetAttr;
 
 const ROOT_INO: u64 = 1;
 
-/// Build the local semantic indexer (SqliteVecStore + the resolved embedder)
-/// over the daemon's cache db. Returned as `dyn LocalIndexer` for
-/// `CacheFs::with_indexer`. Uses the same resolver as `grep`, so the indexer's
-/// embedder matches the searcher's (same model, same dims).
-fn build_local_indexer(
+/// Build the local semantic indexer over the daemon's cache db, returned as
+/// `dyn LocalIndexer` for `CacheFs::with_indexer`. Uses the same resolver as
+/// `grep`, so the indexer's embedder/backend matches the searcher's. The storage
+/// backend is SQLite by default, or Postgres/pgvector when
+/// `SEMFS_STORAGE_BACKEND=pgvector` (requires the `pg` feature + `SEMFS_PG_URL`).
+async fn build_local_indexer(
     db: Arc<Db>,
     env: &crate::cmd::resolve::ResolveEnv,
 ) -> anyhow::Result<Arc<dyn semfs_core::cache::LocalIndexer>> {
+    use crate::cmd::resolve::{choose_storage, StorageChoice};
     let embedder = crate::cmd::resolve::build_embedder(env)?;
+
+    if choose_storage(env) == StorageChoice::Pgvector {
+        let _ = &db; // Postgres is the store; the local SQLite cache db is unused here.
+        #[cfg(feature = "pg")]
+        {
+            let store = crate::cmd::resolve::build_pg_store(env, embedder).await?;
+            eprintln!("storage backend: pgvector (Postgres)");
+            return Ok(Arc::new(store));
+        }
+        #[cfg(not(feature = "pg"))]
+        {
+            let _ = embedder;
+            anyhow::bail!(
+                "SEMFS_STORAGE_BACKEND=pgvector but this binary was built without the `pg` \
+                 feature — rebuild with `cargo build --features pg`"
+            );
+        }
+    }
+
+    // Default: local SQLite (vec0 + fts5), with the dual-lane code embedder.
     let mut store = semfs_core::backend::SqliteVecStore::new(db, embedder)?;
     // Attach the code embedder (writer path: ensures the vchunks_code vec0 table
     // + stamps its identity) so code-like files index into the code lane.
@@ -216,7 +238,7 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     let fs_base = CacheFs::with_api(db.clone(), api);
     let resolve_env = crate::cmd::resolve::ResolveEnv::from_env();
     let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) {
-        match build_local_indexer(db.clone(), &resolve_env) {
+        match build_local_indexer(db.clone(), &resolve_env).await {
             Ok(indexer) => {
                 eprintln!("local semantic index enabled");
                 Arc::new(fs_base.with_indexer(indexer))

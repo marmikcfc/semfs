@@ -12,6 +12,11 @@ description = "semfs CLI — mount your Supermemory container as a local filesys
 name = "semfs"
 path = "src/main.rs"
 
+[features]
+# Enable the Postgres/pgvector storage backend (SEMFS_STORAGE_BACKEND=pgvector).
+# Off by default so the standard build stays lean (no sqlx/Postgres deps).
+pg = ["semfs-core/pg"]
+
 [dependencies]
 semfs-core = { workspace = true }
 tokio = { workspace = true }

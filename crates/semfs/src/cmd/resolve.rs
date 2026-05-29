@@ -34,6 +34,14 @@ pub struct ResolveEnv {
     pub embed_backend: Option<String>,
     /// `SEMFS_RERANK_BACKEND`: `local` (default) | `cohere` | `relace` | `none`.
     pub rerank_backend: Option<String>,
+    /// `SEMFS_STORAGE_BACKEND`: `sqlite` (default) | `pgvector`. Where vectors are
+    /// stored + searched. `pgvector` requires the binary to be built with the
+    /// `pg` feature and `SEMFS_PG_URL` to be set.
+    pub storage_backend: Option<String>,
+    /// `SEMFS_PG_URL`: Postgres connection string for the pgvector backend.
+    /// Only read under the `pg` feature (the pgvector builder).
+    #[cfg_attr(not(feature = "pg"), allow(dead_code))]
+    pub pg_url: Option<String>,
     pub openrouter_key: Option<String>,
     pub relace_key: Option<String>,
     pub openai_key: Option<String>,
@@ -46,6 +54,8 @@ impl ResolveEnv {
         Self {
             embed_backend: var("SEMFS_EMBED_BACKEND"),
             rerank_backend: var("SEMFS_RERANK_BACKEND"),
+            storage_backend: var("SEMFS_STORAGE_BACKEND"),
+            pg_url: var("SEMFS_PG_URL"),
             openrouter_key: var("OPENROUTER_API_KEY"),
             relace_key: var("RELACE_API_KEY"),
             openai_key: var("OPENAI_API_KEY"),
@@ -167,6 +177,45 @@ pub fn build_reranker(env: &ResolveEnv) -> Result<Option<Arc<dyn Reranker>>> {
         ))),
         RerankChoice::None => None,
     })
+}
+
+/// Where the local vector index is stored + searched.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StorageChoice {
+    Sqlite,
+    Pgvector,
+}
+
+/// Storage backend selection — SQLite (default) vs Postgres/pgvector (opt-in).
+pub fn choose_storage(env: &ResolveEnv) -> StorageChoice {
+    match env.storage_backend.as_deref() {
+        Some("pgvector") | Some("pg") | Some("postgres") => StorageChoice::Pgvector,
+        _ => StorageChoice::Sqlite,
+    }
+}
+
+/// Build a `PgVectorStore` from the resolved embedder + reranker + LLM graph
+/// extractor. Async (sqlx connect). Only compiled with the `pg` feature.
+///
+/// Note: pgvector is a single-embedder backend — there's no code lane, so the
+/// text embedder handles all files (code routing is a SQLite-only feature today).
+#[cfg(feature = "pg")]
+pub async fn build_pg_store(
+    env: &ResolveEnv,
+    embedder: Arc<dyn Embedder>,
+) -> Result<semfs_core::backend::pgvector::PgVectorStore> {
+    let url = env
+        .pg_url
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("SEMFS_STORAGE_BACKEND=pgvector but SEMFS_PG_URL not set"))?;
+    let mut store = semfs_core::backend::pgvector::PgVectorStore::connect(&url, embedder).await?;
+    if let Some(reranker) = build_reranker(env)? {
+        store = store.with_reranker(reranker);
+    }
+    if let Some(llm) = build_llm(env) {
+        store = store.with_graph_extractor(Arc::new(llm));
+    }
+    Ok(store)
 }
 
 #[cfg(test)]

@@ -452,7 +452,26 @@ impl SemanticIndex for PgVectorStore {
     }
 }
 
-#[cfg(test)]
+/// Bridge to the cache write path (daemon): drive Postgres indexing as files
+/// change. Naturally async — delegates to the inherent async methods. Wiring a
+/// `PgVectorStore` here is what makes the pgvector backend reachable from
+/// `semfs mount`/`grep` (vs. SQLite, the default).
+#[async_trait]
+impl crate::cache::LocalIndexer for PgVectorStore {
+    async fn index(&self, ino: u64, filepath: &str, content: &str) -> anyhow::Result<()> {
+        PgVectorStore::index(self, ino, filepath, content).await
+    }
+    async fn remove(&self, filepath: &str) -> anyhow::Result<()> {
+        PgVectorStore::remove(self, filepath).await
+    }
+    async fn rename(&self, old: &str, new: &str) -> anyhow::Result<()> {
+        PgVectorStore::rename(self, old, new).await
+    }
+}
+
+// Tests use the embedded pglite server (the `pg-local` feature); the production
+// `pg` feature alone has no in-process Postgres to test against.
+#[cfg(all(test, feature = "pg-local"))]
 mod tests {
     use super::*;
     use crate::embed::HashEmbedder;

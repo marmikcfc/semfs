@@ -13,11 +13,13 @@ name = "semfs_core"
 path = "src/lib.rs"
 
 [features]
-# Postgres/pgvector backend (Phase 6). Behind a flag so the default build stays
-# lean and MSRV-1.80-compatible; pglite-oxide raises the effective MSRV to 1.92.
-# We bind vectors as text cast to `::vector` (no `pgvector` crate) to keep a
-# single sqlx version aligned with pglite-oxide.
-pg-local = ["dep:sqlx", "dep:pglite-oxide"]
+# Postgres/pgvector backend (Phase 6). `pg` is the PRODUCTION feature — sqlx only,
+# for a real Postgres server (what the CLI uses). `pg-local` adds the embedded
+# pglite-oxide test server on top, for the gated unit tests; it raises the
+# effective MSRV to 1.92 and shouldn't ship in a production binary. We bind
+# vectors as text cast to `::vector` (no `pgvector` crate) to keep one sqlx version.
+pg = ["dep:sqlx"]
+pg-local = ["pg", "dep:pglite-oxide"]
 
 [dependencies]
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring"], optional = true }

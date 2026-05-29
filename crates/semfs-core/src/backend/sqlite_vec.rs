@@ -596,15 +596,19 @@ fn drop_file_chunks(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Res
 }
 
 /// Bridge to the cache write path: lets `CacheFs`/`SqliteFile` maintain the
-/// index on writes/deletes without a module cycle.
+/// index on writes/deletes without a module cycle. The trait is async (so an
+/// async backend can implement it); SqliteVecStore's work is sync (rusqlite +
+/// fastembed), so each method just calls the sync inherent method — same
+/// behaviour as before the trait went async.
+#[async_trait::async_trait]
 impl crate::cache::LocalIndexer for SqliteVecStore {
-    fn index(&self, ino: u64, filepath: &str, content: &str) -> anyhow::Result<()> {
+    async fn index(&self, ino: u64, filepath: &str, content: &str) -> anyhow::Result<()> {
         SqliteVecStore::index(self, ino, filepath, content)
     }
-    fn remove(&self, filepath: &str) -> anyhow::Result<()> {
+    async fn remove(&self, filepath: &str) -> anyhow::Result<()> {
         SqliteVecStore::remove(self, filepath)
     }
-    fn rename(&self, old: &str, new: &str) -> anyhow::Result<()> {
+    async fn rename(&self, old: &str, new: &str) -> anyhow::Result<()> {
         SqliteVecStore::rename(self, old, new)
     }
 }

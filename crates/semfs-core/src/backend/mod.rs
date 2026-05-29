@@ -5,7 +5,7 @@
 pub(crate) mod cloud;
 pub mod chunk;
 pub mod graph;
-#[cfg(feature = "pg-local")]
+#[cfg(feature = "pg")]
 pub mod pgvector;
 pub mod rank;
 pub mod sqlite_vec;

@@ -1547,74 +1547,81 @@ impl FileSystem for CacheFs {
             format!("{p}{sep}{name}")
         });
 
-        let conn = self.db.conn.lock();
+        // Scope the rusqlite work in a block so the (non-Send) connection guard +
+        // transaction are dropped BEFORE the async indexer `.await` below — the
+        // mount futures must be `Send` (nfsserve), and rustc's async-Send analysis
+        // keeps a `MutexGuard`/`Transaction` alive to end-of-scope without this.
+        // The block yields `child_ino` (needed below for the API push queue).
+        let child_ino: i64 = {
+            let conn = self.db.conn.lock();
 
-        // Look up child.
-        let child_ino: i64 = conn
-            .query_row(
-                "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+            // Look up child.
+            let child_ino: i64 = conn
+                .query_row(
+                    "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+                    rusqlite::params![parent_ino as i64, name],
+                    |r| r.get(0),
+                )
+                .map_err(|_| VfsError::NotFound)?;
+
+            // Verify not a directory.
+            let child_mode: i64 = conn
+                .query_row(
+                    "SELECT mode FROM fs_inode WHERE ino = ?1",
+                    [child_ino],
+                    |r| r.get(0),
+                )
+                .map_err(|_| VfsError::NotFound)?;
+            if (child_mode as u32 & S_IFMT) == S_IFDIR {
+                return Err(VfsError::IsADirectory);
+            }
+
+            let now = Timestamp::now();
+            let tx = conn.unchecked_transaction().map_err(sql_err)?;
+
+            // Delete dentry.
+            tx.execute(
+                "DELETE FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
                 rusqlite::params![parent_ino as i64, name],
-                |r| r.get(0),
-            )
-            .map_err(|_| VfsError::NotFound)?;
-
-        // Verify not a directory.
-        let child_mode: i64 = conn
-            .query_row(
-                "SELECT mode FROM fs_inode WHERE ino = ?1",
-                [child_ino],
-                |r| r.get(0),
-            )
-            .map_err(|_| VfsError::NotFound)?;
-        if (child_mode as u32 & S_IFMT) == S_IFDIR {
-            return Err(VfsError::IsADirectory);
-        }
-
-        let now = Timestamp::now();
-        let tx = conn.unchecked_transaction().map_err(sql_err)?;
-
-        // Delete dentry.
-        tx.execute(
-            "DELETE FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
-            rusqlite::params![parent_ino as i64, name],
-        )
-        .map_err(sql_err)?;
-
-        // Update parent timestamps.
-        tx.execute(
-            "UPDATE fs_inode SET mtime = ?1, ctime = ?2, mtime_nsec = ?3, ctime_nsec = ?4 WHERE ino = ?5",
-            rusqlite::params![now.sec, now.sec, now.nsec, now.nsec, parent_ino as i64],
-        )
-        .map_err(sql_err)?;
-
-        // Decrement nlink.
-        tx.execute(
-            "UPDATE fs_inode SET nlink = nlink - 1, ctime = ?1, ctime_nsec = ?2 WHERE ino = ?3",
-            rusqlite::params![now.sec, now.nsec, child_ino],
-        )
-        .map_err(sql_err)?;
-
-        // Check if we need to delete the inode.
-        let nlink: i64 = tx
-            .query_row(
-                "SELECT nlink FROM fs_inode WHERE ino = ?1",
-                [child_ino],
-                |r| r.get(0),
             )
             .map_err(sql_err)?;
-        if nlink <= 0 {
-            tx.execute("DELETE FROM fs_data WHERE ino = ?1", [child_ino])
-                .map_err(sql_err)?;
-            tx.execute("DELETE FROM fs_symlink WHERE ino = ?1", [child_ino])
-                .map_err(sql_err)?;
-            tx.execute("DELETE FROM fs_remote WHERE ino = ?1", [child_ino])
-                .map_err(sql_err)?;
-            tx.execute("DELETE FROM fs_inode WHERE ino = ?1", [child_ino])
-                .map_err(sql_err)?;
-        }
 
-        tx.commit().map_err(sql_err)?;
-        drop(conn);
+            // Update parent timestamps.
+            tx.execute(
+                "UPDATE fs_inode SET mtime = ?1, ctime = ?2, mtime_nsec = ?3, ctime_nsec = ?4 WHERE ino = ?5",
+                rusqlite::params![now.sec, now.sec, now.nsec, now.nsec, parent_ino as i64],
+            )
+            .map_err(sql_err)?;
+
+            // Decrement nlink.
+            tx.execute(
+                "UPDATE fs_inode SET nlink = nlink - 1, ctime = ?1, ctime_nsec = ?2 WHERE ino = ?3",
+                rusqlite::params![now.sec, now.nsec, child_ino],
+            )
+            .map_err(sql_err)?;
+
+            // Check if we need to delete the inode.
+            let nlink: i64 = tx
+                .query_row(
+                    "SELECT nlink FROM fs_inode WHERE ino = ?1",
+                    [child_ino],
+                    |r| r.get(0),
+                )
+                .map_err(sql_err)?;
+            if nlink <= 0 {
+                tx.execute("DELETE FROM fs_data WHERE ino = ?1", [child_ino])
+                    .map_err(sql_err)?;
+                tx.execute("DELETE FROM fs_symlink WHERE ino = ?1", [child_ino])
+                    .map_err(sql_err)?;
+                tx.execute("DELETE FROM fs_remote WHERE ino = ?1", [child_ino])
+                    .map_err(sql_err)?;
+                tx.execute("DELETE FROM fs_inode WHERE ino = ?1", [child_ino])
+                    .map_err(sql_err)?;
+            }
+
+            tx.commit().map_err(sql_err)?;
+            child_ino
+        };
 
         self.dentry_cache
             .lock()
@@ -1623,7 +1630,7 @@ impl FileSystem for CacheFs {
         // Drop from the local semantic index (independent of cloud sync).
         if let Some(indexer) = &self.indexer {
             if let Some(fp) = filepath_for_api.as_deref() {
-                if let Err(e) = indexer.remove(fp) {
+                if let Err(e) = indexer.remove(fp).await {
                     tracing::warn!(filepath = %fp, "local index remove on unlink failed: {e}");
                 }
             }
@@ -2015,7 +2022,7 @@ impl FileSystem for CacheFs {
             if let (Some(old_fp), Some(new_fp)) =
                 (old_filepath.as_deref(), new_filepath.as_deref())
             {
-                if let Err(e) = indexer.rename(old_fp, new_fp) {
+                if let Err(e) = indexer.rename(old_fp, new_fp).await {
                     tracing::warn!(old = %old_fp, new = %new_fp, "local index rename failed: {e}");
                 }
             }

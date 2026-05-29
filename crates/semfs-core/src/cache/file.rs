@@ -290,7 +290,7 @@ impl crate::vfs::File for SqliteFile {
             if let Some(filepath) = &self.filepath {
                 let content = self.db.read_all_content(self.ino);
                 if let Ok(text) = String::from_utf8(content) {
-                    if let Err(e) = indexer.index(self.ino, filepath, &text) {
+                    if let Err(e) = indexer.index(self.ino, filepath, &text).await {
                         tracing::warn!(filepath, "local index on flush failed: {e}");
                     }
                 }

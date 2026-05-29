@@ -20,18 +20,37 @@ use std::sync::Arc;
 /// cloud if a local query fails at runtime (e.g. a cloud-backed query embedder
 /// hits a provider outage) — a degraded-dependency state that should fall back,
 /// not abort the command.
-fn resolve_index(
+async fn resolve_index(
     db_path: Option<&str>,
     api_url: &str,
     key: Option<&str>,
     tag: &str,
 ) -> Result<(Arc<dyn SemanticIndex>, bool)> {
+    use super::resolve::{choose_storage, StorageChoice};
     let env = super::resolve::ResolveEnv::from_env();
     if super::resolve::local_indexing_enabled(&env) {
-        if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
-            // Degraded-dependency states (corrupt cache, stale model dir) must
-            // fall back to cloud, not abort grep — so local init errors are
-            // logged and we continue rather than `?`-propagating.
+        // Postgres/pgvector storage backend (opt-in via SEMFS_STORAGE_BACKEND).
+        // Connects directly to Postgres — no local cache db. Fail-open to cloud.
+        if choose_storage(&env) == StorageChoice::Pgvector {
+            #[cfg(feature = "pg")]
+            {
+                let embedder = super::resolve::build_embedder(&env)?;
+                match super::resolve::build_pg_store(&env, embedder).await {
+                    Ok(store) => return Ok((Arc::new(store), true)),
+                    Err(e) => tracing::warn!(
+                        "pgvector backend unavailable ({e}); falling back to cloud search"
+                    ),
+                }
+            }
+            #[cfg(not(feature = "pg"))]
+            tracing::warn!(
+                "SEMFS_STORAGE_BACKEND=pgvector but this binary was built without the `pg` \
+                 feature; falling back to cloud search"
+            );
+        } else if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
+            // Default SQLite. Degraded-dependency states (corrupt cache, stale
+            // model dir) fall back to cloud, not abort grep — local init errors
+            // are logged and we continue rather than `?`-propagating.
             match build_local_store(&env, p) {
                 Ok(Some(store)) => return Ok((Arc::new(store), true)),
                 Ok(None) => tracing::warn!(
@@ -345,7 +364,7 @@ pub async fn run(args: Args) -> Result<()> {
         .and_then(|m| m.db_path.as_deref())
         .or_else(|| path_marker.as_ref().and_then(|m| m.db_path.as_deref()));
 
-    let (index, used_local) = resolve_index(db_path, &api_url, key.as_deref(), &tag)?;
+    let (index, used_local) = resolve_index(db_path, &api_url, key.as_deref(), &tag).await?;
 
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
