@@ -88,6 +88,38 @@ fn cloud_index(api_url: &str, key: Option<&str>, tag: &str) -> Result<CloudIndex
     Ok(CloudIndex::new(api))
 }
 
+/// Outcome of asking the running mount daemon to search (the primary path: the
+/// daemon owns the index connection, so this works for every backend — SQLite,
+/// embedded pglite, external Postgres).
+enum DaemonSearch {
+    /// Daemon answered from its local index (hits may be empty = genuine miss).
+    Hits(Vec<semfs_core::backend::SearchHit>),
+    /// Daemon is up but has no usable local index → caller should try cloud.
+    NoIndex,
+    /// No daemon reachable for this tag → caller falls back to direct/cloud.
+    Unreachable,
+}
+
+/// Ask the daemon (if running) to run the search over its owned index.
+async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> DaemonSearch {
+    use semfs_core::daemon::protocol::{Request, Response};
+    let req = Request::Search {
+        query: query.to_string(),
+        filepath: filepath.map(|s| s.to_string()),
+    };
+    match semfs_core::daemon::client::send_request(tag, req).await {
+        Ok(Response::SearchHits { hits, searchable: true }) => DaemonSearch::Hits(hits),
+        Ok(Response::SearchHits { searchable: false, .. }) => DaemonSearch::NoIndex,
+        Ok(Response::Error { message }) => {
+            tracing::warn!("daemon search error ({message}); falling back");
+            DaemonSearch::Unreachable
+        }
+        Ok(_) => DaemonSearch::Unreachable,
+        // No socket / not running / connect error — fall back to direct.
+        Err(_) => DaemonSearch::Unreachable,
+    }
+}
+
 /// Build the local SQLite store for `grep`, or `Ok(None)` if the on-disk index
 /// isn't usable (missing tables / incompatible model). Hard init failures
 /// (cache open, embedder build) return `Err` so the caller falls back to cloud;
@@ -373,8 +405,6 @@ pub async fn run(args: Args) -> Result<()> {
         .and_then(|m| m.db_path.as_deref())
         .or_else(|| path_marker.as_ref().and_then(|m| m.db_path.as_deref()));
 
-    let (index, used_local) = resolve_index(db_path, &api_url, key.as_deref(), &tag).await?;
-
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
     // canonicalizes whichever mount we resolved (CWD or path marker).
@@ -445,18 +475,36 @@ pub async fn run(args: Args) -> Result<()> {
         args.query.clone()
     };
 
-    // If the local backend fails at query time (e.g. a cloud-backed query
-    // embedder hits a provider outage or revoked key), degrade to cloud search
-    // when a key is available rather than aborting the command.
-    let hits = match index.search(&effective_query, filepath.as_deref()).await {
-        Ok(hits) => hits,
-        Err(e) if used_local && key.is_some() => {
-            tracing::warn!("local search failed ({e}); falling back to cloud search");
+    // PRIMARY PATH: ask the running mount daemon to search over its own index.
+    // The daemon is the sole owner of the backend connection, so this is the one
+    // path that works for EVERY backend (SQLite, embedded pglite, external
+    // Postgres) — grep never opens its own DB connection. Falls back only when no
+    // daemon is reachable (e.g. grepping a persisted cache after unmount).
+    let hits = match daemon_search(&tag, &effective_query, filepath.as_deref()).await {
+        DaemonSearch::Hits(hits) => hits,
+        DaemonSearch::NoIndex => {
+            // Daemon up but no local index (hash embedder) → cloud.
             cloud_index(&api_url, key.as_deref(), &tag)?
                 .search(&effective_query, filepath.as_deref())
                 .await?
         }
-        Err(e) => return Err(e),
+        DaemonSearch::Unreachable => {
+            // No daemon: resolve a backend directly (SQLite file / external
+            // Postgres / cloud). pglite has no direct path — it lives in the
+            // daemon — so an un-mounted pglite container resolves to cloud here.
+            let (index, used_local) =
+                resolve_index(db_path, &api_url, key.as_deref(), &tag).await?;
+            match index.search(&effective_query, filepath.as_deref()).await {
+                Ok(hits) => hits,
+                Err(e) if used_local && key.is_some() => {
+                    tracing::warn!("local search failed ({e}); falling back to cloud search");
+                    cloud_index(&api_url, key.as_deref(), &tag)?
+                        .search(&effective_query, filepath.as_deref())
+                        .await?
+                }
+                Err(e) => return Err(e),
+            }
+        }
     };
 
     if hits.is_empty() {

@@ -77,6 +77,9 @@ pub struct PgVectorStore {
     embedder: Arc<dyn Embedder>,
     reranker: Option<Arc<dyn Reranker>>,
     graph_llm: Option<Arc<LlmClient>>,
+    /// Keeps an embedded server (pglite) alive for as long as the store lives.
+    /// Opaque so the struct stays feature-agnostic; `None` for external Postgres.
+    _keepalive: Option<Box<dyn std::any::Any + Send + Sync>>,
 }
 
 impl std::fmt::Debug for PgVectorStore {
@@ -199,7 +202,33 @@ impl PgVectorStore {
             embedder,
             reranker: None,
             graph_llm: None,
+            _keepalive: None,
         })
+    }
+
+    /// Start an EMBEDDED pglite server (persisting under `data_dir`) with the
+    /// `vector` extension, and connect to it — no external Postgres needed. The
+    /// server is owned by the returned store (kept alive until the store drops),
+    /// so a single process (the daemon) owns the one connection; `grep` reaches
+    /// it via IPC, never opening its own. This is how pglite ships in-box.
+    #[cfg(feature = "pg-local")]
+    pub async fn embedded(
+        data_dir: std::path::PathBuf,
+        container: &str,
+        embedder: Arc<dyn Embedder>,
+    ) -> anyhow::Result<Self> {
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| anyhow::anyhow!("create pglite data dir {}: {e}", data_dir.display()))?;
+        let server = pglite_oxide::PgliteServer::builder()
+            .path(data_dir)
+            .tcp("127.0.0.1:0".parse().unwrap())
+            .extension(pglite_oxide::extensions::VECTOR)
+            .start()
+            .map_err(|e| anyhow::anyhow!("start embedded pglite: {e}"))?;
+        let url = server.database_url();
+        let mut store = Self::connect(&url, container, embedder).await?;
+        store._keepalive = Some(Box::new(server));
+        Ok(store)
     }
 
     /// Whether this container's index is usable for local search: it must be

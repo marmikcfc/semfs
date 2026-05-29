@@ -183,13 +183,18 @@ pub fn build_reranker(env: &ResolveEnv) -> Result<Option<Arc<dyn Reranker>>> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum StorageChoice {
     Sqlite,
+    /// External Postgres (you run it), via `SEMFS_PG_URL`.
     Pgvector,
+    /// Embedded pglite (shipped in-box), persisting under the cache dir.
+    Pglite,
 }
 
-/// Storage backend selection — SQLite (default) vs Postgres/pgvector (opt-in).
+/// Storage backend selection — SQLite (default); external Postgres or embedded
+/// pglite opt-in via `SEMFS_STORAGE_BACKEND`.
 pub fn choose_storage(env: &ResolveEnv) -> StorageChoice {
     match env.storage_backend.as_deref() {
         Some("pgvector") | Some("pg") | Some("postgres") => StorageChoice::Pgvector,
+        Some("pglite") | Some("embedded") => StorageChoice::Pglite,
         _ => StorageChoice::Sqlite,
     }
 }
@@ -211,6 +216,29 @@ pub async fn build_pg_store(
         .ok_or_else(|| anyhow::anyhow!("SEMFS_STORAGE_BACKEND=pgvector but SEMFS_PG_URL not set"))?;
     let mut store =
         semfs_core::backend::pgvector::PgVectorStore::connect(&url, container, embedder).await?;
+    if let Some(reranker) = build_reranker(env)? {
+        store = store.with_reranker(reranker);
+    }
+    if let Some(llm) = build_llm(env) {
+        store = store.with_graph_extractor(Arc::new(llm));
+    }
+    Ok(store)
+}
+
+/// Build an EMBEDDED pglite store (shipped in-box, no external Postgres). Persists
+/// under the cache dir, namespaced by container. Only with the `pglite` feature.
+#[cfg(feature = "pglite")]
+pub async fn build_pglite_store(
+    env: &ResolveEnv,
+    container: &str,
+    embedder: Arc<dyn Embedder>,
+) -> Result<semfs_core::backend::pgvector::PgVectorStore> {
+    let data_dir = semfs_core::config::cache_dir()
+        .join("pglite")
+        .join(container);
+    let mut store =
+        semfs_core::backend::pgvector::PgVectorStore::embedded(data_dir, container, embedder)
+            .await?;
     if let Some(reranker) = build_reranker(env)? {
         store = store.with_reranker(reranker);
     }

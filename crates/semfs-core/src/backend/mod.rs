@@ -15,7 +15,8 @@ pub use sqlite_vec::SqliteVecStore;
 use async_trait::async_trait;
 
 /// One search result, backend-agnostic. Mirrors the fields `grep` renders.
-#[derive(Debug, Clone, PartialEq)]
+/// Serializable so it can cross the daemon IPC boundary (grep-over-IPC).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SearchHit {
     pub filepath: Option<String>,
     pub memory: Option<String>,

@@ -17,6 +17,14 @@ pub enum Request {
     Status,
     Sync,
     Unmount,
+    /// Semantic search over the daemon's local index. This is how `grep` reaches
+    /// the index without opening its own DB connection — essential for embedded
+    /// single-connection backends (pglite) where the daemon owns the connection.
+    Search {
+        query: String,
+        #[serde(default)]
+        filepath: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,6 +50,12 @@ pub enum Response {
         pushed_pending: usize,
     },
     UnmountAck,
+    /// Ranked hits from a `Search` request. `searchable=false` means the daemon
+    /// has no usable local index (so the client should fall back to cloud).
+    SearchHits {
+        hits: Vec<crate::backend::SearchHit>,
+        searchable: bool,
+    },
     Error {
         message: String,
     },

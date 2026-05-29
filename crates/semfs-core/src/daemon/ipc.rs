@@ -16,6 +16,10 @@ pub struct IpcState {
     pub tag: String,
     pub mount_path: String,
     pub fs: Arc<CacheFs>,
+    /// The daemon's local semantic index — the SOLE owner of the backend
+    /// connection. `grep` searches through here via IPC instead of opening its
+    /// own connection. `None` when local indexing is disabled (hash embedder).
+    pub index: Option<Arc<dyn crate::backend::SemanticIndex>>,
     pub started_at: Instant,
     pub pull_enabled: bool,
     pub user_id: Option<String>,
@@ -120,5 +124,22 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             state.shutdown_notify.notify_waiters();
             Response::UnmountAck
         }
+        Request::Search { query, filepath } => match &state.index {
+            Some(index) => match index.search(&query, filepath.as_deref()).await {
+                Ok(hits) => Response::SearchHits {
+                    hits,
+                    searchable: true,
+                },
+                Err(e) => Response::Error {
+                    message: format!("search failed: {e}"),
+                },
+            },
+            // No local index (hash embedder / indexing disabled) — tell the
+            // client so it can fall back to cloud rather than treat empty as final.
+            None => Response::SearchHits {
+                hits: Vec::new(),
+                searchable: false,
+            },
+        },
     }
 }

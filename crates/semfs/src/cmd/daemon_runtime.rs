@@ -24,59 +24,85 @@ use semfs_core::vfs::types::SetAttr;
 
 const ROOT_INO: u64 = 1;
 
-/// Build the local semantic indexer over the daemon's cache db, returned as
-/// `dyn LocalIndexer` for `CacheFs::with_indexer`. Uses the same resolver as
-/// `grep`, so the indexer's embedder/backend matches the searcher's. The storage
-/// backend is SQLite by default, or Postgres/pgvector when
-/// `SEMFS_STORAGE_BACKEND=pgvector` (requires the `pg` feature + `SEMFS_PG_URL`).
+/// The daemon's index, as BOTH trait objects over one shared store: a
+/// `LocalIndexer` for the write path (`CacheFs`) and a `SemanticIndex` for the
+/// IPC search handler. One object, one connection, one owner.
+type IndexPair = (
+    Arc<dyn semfs_core::cache::LocalIndexer>,
+    Arc<dyn semfs_core::backend::SemanticIndex>,
+);
+
+/// Build the daemon's index over the cache db. Uses the same resolver as `grep`,
+/// so embedder/backend match. Storage backend is SQLite by default, or external
+/// Postgres (`SEMFS_STORAGE_BACKEND=pgvector`, `pg` feature) or embedded pglite
+/// (`=pglite`, `pglite` feature). Returns both trait objects over the one store.
 async fn build_local_indexer(
     db: Arc<Db>,
     container: &str,
     env: &crate::cmd::resolve::ResolveEnv,
-) -> anyhow::Result<Arc<dyn semfs_core::cache::LocalIndexer>> {
+) -> anyhow::Result<IndexPair> {
     use crate::cmd::resolve::{choose_storage, StorageChoice};
     let embedder = crate::cmd::resolve::build_embedder(env)?;
 
-    if choose_storage(env) == StorageChoice::Pgvector {
-        let _ = &db; // Postgres is the store; the local SQLite cache db is unused here.
-        #[cfg(feature = "pg")]
-        {
-            let store = crate::cmd::resolve::build_pg_store(env, container, embedder).await?;
-            eprintln!("storage backend: pgvector (Postgres), container={container}");
-            return Ok(Arc::new(store));
+    match choose_storage(env) {
+        StorageChoice::Pgvector => {
+            let _ = &db; // Postgres is the store; the SQLite cache db is unused here.
+            #[cfg(feature = "pg")]
+            {
+                let store =
+                    Arc::new(crate::cmd::resolve::build_pg_store(env, container, embedder).await?);
+                eprintln!("storage backend: pgvector (external Postgres), container={container}");
+                Ok((store.clone(), store))
+            }
+            #[cfg(not(feature = "pg"))]
+            {
+                let _ = (container, embedder);
+                anyhow::bail!(
+                    "SEMFS_STORAGE_BACKEND=pgvector but this binary was built without the `pg` \
+                     feature — rebuild with `cargo build --features pg`"
+                )
+            }
         }
-        #[cfg(not(feature = "pg"))]
-        {
-            let _ = (container, embedder);
-            anyhow::bail!(
-                "SEMFS_STORAGE_BACKEND=pgvector but this binary was built without the `pg` \
-                 feature — rebuild with `cargo build --features pg`"
-            );
+        StorageChoice::Pglite => {
+            let _ = &db; // pglite hosts the index; the SQLite cache db is unused here.
+            #[cfg(feature = "pglite")]
+            {
+                let store =
+                    Arc::new(crate::cmd::resolve::build_pglite_store(env, container, embedder).await?);
+                eprintln!("storage backend: embedded pglite, container={container}");
+                Ok((store.clone(), store))
+            }
+            #[cfg(not(feature = "pglite"))]
+            {
+                let _ = (container, embedder);
+                anyhow::bail!(
+                    "SEMFS_STORAGE_BACKEND=pglite but this binary was built without the `pglite` \
+                     feature — rebuild with `cargo build --features pglite`"
+                )
+            }
+        }
+        StorageChoice::Sqlite => {
+            // Default: local SQLite (vec0 + fts5), with the dual-lane code embedder.
+            let mut store = semfs_core::backend::SqliteVecStore::new(db, embedder)?;
+            // FAIL-OPEN code lane: a code-model failure must not fail the mount —
+            // code files fall back to the text lane (the floor).
+            match crate::cmd::resolve::build_code_embedder(env) {
+                Ok(Some(code)) => match store.enable_code_indexing(code) {
+                    Ok(()) => eprintln!("code embedder enabled (vchunks_code lane)"),
+                    Err(e) => eprintln!("code lane unavailable ({e}); indexing text lane only"),
+                },
+                Ok(None) => {}
+                Err(e) => eprintln!("code embedder unavailable ({e}); indexing text lane only"),
+            }
+            // L7: attach the entity-graph extractor when an LLM is available.
+            if let Some(llm) = crate::cmd::resolve::build_llm(env) {
+                store = store.with_graph_extractor(Arc::new(llm));
+                eprintln!("entity-graph extraction enabled (L7)");
+            }
+            let store = Arc::new(store);
+            Ok((store.clone(), store))
         }
     }
-
-    // Default: local SQLite (vec0 + fts5), with the dual-lane code embedder.
-    let mut store = semfs_core::backend::SqliteVecStore::new(db, embedder)?;
-    // Attach the code embedder (writer path: ensures the vchunks_code vec0 table
-    // + stamps its identity) so code-like files index into the code lane.
-    // FAIL-OPEN: if the code model can't be built/initialized (e.g. download or
-    // cache failure), keep indexing the text lane rather than failing the mount —
-    // code files then fall back to the text embedder. The text lane is the floor.
-    match crate::cmd::resolve::build_code_embedder(env) {
-        Ok(Some(code)) => match store.enable_code_indexing(code) {
-            Ok(()) => eprintln!("code embedder enabled (vchunks_code lane)"),
-            Err(e) => eprintln!("code lane unavailable ({e}); indexing text lane only"),
-        },
-        Ok(None) => {}
-        Err(e) => eprintln!("code embedder unavailable ({e}); indexing text lane only"),
-    }
-    // L7: when an LLM is available, attach the entity-graph extractor so writes
-    // populate file→entity edges.
-    if let Some(llm) = crate::cmd::resolve::build_llm(env) {
-        store = store.with_graph_extractor(Arc::new(llm));
-        eprintln!("entity-graph extraction enabled (L7)");
-    }
-    Ok(Arc::new(store))
 }
 
 /// Config needed to run the daemon body — subset of `mount::Args` that
@@ -238,10 +264,15 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     // sync. Otherwise behavior is unchanged.
     let fs_base = CacheFs::with_api(db.clone(), api);
     let resolve_env = crate::cmd::resolve::ResolveEnv::from_env();
+    // The daemon owns the index as BOTH a write-path indexer and a search index;
+    // the search half is handed to the IPC server so `grep` can query it without
+    // opening its own backend connection.
+    let mut search_index: Option<Arc<dyn semfs_core::backend::SemanticIndex>> = None;
     let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) {
         match build_local_indexer(db.clone(), &cfg.container_tag, &resolve_env).await {
-            Ok(indexer) => {
+            Ok((indexer, index)) => {
                 eprintln!("local semantic index enabled");
+                search_index = Some(index);
                 Arc::new(fs_base.with_indexer(indexer))
             }
             Err(e) => {
@@ -365,6 +396,7 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         tag: cfg.container_tag.clone(),
         mount_path: cfg.mount_path.display().to_string(),
         fs: fs.clone(),
+        index: search_index,
         started_at: Instant::now(),
         pull_enabled: !cfg.no_sync,
         user_id: session_user_id,
