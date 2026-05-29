@@ -4,14 +4,9 @@
 # works end-to-end against the real Supermemory service.
 set -euo pipefail
 
-# Key resolution: prefer an already-exported SUPERMEMORY_API_KEY (e.g. a credited
-# account); fall back to bash/.env only if the env var is unset. (The old behavior
-# of always reading bash/.env silently overrode a good env key with a stale one.)
+# Requires SUPERMEMORY_API_KEY exported in the environment (a credited account).
 REPO="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
-if [ -z "${SUPERMEMORY_API_KEY:-}" ]; then
-  SUPERMEMORY_API_KEY="$(grep -E '^SUPERMEMORY_API_KEY=' "$REPO/bash/.env" | cut -d= -f2- | tr -d '\"'"'")"
-fi
-: "${SUPERMEMORY_API_KEY:?set SUPERMEMORY_API_KEY in env or bash/.env}"
+: "${SUPERMEMORY_API_KEY:?set SUPERMEMORY_API_KEY in the environment}"
 
 TAG="e2e-phase1-$(date +%s)"
 MNT="$(mktemp -d)/$TAG"

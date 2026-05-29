@@ -12,7 +12,16 @@ description = "semfs core library — VFS trait, local cache, mount adapters, sy
 name = "semfs_core"
 path = "src/lib.rs"
 
+[features]
+# Postgres/pgvector backend (Phase 6). Behind a flag so the default build stays
+# lean and MSRV-1.80-compatible; pglite-oxide raises the effective MSRV to 1.92.
+# We bind vectors as text cast to `::vector` (no `pgvector` crate) to keep a
+# single sqlx version aligned with pglite-oxide.
+pg-local = ["dep:sqlx", "dep:pglite-oxide"]
+
 [dependencies]
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring"], optional = true }
+pglite-oxide = { version = "0.5", optional = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
@@ -25,6 +34,15 @@ parking_lot = { workspace = true }
 libc = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
+sqlite-vec = { workspace = true }
+fastembed = { workspace = true }
+# Fetch a SPECIFIC reranker ONNX variant (int8) from the model's HF repo —
+# fastembed's reranker registry is pinned to full-precision onnx/model.onnx.
+# Match fastembed's hf-hub features (ureq sync client + native-tls) to share one
+# resolved dependency + TLS backend.
+hf-hub = { version = "0.5", default-features = false, features = ["ureq", "native-tls"] }
+ureq = { workspace = true }
+regex = { workspace = true }
 directories = { workspace = true }
 lru = { workspace = true }
 fs2 = "0.4"

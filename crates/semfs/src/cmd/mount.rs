@@ -618,6 +618,16 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// Tests that read or mutate the process-global current directory must not
+    /// run concurrently: `set_current_dir` in one test corrupts `current_dir()`
+    /// in another (and a dropped tempdir leaves cwd dangling → ENOENT). This
+    /// serializes them. Poison is recovered so a panicking test doesn't cascade.
+    static CWD_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn cwd_lock() -> std::sync::MutexGuard<'static, ()> {
+        CWD_GUARD.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn looks_like_path_cases() {
         assert!(looks_like_path("."));
@@ -635,6 +645,7 @@ mod tests {
 
     #[test]
     fn looks_like_path_no_is_dir_check() {
+        let _g = cwd_lock();
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("mycontainer");
         fs::create_dir(&dir).unwrap();
@@ -646,6 +657,7 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_plain_tag() {
+        let _g = cwd_lock();
         let tmp = tempfile::tempdir().unwrap();
         let (tag, path) = resolve_tag_and_path("mynotes", None).unwrap();
         assert_eq!(tag, "mynotes");
@@ -656,6 +668,7 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_explicit_path() {
+        let _g = cwd_lock();
         let tmp = tempfile::tempdir().unwrap();
         let (tag, path) = resolve_tag_and_path("mynotes", Some(tmp.path().to_path_buf())).unwrap();
         assert_eq!(tag, "mynotes");
@@ -664,6 +677,7 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_explicit_relative_path_normalizes_to_absolute() {
+        let _g = cwd_lock();
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir(tmp.path().join("subdir")).unwrap();
         let prev = std::env::current_dir().unwrap();
@@ -679,6 +693,7 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_dot() {
+        let _g = cwd_lock();
         let cwd = std::env::current_dir().unwrap();
         let expected_tag = cwd.file_name().unwrap().to_string_lossy().into_owned();
         let (tag, path) = resolve_tag_and_path(".", None).unwrap();
@@ -688,6 +703,7 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_absolute() {
+        let _g = cwd_lock();
         let tmp = tempfile::tempdir().unwrap();
         let named = tmp.path().join("mycontainer");
         fs::create_dir(&named).unwrap();
@@ -699,6 +715,7 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_nonexistent_relative() {
+        let _g = cwd_lock();
         let (tag, path) = resolve_tag_and_path("./newdir", None).unwrap();
         assert_eq!(tag, "newdir");
         assert!(
@@ -709,6 +726,7 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_dot_with_explicit_path_errors() {
+        let _g = cwd_lock();
         let tmp = tempfile::tempdir().unwrap();
         let err = resolve_tag_and_path(".", Some(tmp.path().to_path_buf()));
         assert!(err.is_err());
@@ -716,6 +734,7 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_existing_dir_named_as_tag_with_path_works() {
+        let _g = cwd_lock();
         let tmp = tempfile::tempdir().unwrap();
         let tag_dir = tmp.path().join("mytag");
         fs::create_dir(&tag_dir).unwrap();
@@ -730,12 +749,14 @@ mod tests {
 
     #[test]
     fn resolve_tag_and_path_root_errors() {
+        let _g = cwd_lock();
         let err = resolve_tag_and_path("/", None);
         assert!(err.is_err());
     }
 
     #[test]
     fn validate_tag_rejects_dot_in_path_component() {
+        let _g = cwd_lock();
         let err = resolve_tag_and_path("./v1.2.3", None);
         assert!(err.is_err());
         let msg = err.unwrap_err().to_string();
@@ -744,6 +765,7 @@ mod tests {
 
     #[test]
     fn validate_tag_rejects_space_in_path_component() {
+        let _g = cwd_lock();
         let err = resolve_tag_and_path("/tmp/my project", None);
         assert!(err.is_err());
         let msg = err.unwrap_err().to_string();
@@ -752,6 +774,7 @@ mod tests {
 
     #[test]
     fn validate_tag_rejects_plain_invalid_chars() {
+        let _g = cwd_lock();
         for bad in &["my.tag", "my@tag", "foo!", "bar+baz"] {
             let err = resolve_tag_and_path(bad, None);
             assert!(err.is_err(), "expected error for tag '{bad}'");
@@ -760,6 +783,7 @@ mod tests {
 
     #[test]
     fn validate_tag_accepts_valid_chars() {
+        let _g = cwd_lock();
         let (tag, _) = resolve_tag_and_path("my-tag_v2:prod", None).unwrap();
         assert_eq!(tag, "my-tag_v2:prod");
     }

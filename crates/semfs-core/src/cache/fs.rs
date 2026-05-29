@@ -36,6 +36,9 @@ pub struct CacheFs {
     profile_file: Option<Arc<ProfileFile>>,
     dentry_cache: Mutex<LruCache<(u64, String), u64>>,
     hydration: Arc<HydrationScheduler>,
+    /// Local semantic indexer, maintained on write (flush) / delete / rename.
+    /// `None` = no local index (cloud-only behavior, unchanged).
+    indexer: Option<Arc<dyn super::LocalIndexer>>,
 }
 
 impl CacheFs {
@@ -47,6 +50,7 @@ impl CacheFs {
             profile_file: None,
             dentry_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DENTRY_CACHE_MAX).unwrap())),
             hydration: HydrationScheduler::new(),
+            indexer: None,
         }
     }
 
@@ -59,7 +63,15 @@ impl CacheFs {
             profile_file: Some(profile_file),
             dentry_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DENTRY_CACHE_MAX).unwrap())),
             hydration: HydrationScheduler::new(),
+            indexer: None,
         }
+    }
+
+    /// Attach a local semantic indexer. File writes (on flush), deletes, and
+    /// renames will maintain the local index in addition to any cloud sync.
+    pub fn with_indexer(mut self, indexer: Arc<dyn super::LocalIndexer>) -> Self {
+        self.indexer = Some(indexer);
+        self
     }
 
     pub fn hydration(&self) -> &Arc<HydrationScheduler> {
@@ -1151,6 +1163,7 @@ impl FileSystem for CacheFs {
                 ino,
                 api: None,
                 filepath: None,
+                indexer: None,
             };
             file.truncate(attr.size.unwrap()).await?;
         }
@@ -1433,6 +1446,7 @@ impl FileSystem for CacheFs {
             ino,
             api: self.api.clone(),
             filepath,
+            indexer: self.indexer.clone(),
         }))
     }
 
@@ -1514,6 +1528,7 @@ impl FileSystem for CacheFs {
             ino,
             api: self.api.clone(),
             filepath,
+            indexer: self.indexer.clone(),
         });
 
         Ok((attr, handle))
@@ -1604,6 +1619,15 @@ impl FileSystem for CacheFs {
         self.dentry_cache
             .lock()
             .pop(&(parent_ino, name.to_string()));
+
+        // Drop from the local semantic index (independent of cloud sync).
+        if let Some(indexer) = &self.indexer {
+            if let Some(fp) = filepath_for_api.as_deref() {
+                if let Err(e) = indexer.remove(fp) {
+                    tracing::warn!(filepath = %fp, "local index remove on unlink failed: {e}");
+                }
+            }
+        }
 
         // Push delete to API via the push queue (durable, coalescing).
         if self.api.is_some() {
@@ -1984,6 +2008,18 @@ impl FileSystem for CacheFs {
             let sep = if p.ends_with('/') { "" } else { "/" };
             format!("{p}{sep}{new_name}")
         });
+
+        // Keep the local semantic index in sync with the path change: relabel
+        // old → new (and drop anything the destination already had). Best-effort.
+        if let Some(indexer) = &self.indexer {
+            if let (Some(old_fp), Some(new_fp)) =
+                (old_filepath.as_deref(), new_filepath.as_deref())
+            {
+                if let Err(e) = indexer.rename(old_fp, new_fp) {
+                    tracing::warn!(old = %old_fp, new = %new_fp, "local index rename failed: {e}");
+                }
+            }
+        }
 
         // Atomic-save editors do `write(tmp) + rename(tmp, final)` inside
         // the push debounce window; a Rename upsert coalesces over the

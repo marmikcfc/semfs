@@ -94,3 +94,41 @@ CREATE TABLE IF NOT EXISTS sync_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- ── Local semantic index (Phase 2) ──────────────────────────────────────────
+-- Dimension-INDEPENDENT tables only. The vec0 vector tables (vchunks /
+-- vchunks_code) bind a float[N] width, so they are created at runtime from the
+-- configured embedder dims — see Db::ensure_vector_tables. Mirrors the TS
+-- SqliteVecStore split (chunks/fts5 static; vec0 runtime).
+
+-- One row per chunk of an indexed file. `ino` ties the chunk back to its
+-- inode (content lives in fs_data); `filepath` is denormalized so search can
+-- return paths without a dentry walk; `ord` is the chunk's position. Chunks are
+-- re-derived on write (DELETE WHERE filepath=? then re-insert) and removed on delete.
+CREATE TABLE IF NOT EXISTS chunks (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    ino              INTEGER NOT NULL,
+    filepath         TEXT    NOT NULL,
+    ord              INTEGER NOT NULL,
+    text             TEXT    NOT NULL,
+    -- L6 salience stats: stamped on write, bumped on search hit.
+    last_accessed_at INTEGER,
+    access_count     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_ino ON chunks(ino);
+CREATE INDEX IF NOT EXISTS idx_chunks_filepath ON chunks(filepath);
+
+-- L7 entity/link graph: typed edges between files, re-derived on write and
+-- removed on delete (mutable-FS substrate — no temporal/versioning).
+CREATE TABLE IF NOT EXISTS edges (
+    from_path  TEXT NOT NULL,
+    to_path    TEXT NOT NULL,
+    edge_kind  TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (from_path, to_path, edge_kind)
+);
+CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_path);
+
+-- BM25 keyword index over chunk text. rowid is kept equal to chunks.id so the
+-- vec0 KNN and fts5 BM25 result sets join back to the same chunk.
+CREATE VIRTUAL TABLE IF NOT EXISTS ffts USING fts5(text);

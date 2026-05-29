@@ -2,16 +2,96 @@
 
 use anyhow::Result;
 use clap::Args as ClapArgs;
-use semfs_core::backend::{CloudIndex, SemanticIndex};
+use semfs_core::backend::{CloudIndex, SemanticIndex, SqliteVecStore};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Resolve the search backend. Phase 1: always the cloud client. Phase 5 adds
-/// local/offline selection here.
-fn resolve_index(api_url: &str, key: &str, tag: &str) -> Arc<dyn SemanticIndex> {
+/// Resolve the search backend — **config-driven, no flag, no network.**
+///
+/// Uses the container's LOCAL SQLite index (full L1–L5: resolved embedder +
+/// reranker, read-only via `open_existing`) when BOTH hold: the daemon recorded
+/// a cache `db_path` in the `.semfs` marker, and this process can build the
+/// matching embedder (`local_indexing_enabled` — same resolver the daemon used).
+/// Otherwise falls back to the cloud (`CloudIndex`). No `validate_key`, so a
+/// local search needs neither credentials nor connectivity.
+///
+/// Returns `(index, used_local)`. `used_local` lets the caller retry through the
+/// cloud if a local query fails at runtime (e.g. a cloud-backed query embedder
+/// hits a provider outage) — a degraded-dependency state that should fall back,
+/// not abort the command.
+fn resolve_index(
+    db_path: Option<&str>,
+    api_url: &str,
+    key: Option<&str>,
+    tag: &str,
+) -> Result<(Arc<dyn SemanticIndex>, bool)> {
+    let env = super::resolve::ResolveEnv::from_env();
+    if super::resolve::local_indexing_enabled(&env) {
+        if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
+            // Degraded-dependency states (corrupt cache, stale model dir) must
+            // fall back to cloud, not abort grep — so local init errors are
+            // logged and we continue rather than `?`-propagating.
+            match build_local_store(&env, p) {
+                Ok(Some(store)) => return Ok((Arc::new(store), true)),
+                Ok(None) => tracing::warn!(
+                    "local index at {p} is missing or model-incompatible; \
+                     falling back to cloud search"
+                ),
+                Err(e) => tracing::warn!(
+                    "local backend init failed for {p} ({e}); falling back to cloud search"
+                ),
+            }
+        }
+    }
+    // Cloud fallback (Supermemory) — requires a key.
+    Ok((Arc::new(cloud_index(api_url, key, tag)?), false))
+}
+
+/// Build the Supermemory-backed cloud search index. Requires an API key.
+fn cloud_index(api_url: &str, key: Option<&str>, tag: &str) -> Result<CloudIndex> {
+    let key = key.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no local index for this container and no API key for cloud search \
+             (configure a local embedder, or run `semfs login`)"
+        )
+    })?;
     let api = Arc::new(semfs_core::api::ApiClient::new(api_url, key, tag));
-    Arc::new(CloudIndex::new(api))
+    Ok(CloudIndex::new(api))
+}
+
+/// Build the local SQLite store for `grep`, or `Ok(None)` if the on-disk index
+/// isn't usable (missing tables / incompatible model). Hard init failures
+/// (cache open, embedder build) return `Err` so the caller falls back to cloud;
+/// reranker construction failure is non-fatal — we search without reranking.
+fn build_local_store(
+    env: &super::resolve::ResolveEnv,
+    p: &str,
+) -> Result<Option<SqliteVecStore>> {
+    let db = Arc::new(semfs_core::cache::Db::open(Path::new(p))?);
+    let embedder = super::resolve::build_embedder(env)?;
+    let mut store = SqliteVecStore::open_existing(db.clone(), embedder);
+    // Reader path: only bother with the code embedder if the cache advertises a
+    // code lane (a text-only cache needs no code model). FAIL-OPEN: if the code
+    // model can't be built, log and search the text lane only — the code lane is
+    // additive, never a precondition for local search. When attached, `search`
+    // queries the code lane only if its identity matches the stamp.
+    if db.has_code_lane() {
+        match super::resolve::build_code_embedder(env) {
+            Ok(Some(code)) => store = store.with_code_embedder(code),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(
+                "code lane advertised but code embedder unavailable ({e}); \
+                 searching text lane only"
+            ),
+        }
+    }
+    match super::resolve::build_reranker(env) {
+        Ok(Some(reranker)) => store = store.with_reranker(reranker),
+        Ok(None) => {}
+        Err(e) => tracing::warn!("local reranker unavailable ({e}); searching without rerank"),
+    }
+    Ok(store.is_searchable().then_some(store))
 }
 
 const DEFAULT_API_URL: &str = "https://api.supermemory.ai";
@@ -190,6 +270,12 @@ pub struct Args {
     /// Override the Supermemory API base URL.
     #[arg(long, env = "SUPERMEMORY_API_URL")]
     pub api_url: Option<String>,
+
+    /// L4: rewrite/expand the query with an LLM (OpenRouter gpt-4.1-nano) before
+    /// searching. Opt-in; falls back to the original query if the LLM is
+    /// unavailable or errors.
+    #[arg(long)]
+    pub rewrite: bool,
 }
 
 pub async fn run(args: Args) -> Result<()> {
@@ -249,9 +335,17 @@ pub async fn run(args: Args) -> Result<()> {
         .and_then(|m| m.mount_path.as_deref())
         .or_else(|| path_marker.as_ref().and_then(|m| m.mount_path.as_deref()))
         .map(std::path::Path::new);
-    let key = super::auth::resolve_api_key(args.key.as_deref(), mount_path)?;
+    // Key is only needed for the cloud fallback; a local search needs none.
+    let key = super::auth::resolve_api_key(args.key.as_deref(), mount_path).ok();
 
-    let index = resolve_index(&api_url, &key, &tag);
+    // Local cache db path from the marker (CWD marker, then path-argument marker)
+    // — opening it needs no network.
+    let db_path = marker
+        .as_ref()
+        .and_then(|m| m.db_path.as_deref())
+        .or_else(|| path_marker.as_ref().and_then(|m| m.db_path.as_deref()));
+
+    let (index, used_local) = resolve_index(db_path, &api_url, key.as_deref(), &tag)?;
 
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
@@ -300,7 +394,42 @@ pub async fn run(args: Args) -> Result<()> {
         Some(relative)
     });
 
-    let hits = index.search(&args.query, filepath.as_deref()).await?;
+    // L4: optional LLM query rewrite (opt-in via --rewrite; fail-open to original).
+    let effective_query = if args.rewrite {
+        let env = super::resolve::ResolveEnv::from_env();
+        match super::resolve::build_llm(&env) {
+            Some(llm) => match semfs_core::llm::rewrite_query(&llm, &args.query) {
+                Ok(q) => {
+                    eprintln!("# rewritten query: {q:?}");
+                    q
+                }
+                Err(e) => {
+                    eprintln!("# query rewrite failed ({e}); using original");
+                    args.query.clone()
+                }
+            },
+            None => {
+                eprintln!("# --rewrite needs OPENROUTER_API_KEY; using original query");
+                args.query.clone()
+            }
+        }
+    } else {
+        args.query.clone()
+    };
+
+    // If the local backend fails at query time (e.g. a cloud-backed query
+    // embedder hits a provider outage or revoked key), degrade to cloud search
+    // when a key is available rather than aborting the command.
+    let hits = match index.search(&effective_query, filepath.as_deref()).await {
+        Ok(hits) => hits,
+        Err(e) if used_local && key.is_some() => {
+            tracing::warn!("local search failed ({e}); falling back to cloud search");
+            cloud_index(&api_url, key.as_deref(), &tag)?
+                .search(&effective_query, filepath.as_deref())
+                .await?
+        }
+        Err(e) => return Err(e),
+    };
 
     if hits.is_empty() {
         eprintln!(

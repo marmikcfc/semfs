@@ -43,6 +43,17 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rusqlite = { version = "0.32", features = ["bundled"] }
 directories = "5"
 lru = "0.12"
+# Local vector index (Phase 2/4) — sqlite-vec loadable extension, registered
+# statically via sqlite3_auto_extension (compiled in; no shipped .so/.dylib).
+sqlite-vec = "0.1.9"
+# Local embeddings (Phase 3) — fastembed over ONNX Runtime. Pulls a prebuilt
+# onnxruntime binary at build time (spike 3: verify it links on linux-x86_64).
+fastembed = "5.13"
+# Cloud embedders (Phase 3) — blocking HTTP, runtime-agnostic so it fits the
+# sync Embedder trait and works inside the async search path without nesting tokio.
+ureq = { version = "2", features = ["json"] }
+# L7 entity-graph heuristic extractor (wikilinks / md-links / imports → edges).
+regex = "1"
 
 # Mount backends (M3)
 # fuser is Linux-only: on macOS it requires macFUSE which we explicitly avoid.
