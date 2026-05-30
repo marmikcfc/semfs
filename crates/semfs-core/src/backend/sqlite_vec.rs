@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 
@@ -17,6 +18,16 @@ use crate::rerank::Reranker;
 
 /// Over-fetch per ranked list before collapsing chunks → files.
 const SEARCH_POOL: usize = 80;
+
+/// Cooperative deadline for a single SQLite search. The whole search runs inside
+/// `spawn_blocking`, which Tokio CANNOT cancel — so the daemon's outer
+/// `tokio::time::timeout` only stops WAITING on the result, it can't abort the
+/// blocking work. To stop a timed-out search from later grabbing the shared
+/// `Mutex<Connection>` and blocking other search/index work, the body checks this
+/// deadline at its cancellation points (before taking the connection, before the
+/// blocking rerank) and bails early. Kept at/under `daemon::ipc::SEARCH_TIMEOUT`
+/// (25s) so a search self-aborts around when the daemon gives up on it.
+const SEARCH_DEADLINE: Duration = Duration::from_secs(25);
 /// When a query is scoped to a path prefix, vec0 KNN can't filter on the joined
 /// `filepath` (it only post-filters the global k-nearest), so we raise `k` to
 /// this bound and GLOB-filter, ensuring in-scope hits aren't crowded out of the
@@ -647,6 +658,11 @@ impl SqliteVecStore {
         query: &str,
         filepath: Option<&str>,
     ) -> anyhow::Result<Vec<SearchHit>> {
+        // Cooperative cancellation: the daemon's outer timeout can't abort this
+        // blocking task, so we self-abort at the points where a timed-out search
+        // would otherwise take/hold the SHARED connection and starve other work.
+        let deadline = Instant::now() + SEARCH_DEADLINE;
+
         let qvec = self
             .embedder
             .embed(&[query.to_string()])?
@@ -677,6 +693,17 @@ impl SqliteVecStore {
         // new ids), so we never return a snippet/score from pre-rewrite content.
         let mut rep_chunk: HashMap<String, i64> = HashMap::new();
 
+        // Cancellation point: if embedding already blew the deadline (e.g. a slow
+        // cloud embed that ran up to the HTTP timeout), bail BEFORE taking the
+        // shared connection — a search the client already abandoned must not now
+        // block other search/index work on the daemon's only connection.
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "sqlite search exceeded its {}s deadline before acquiring the connection; \
+                 aborting so it can't block other work",
+                SEARCH_DEADLINE.as_secs()
+            );
+        }
         let conn = self.db.conn.lock();
 
         // Vector KNN (vec0). vec0 only post-filters the global k-nearest on
@@ -751,6 +778,19 @@ impl SqliteVecStore {
         let mut hits = super::rank::to_hits(by_file, filepath);
 
         // L5 rerank: replace RRF scores with cross-encoder scores, then re-sort.
+        // Cancellation point: the reranker is synchronous (cloud = blocking HTTP)
+        // and runs OUTSIDE the connection lock, but skipping a timed-out rerank
+        // avoids burning more blocking-thread time (and a later phase-2 re-lock)
+        // for a result the client has already abandoned. Return the pre-rerank
+        // RRF-ranked hits rather than erroring — they're still useful.
+        if self.reranker.is_some() && Instant::now() >= deadline {
+            tracing::warn!(
+                "sqlite search hit its {}s deadline before rerank; returning RRF-ranked hits",
+                SEARCH_DEADLINE.as_secs()
+            );
+            super::rank::sort_desc(&mut hits);
+            return Ok(hits);
+        }
         if let Some(reranker) = &self.reranker {
             super::rank::apply_reranker(&mut hits, reranker.as_ref(), query)?;
         }
