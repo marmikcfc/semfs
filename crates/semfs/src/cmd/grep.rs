@@ -29,46 +29,64 @@ async fn resolve_index(
     use super::resolve::{choose_storage, StorageChoice};
     let env = super::resolve::ResolveEnv::from_env();
     if super::resolve::local_indexing_enabled(&env) {
-        // Postgres/pgvector storage backend (opt-in via SEMFS_STORAGE_BACKEND).
-        // Connects directly to Postgres — no local cache db. Fail-open to cloud.
-        if choose_storage(&env) == StorageChoice::Pgvector {
-            #[cfg(feature = "pg")]
-            {
-                let embedder = super::resolve::build_embedder(&env)?;
-                match super::resolve::build_pg_store(&env, tag, embedder).await {
-                    // Gate on readiness, mirroring SQLite's is_searchable(): an
-                    // empty Postgres index would return Ok([]) (a false "no
-                    // results") and bypass the Err-only cloud retry — so fall back
-                    // to cloud unless the container actually has rows.
-                    Ok(store) if store.is_searchable().await => {
-                        return Ok((Arc::new(store), true))
+        match choose_storage(&env) {
+            // Postgres/pgvector storage backend (opt-in via SEMFS_STORAGE_BACKEND).
+            // Connects directly to Postgres — no local cache db. Fail-open to cloud.
+            StorageChoice::Pgvector => {
+                #[cfg(feature = "pg")]
+                {
+                    let embedder = super::resolve::build_embedder(&env)?;
+                    match super::resolve::build_pg_store(&env, tag, embedder).await {
+                        // Gate on readiness, mirroring SQLite's is_searchable(): an
+                        // empty Postgres index would return Ok([]) (a false "no
+                        // results") and bypass the Err-only cloud retry — so fall
+                        // back to cloud unless the container actually has rows.
+                        Ok(store) if store.is_searchable().await => {
+                            return Ok((Arc::new(store), true))
+                        }
+                        Ok(_) => tracing::warn!(
+                            "pgvector index for '{tag}' is empty/unready; falling back to cloud"
+                        ),
+                        Err(e) => tracing::warn!(
+                            "pgvector backend unavailable ({e}); falling back to cloud search"
+                        ),
                     }
-                    Ok(_) => tracing::warn!(
-                        "pgvector index for '{tag}' is empty/unready; falling back to cloud search"
-                    ),
-                    Err(e) => tracing::warn!(
-                        "pgvector backend unavailable ({e}); falling back to cloud search"
-                    ),
                 }
+                #[cfg(not(feature = "pg"))]
+                tracing::warn!(
+                    "SEMFS_STORAGE_BACKEND=pgvector but this binary was built without the `pg` \
+                     feature; falling back to cloud search"
+                );
             }
-            #[cfg(not(feature = "pg"))]
-            tracing::warn!(
-                "SEMFS_STORAGE_BACKEND=pgvector but this binary was built without the `pg` \
-                 feature; falling back to cloud search"
-            );
-        } else if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
-            // Default SQLite. Degraded-dependency states (corrupt cache, stale
-            // model dir) fall back to cloud, not abort grep — local init errors
-            // are logged and we continue rather than `?`-propagating.
-            match build_local_store(&env, p) {
-                Ok(Some(store)) => return Ok((Arc::new(store), true)),
-                Ok(None) => tracing::warn!(
-                    "local index at {p} is missing or model-incompatible; \
-                     falling back to cloud search"
-                ),
-                Err(e) => tracing::warn!(
-                    "local backend init failed for {p} ({e}); falling back to cloud search"
-                ),
+            // Embedded pglite is DAEMON-OWNED with no direct path (single
+            // connection, embedded in the daemon process). With the daemon
+            // unreachable there is NO local route — and crucially we must NOT
+            // fall into the SQLite `db_path` branch below: that cache db is not
+            // pglite's store, and a leftover compatible SQLite vec index from an
+            // earlier backend/config would be served as if authoritative (a silent
+            // stale-result trap). Skip straight to cloud.
+            StorageChoice::Pglite => {
+                tracing::warn!(
+                    "pglite is daemon-owned with no direct path; daemon unreachable for '{tag}' \
+                     → cloud search (not reopening any on-disk SQLite cache)"
+                );
+            }
+            StorageChoice::Sqlite => {
+                if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
+                    // Default SQLite. Degraded-dependency states (corrupt cache,
+                    // stale model dir) fall back to cloud, not abort grep — local
+                    // init errors are logged and we continue rather than `?`.
+                    match build_local_store(&env, p) {
+                        Ok(Some(store)) => return Ok((Arc::new(store), true)),
+                        Ok(None) => tracing::warn!(
+                            "local index at {p} is missing or model-incompatible; \
+                             falling back to cloud search"
+                        ),
+                        Err(e) => tracing::warn!(
+                            "local backend init failed for {p} ({e}); falling back to cloud search"
+                        ),
+                    }
+                }
             }
         }
     }
