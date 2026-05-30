@@ -17,8 +17,10 @@ path = "src/main.rs"
 # Off by default so the standard build stays lean (no sqlx/Postgres deps).
 pg = ["semfs-core/pg"]
 # Embedded pglite backend (SEMFS_STORAGE_BACKEND=pglite) — ships an in-process
-# Postgres+pgvector, no external server. Implies `pg` (pg-local includes pg).
-pglite = ["semfs-core/pg-local"]
+# Postgres+pgvector, no external server. Superset of `pg`: a pglite-built binary
+# supports BOTH embedded pglite AND external pgvector, so it must enable the
+# binary's own `pg` cfg too (not just semfs-core/pg-local).
+pglite = ["pg", "semfs-core/pg-local"]
 
 [dependencies]
 semfs-core = { workspace = true }
