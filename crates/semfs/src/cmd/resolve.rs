@@ -180,7 +180,7 @@ pub fn build_reranker(env: &ResolveEnv) -> Result<Option<Arc<dyn Reranker>>> {
 }
 
 /// Where the local vector index is stored + searched.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageChoice {
     Sqlite,
     /// External Postgres (you run it), via `SEMFS_PG_URL`.
@@ -196,6 +196,23 @@ pub fn choose_storage(env: &ResolveEnv) -> StorageChoice {
         Some("pgvector") | Some("pg") | Some("postgres") => StorageChoice::Pgvector,
         Some("pglite") | Some("embedded") => StorageChoice::Pglite,
         _ => StorageChoice::Sqlite,
+    }
+}
+
+/// An EXPLICITLY-selected external/embedded backend (pgvector/pglite) is the sole
+/// search path for its mount and is meaningless with the `hash` floor embedder
+/// (no semantic vectors). If the config pairs such a backend with `hash`, return
+/// the backend name so the caller can FAIL the mount with a clear error rather
+/// than silently mounting with no usable index (which would degrade search to
+/// cloud and omit local writes). `None` = the config is fine.
+pub fn explicit_backend_without_embedder(env: &ResolveEnv) -> Option<&'static str> {
+    if local_indexing_enabled(env) {
+        return None; // a real (non-hash) embedder is configured
+    }
+    match choose_storage(env) {
+        StorageChoice::Pgvector => Some("pgvector"),
+        StorageChoice::Pglite => Some("pglite"),
+        StorageChoice::Sqlite => None,
     }
 }
 
@@ -365,5 +382,49 @@ mod tests {
         assert_eq!(choose_rerank(&with_rerank("none")), RerankChoice::None);
         assert_eq!(choose_rerank(&with_rerank("cohere")), RerankChoice::Cohere);
         assert_eq!(choose_rerank(&with_rerank("relace")), RerankChoice::Relace);
+    }
+
+    fn with_storage_embed(storage: &str, embed: &str) -> ResolveEnv {
+        ResolveEnv {
+            storage_backend: Some(storage.into()),
+            embed_backend: Some(embed.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn explicit_backend_with_hash_is_a_config_error() {
+        // pgvector/pglite + hash floor → contradiction, surface the backend name.
+        assert_eq!(
+            explicit_backend_without_embedder(&with_storage_embed("pgvector", "hash")),
+            Some("pgvector")
+        );
+        assert_eq!(
+            explicit_backend_without_embedder(&with_storage_embed("pglite", "hash")),
+            Some("pglite")
+        );
+    }
+
+    #[test]
+    fn explicit_backend_with_real_embedder_is_ok() {
+        assert_eq!(
+            explicit_backend_without_embedder(&with_storage_embed("pgvector", "local")),
+            None
+        );
+        assert_eq!(
+            explicit_backend_without_embedder(&with_storage_embed("pglite", "openai")),
+            None
+        );
+    }
+
+    #[test]
+    fn sqlite_with_hash_is_not_a_config_error() {
+        // Default SQLite + hash is the long-standing "no local index" path, not an
+        // error — it stays fail-open.
+        assert_eq!(
+            explicit_backend_without_embedder(&with_storage_embed("sqlite", "hash")),
+            None
+        );
+        assert_eq!(explicit_backend_without_embedder(&with_embed("hash")), None);
     }
 }

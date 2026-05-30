@@ -75,7 +75,8 @@ impl Reranker for CohereReranker {
             query,
             documents: docs,
         };
-        let resp: CohereResponse = ureq::post(&format!("{}/rerank", self.base_url))
+        let resp: CohereResponse = crate::http::timeout_agent()
+            .post(&format!("{}/rerank", self.base_url))
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json")
             .send_json(body)
@@ -162,7 +163,8 @@ impl Reranker for RelaceReranker {
             codebase,
             token_limit: self.token_limit,
         };
-        let resp: RelaceResponse = ureq::post(&format!("{}/v2/code/rank", self.base_url))
+        let resp: RelaceResponse = crate::http::timeout_agent()
+            .post(&format!("{}/v2/code/rank", self.base_url))
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json")
             .send_json(body)

@@ -85,7 +85,8 @@ impl Embedder for OpenAiEmbedder {
             input: texts,
             dimensions: self.dims,
         };
-        let resp: EmbedResponse = ureq::post(&url)
+        let resp: EmbedResponse = crate::http::timeout_agent()
+            .post(&url)
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json")
             .send_json(body)

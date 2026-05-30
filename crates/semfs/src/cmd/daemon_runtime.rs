@@ -304,7 +304,25 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         .as_ref()
         .and_then(|s| s.org_id.as_deref())
         .unwrap_or("_ephemeral");
-    let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) {
+    use crate::cmd::resolve::{choose_storage, StorageChoice};
+    let storage = choose_storage(&resolve_env);
+    let explicit_backend = matches!(storage, StorageChoice::Pgvector | StorageChoice::Pglite);
+    // An explicitly-selected external/embedded backend with the `hash` floor is a
+    // contradiction (no semantic vectors). Fail closed with a clear message rather
+    // than silently mounting with no usable index — caught BEFORE the indexing
+    // gate, because `local_indexing_enabled()` is false for hash and would
+    // otherwise skip the backend entirely.
+    if let Some(name) = crate::cmd::resolve::explicit_backend_without_embedder(&resolve_env) {
+        anyhow::bail!(
+            "SEMFS_STORAGE_BACKEND={name} requires a real embedder, but \
+             SEMFS_EMBED_BACKEND=hash provides no semantic vectors; set a local or \
+             cloud embedder, or use the default SQLite backend"
+        );
+    }
+    // Build the index when a real embedder is configured OR an external/embedded
+    // backend was explicitly requested (the latter must not be skipped by the
+    // hash short-circuit — that case already errored out above).
+    let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) || explicit_backend {
         match build_local_indexer(
             db.clone(),
             org_scope,
@@ -321,8 +339,7 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
                 Arc::new(fs_base.with_indexer(indexer))
             }
             Err(e) => {
-                use crate::cmd::resolve::{choose_storage, StorageChoice};
-                match choose_storage(&resolve_env) {
+                match storage {
                     // An EXPLICITLY-selected external/embedded backend OWNS the
                     // index — it's the only search path (pglite has no direct
                     // route). If it fails to start, mounting anyway would leave a

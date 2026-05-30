@@ -26,6 +26,7 @@ pub mod cache;
 pub mod config;
 pub mod daemon;
 pub mod embed;
+pub mod http;
 pub mod llm;
 pub mod rerank;
 pub mod mount;

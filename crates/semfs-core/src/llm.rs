@@ -76,7 +76,8 @@ impl LlmClient {
             ],
             response_format,
         };
-        let resp: ChatResponse = ureq::post(&format!("{}/chat/completions", self.base_url))
+        let resp: ChatResponse = crate::http::timeout_agent()
+            .post(&format!("{}/chat/completions", self.base_url))
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json")
             .send_json(body)
