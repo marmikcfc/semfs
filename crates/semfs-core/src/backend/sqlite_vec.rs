@@ -778,21 +778,24 @@ impl SqliteVecStore {
         let mut hits = super::rank::to_hits(by_file, filepath);
 
         // L5 rerank: replace RRF scores with cross-encoder scores, then re-sort.
-        // Cancellation point: the reranker is synchronous (cloud = blocking HTTP)
-        // and runs OUTSIDE the connection lock, but skipping a timed-out rerank
-        // avoids burning more blocking-thread time (and a later phase-2 re-lock)
-        // for a result the client has already abandoned. Return the pre-rerank
-        // RRF-ranked hits rather than erroring — they're still useful.
-        if self.reranker.is_some() && Instant::now() >= deadline {
-            tracing::warn!(
-                "sqlite search hit its {}s deadline before rerank; returning RRF-ranked hits",
-                SEARCH_DEADLINE.as_secs()
-            );
-            super::rank::sort_desc(&mut hits);
-            return Ok(hits);
-        }
+        // Cancellation point: the reranker is synchronous (cloud = blocking HTTP).
+        // If past the deadline, SKIP the expensive rerank — but DO NOT return here.
+        // We must still fall through to phase 2, which revalidates every hit
+        // against the current (chunk id, filepath) and drops ghosts from a
+        // concurrent rename/remove/reindex; returning pre-revalidation hits would
+        // surface stale/deleted content as authoritative. Phase 2 is fast local
+        // SQL (no network), so re-taking the connection briefly is not the
+        // multi-second monopolization the deadline guards against.
         if let Some(reranker) = &self.reranker {
-            super::rank::apply_reranker(&mut hits, reranker.as_ref(), query)?;
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    "sqlite search hit its {}s deadline before rerank; skipping rerank, \
+                     returning RRF-ranked hits (still revalidated in phase 2)",
+                    SEARCH_DEADLINE.as_secs()
+                );
+            } else {
+                super::rank::apply_reranker(&mut hits, reranker.as_ref(), query)?;
+            }
         }
 
         // L7 co-mention boost + L6 salience (computed from STORED stats, before
