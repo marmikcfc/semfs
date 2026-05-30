@@ -25,7 +25,11 @@ const SEARCH_POOL: usize = 80;
 const SCOPED_KNN_POOL: usize = 4096;
 
 /// Local, offline semantic index over the SQLite cache.
-#[derive(Debug)]
+///
+/// `Clone` is cheap (every field is an `Arc`) and shares the SAME underlying
+/// `Db`/connection — used to move a handle into `spawn_blocking` for the search
+/// path without borrowing `self`.
+#[derive(Debug, Clone)]
 pub struct SqliteVecStore {
     db: Arc<Db>,
     /// Text embedder → `vchunks` (float[text_dims]). Always present.
@@ -616,6 +620,29 @@ impl crate::cache::LocalIndexer for SqliteVecStore {
 #[async_trait]
 impl SemanticIndex for SqliteVecStore {
     async fn search(
+        &self,
+        query: &str,
+        filepath: Option<&str>,
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        // The whole search is synchronous: rusqlite (vec0/fts5) plus a blocking
+        // embed and rerank (cloud = blocking HTTP). Run it on a blocking thread so
+        // the daemon's `tokio::time::timeout` around the IPC search can actually
+        // preempt a stalled cloud embed/rerank before the client deadline — and so
+        // the !Send rusqlite guards never cross an await. Cloning the store is
+        // cheap (Arcs) and shares the same connection.
+        let store = self.clone();
+        let query = query.to_string();
+        let filepath = filepath.map(|s| s.to_string());
+        tokio::task::spawn_blocking(move || store.search_blocking(&query, filepath.as_deref()))
+            .await
+            .map_err(|e| anyhow::anyhow!("sqlite search task failed: {e}"))?
+    }
+}
+
+impl SqliteVecStore {
+    /// The fully-synchronous search body. Called from the `SemanticIndex::search`
+    /// async wrapper inside `spawn_blocking` (above).
+    fn search_blocking(
         &self,
         query: &str,
         filepath: Option<&str>,
