@@ -38,6 +38,7 @@ type IndexPair = (
 /// (`=pglite`, `pglite` feature). Returns both trait objects over the one store.
 async fn build_local_indexer(
     db: Arc<Db>,
+    org_id: &str,
     container: &str,
     env: &crate::cmd::resolve::ResolveEnv,
 ) -> anyhow::Result<IndexPair> {
@@ -46,7 +47,9 @@ async fn build_local_indexer(
 
     match choose_storage(env) {
         StorageChoice::Pgvector => {
-            let _ = &db; // Postgres is the store; the SQLite cache db is unused here.
+            let _ = (&db, org_id); // external Postgres isolation is the operator's
+                                   // job (connection string / database); the SQLite
+                                   // cache db and per-org dir are unused here.
             #[cfg(feature = "pg")]
             {
                 let store =
@@ -67,14 +70,18 @@ async fn build_local_indexer(
             let _ = &db; // pglite hosts the index; the SQLite cache db is unused here.
             #[cfg(feature = "pglite")]
             {
-                let store =
-                    Arc::new(crate::cmd::resolve::build_pglite_store(env, container, embedder).await?);
-                eprintln!("storage backend: embedded pglite, container={container}");
+                let store = Arc::new(
+                    crate::cmd::resolve::build_pglite_store(env, org_id, container, embedder)
+                        .await?,
+                );
+                eprintln!(
+                    "storage backend: embedded pglite, org={org_id}, container={container}"
+                );
                 Ok((store.clone(), store))
             }
             #[cfg(not(feature = "pglite"))]
             {
-                let _ = (container, embedder);
+                let _ = (org_id, container, embedder);
                 anyhow::bail!(
                     "SEMFS_STORAGE_BACKEND=pglite but this binary was built without the `pglite` \
                      feature — rebuild with `cargo build --features pglite`"
@@ -268,8 +275,16 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     // the search half is handed to the IPC server so `grep` can query it without
     // opening its own backend connection.
     let mut search_index: Option<Arc<dyn semfs_core::backend::SemanticIndex>> = None;
+    // Org scope for backends that persist per-org on local disk (embedded pglite),
+    // mirroring the SQLite cache layout (`cache_db_path(org_id, tag)`). Ephemeral
+    // mounts may have no validated org → a stable sentinel keeps same-tag ephemeral
+    // mounts off the persistent per-org tree.
+    let org_scope = session
+        .as_ref()
+        .and_then(|s| s.org_id.as_deref())
+        .unwrap_or("_ephemeral");
     let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) {
-        match build_local_indexer(db.clone(), &cfg.container_tag, &resolve_env).await {
+        match build_local_indexer(db.clone(), org_scope, &cfg.container_tag, &resolve_env).await {
             Ok((indexer, index)) => {
                 eprintln!("local semantic index enabled");
                 search_index = Some(index);

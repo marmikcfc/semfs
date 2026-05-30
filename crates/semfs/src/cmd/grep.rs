@@ -96,6 +96,12 @@ enum DaemonSearch {
     Hits(Vec<semfs_core::backend::SearchHit>),
     /// Daemon is up but has no usable local index → caller should try cloud.
     NoIndex,
+    /// Daemon is up and OWNS the index, but the search itself errored (backend
+    /// fault, embedder outage, timeout). The caller must NOT silently re-resolve
+    /// a different backend: for pglite there's no direct path, so falling back
+    /// would return stale cloud results that omit unsynced local writes and mask
+    /// the real fault. Surface it instead.
+    Failed(String),
     /// No daemon reachable for this tag → caller falls back to direct/cloud.
     Unreachable,
 }
@@ -110,10 +116,10 @@ async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> Daemon
     match semfs_core::daemon::client::send_request(tag, req).await {
         Ok(Response::SearchHits { hits, searchable: true }) => DaemonSearch::Hits(hits),
         Ok(Response::SearchHits { searchable: false, .. }) => DaemonSearch::NoIndex,
-        Ok(Response::Error { message }) => {
-            tracing::warn!("daemon search error ({message}); falling back");
-            DaemonSearch::Unreachable
-        }
+        // Daemon reachable but its search failed — a real fault, not absence.
+        // Don't reclassify as Unreachable (which would silently route to a
+        // different backend); surface it.
+        Ok(Response::Error { message }) => DaemonSearch::Failed(message),
         Ok(_) => DaemonSearch::Unreachable,
         // No socket / not running / connect error — fall back to direct.
         Err(_) => DaemonSearch::Unreachable,
@@ -487,6 +493,17 @@ pub async fn run(args: Args) -> Result<()> {
             cloud_index(&api_url, key.as_deref(), &tag)?
                 .search(&effective_query, filepath.as_deref())
                 .await?
+        }
+        DaemonSearch::Failed(message) => {
+            // Daemon owns the index and the search FAILED. Do not silently fall
+            // back to a different backend — that would mask the fault and (for
+            // pglite, which has no direct path) return stale cloud results that
+            // omit unsynced local writes. Surface the error.
+            return Err(anyhow::anyhow!(
+                "search failed on the mount daemon for '{tag}': {message}\n\
+                 (the daemon owns this container's index; not falling back to a \
+                 different backend, which could return stale results)"
+            ));
         }
         DaemonSearch::Unreachable => {
             // No daemon: resolve a backend directly (SQLite file / external

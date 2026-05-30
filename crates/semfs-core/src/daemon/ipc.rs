@@ -10,6 +10,12 @@ use tokio::sync::{watch, Notify};
 use super::protocol::{Request, Response};
 use crate::cache::CacheFs;
 
+/// Server-side bound on a single IPC search. Must stay below the client's 30s
+/// response timeout (see `daemon::client::send_request`) so the daemon returns a
+/// typed error BEFORE the client gives up — otherwise a timed-out search would
+/// keep holding the single backend connection (pgvector/pglite) in the dark.
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(25);
+
 /// State the IPC handler reads to answer requests.
 #[allow(missing_debug_implementations)] // CacheFs doesn't implement Debug in full
 pub struct IpcState {
@@ -125,13 +131,31 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             Response::UnmountAck
         }
         Request::Search { query, filepath } => match &state.index {
-            Some(index) => match index.search(&query, filepath.as_deref()).await {
-                Ok(hits) => Response::SearchHits {
+            // Bound the search so a slow/stuck query can't pin the daemon forever.
+            // For pgvector/pglite the index serializes through ONE mutex-guarded
+            // connection; an unbounded search would hold it past the client's 30s
+            // give-up, blocking every later search AND local indexing. Timing out
+            // here drops the search future, releasing the connection guard, and
+            // returns a typed error before the client deadline (so the client sees
+            // a real failure, not a silent fall-through to a stale backend).
+            Some(index) => match tokio::time::timeout(
+                SEARCH_TIMEOUT,
+                index.search(&query, filepath.as_deref()),
+            )
+            .await
+            {
+                Ok(Ok(hits)) => Response::SearchHits {
                     hits,
                     searchable: true,
                 },
-                Err(e) => Response::Error {
+                Ok(Err(e)) => Response::Error {
                     message: format!("search failed: {e}"),
+                },
+                Err(_) => Response::Error {
+                    message: format!(
+                        "search timed out after {}s",
+                        SEARCH_TIMEOUT.as_secs()
+                    ),
                 },
             },
             // No local index (hash embedder / indexing disabled) — tell the

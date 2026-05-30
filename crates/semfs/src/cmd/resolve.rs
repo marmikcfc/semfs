@@ -226,15 +226,23 @@ pub async fn build_pg_store(
 }
 
 /// Build an EMBEDDED pglite store (shipped in-box, no external Postgres). Persists
-/// under the cache dir, namespaced by container. Only with the `pglite` feature.
+/// under the cache dir at `pglite/{org_id}/{container}`, mirroring the SQLite
+/// cache layout (`cache_db_path`) so two different orgs reusing the SAME tag on
+/// one machine get PHYSICALLY separate pglite databases — never a shared data
+/// directory. The per-org directory is the isolation boundary, so the in-DB
+/// `container` namespace stays the bare tag (the daemon writes and the IPC search
+/// read it consistently; pglite has no direct grep path that could disagree).
+/// Only compiled with the `pglite` feature.
 #[cfg(feature = "pglite")]
 pub async fn build_pglite_store(
     env: &ResolveEnv,
+    org_id: &str,
     container: &str,
     embedder: Arc<dyn Embedder>,
 ) -> Result<semfs_core::backend::pgvector::PgVectorStore> {
     let data_dir = semfs_core::config::cache_dir()
         .join("pglite")
+        .join(org_id)
         .join(container);
     let mut store =
         semfs_core::backend::pgvector::PgVectorStore::embedded(data_dir, container, embedder)
