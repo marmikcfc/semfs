@@ -19,12 +19,15 @@ use super::protocol::{Request, Response};
 /// the daemon-only pglite backend, return stale results.
 #[derive(Debug)]
 pub enum SendError {
-    /// No daemon to talk to: socket absent, or connect refused/timed out. Nothing
-    /// was sent. Safe to fall back to a directly-resolved backend.
+    /// Clear ABSENCE: socket file missing, or connect refused / ENOENT (a stale
+    /// socket left by a crashed daemon — nothing listening). Nothing was sent.
+    /// Safe to fall back to a directly-resolved backend.
     Unreachable(anyhow::Error),
-    /// The daemon accepted the connection but the exchange failed afterward (write
-    /// error, response-read timeout, closed without replying, unparseable reply).
-    /// A daemon-side fault — surface it, don't fall back.
+    /// The daemon was REACHED (or is present but wedged) and the exchange failed:
+    /// connect timed out on an existing socket (accept loop stalled / backlog
+    /// full), or — after connecting — a write error, response-read timeout, close
+    /// without replying, or unparseable reply. A daemon-side fault — surface it,
+    /// don't silently fall back to a different backend.
     PostConnect(anyhow::Error),
 }
 
@@ -87,19 +90,32 @@ async fn send_request_classified_to_path(
     let stream = match tokio::time::timeout(Duration::from_secs(5), UnixStream::connect(socket))
         .await
     {
-        // Connect timed out — treat as absence (daemon not accepting).
+        // Connect did NOT complete in 5s on a socket that EXISTS. A unix-socket
+        // connect only blocks like this when a daemon is listening but its accept
+        // loop is stalled or the listen backlog is saturated — i.e. the daemon is
+        // up but wedged. That's a daemon FAULT, not absence; classifying it as
+        // Unreachable would let `grep` silently bypass the live daemon and (for
+        // pglite, no direct path) return stale cloud results.
         Err(_elapsed) => {
-            return Err(SendError::Unreachable(anyhow::anyhow!(
-                "timeout connecting to {}",
+            return Err(SendError::PostConnect(anyhow::anyhow!(
+                "timeout connecting to {} (daemon present but not accepting)",
                 socket.display()
             )))
         }
-        // Connect refused / ENOENT / stale socket — absence.
         Ok(Err(e)) => {
-            return Err(SendError::Unreachable(
-                anyhow::Error::new(e)
-                    .context(format!("connect to {}", socket.display())),
-            ))
+            // The socket file existed but the connect errored. Only the classic
+            // "no listener" errors are clear ABSENCE (a stale socket left by a
+            // crashed daemon): ECONNREFUSED, or ENOENT if it vanished mid-race.
+            // Any other error means we reached something that then failed — a
+            // transport fault to surface, not silent fallback.
+            let kind = e.kind();
+            let err = anyhow::Error::new(e).context(format!("connect to {}", socket.display()));
+            return Err(match kind {
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound => {
+                    SendError::Unreachable(err)
+                }
+                _ => SendError::PostConnect(err),
+            });
         }
         Ok(Ok(s)) => s,
     };

@@ -321,8 +321,28 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
                 Arc::new(fs_base.with_indexer(indexer))
             }
             Err(e) => {
-                eprintln!("local index disabled: {e}");
-                Arc::new(fs_base)
+                use crate::cmd::resolve::{choose_storage, StorageChoice};
+                match choose_storage(&resolve_env) {
+                    // An EXPLICITLY-selected external/embedded backend OWNS the
+                    // index — it's the only search path (pglite has no direct
+                    // route). If it fails to start, mounting anyway would leave a
+                    // filesystem whose `grep` silently falls back to cloud and
+                    // omits unsynced local writes. Fail the mount instead, so the
+                    // failure is loud, not a stale-result trap.
+                    StorageChoice::Pgvector | StorageChoice::Pglite => {
+                        return Err(e.context(
+                            "selected storage backend failed to start its index; \
+                             refusing to mount (would silently degrade search to cloud)",
+                        ));
+                    }
+                    // Default SQLite stays fail-OPEN: a degraded local index (e.g.
+                    // a stale model dir) drops to cloud search rather than blocking
+                    // the mount — the long-standing behavior.
+                    StorageChoice::Sqlite => {
+                        eprintln!("local index disabled: {e}");
+                        Arc::new(fs_base)
+                    }
+                }
             }
         }
     } else {
