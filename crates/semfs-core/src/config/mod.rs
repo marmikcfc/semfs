@@ -21,6 +21,23 @@ pub fn cache_dir() -> PathBuf {
         })
 }
 
+/// True if `s` is safe to use as a SINGLE filesystem path component: non-empty,
+/// not `.`/`..`, and free of path separators, NUL, or absolute-path markers.
+///
+/// `org_id` arrives from the `/v3/session` response and `container_tag` from the
+/// CLI; both get joined into cache paths that `--clean`/ephemeral cleanup feed to
+/// `remove_dir_all`. A value like `..` or `a/b` would escape the cache subtree and
+/// delete an unintended location — so callers MUST validate before building a
+/// destructive path from untrusted input.
+pub fn is_safe_path_component(s: &str) -> bool {
+    !s.is_empty()
+        && s != "."
+        && s != ".."
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains('\0')
+}
+
 pub fn cache_db_path(org_id: &str, container_tag: &str) -> PathBuf {
     cache_dir().join(org_id).join(format!("{container_tag}.db"))
 }
@@ -54,5 +71,23 @@ mod tests {
     #[test]
     fn cache_db_path_different_tags_differ() {
         assert_ne!(cache_db_path("org", "a"), cache_db_path("org", "b"));
+    }
+
+    #[test]
+    fn safe_path_component_accepts_real_ids() {
+        assert!(is_safe_path_component("org_abc123"));
+        assert!(is_safe_path_component("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(is_safe_path_component("_ephemeral"));
+    }
+
+    #[test]
+    fn safe_path_component_rejects_escapes() {
+        assert!(!is_safe_path_component(""));
+        assert!(!is_safe_path_component("."));
+        assert!(!is_safe_path_component(".."));
+        assert!(!is_safe_path_component("a/b"));
+        assert!(!is_safe_path_component("../etc"));
+        assert!(!is_safe_path_component("a\\b"));
+        assert!(!is_safe_path_component("a\0b"));
     }
 }

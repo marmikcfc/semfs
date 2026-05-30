@@ -117,9 +117,22 @@ async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> Daemon
     match semfs_core::daemon::client::send_request_classified(tag, req).await {
         Ok(Response::SearchHits { hits, searchable: true }) => DaemonSearch::Hits(hits),
         Ok(Response::SearchHits { searchable: false, .. }) => DaemonSearch::NoIndex,
-        // Daemon reachable but its search failed — a real fault, not absence.
-        // Don't reclassify as Unreachable (which would silently route to a
-        // different backend); surface it.
+        // Version skew: an OLDER daemon (pre-IPC-search) can't deserialize the new
+        // `Search` request, so its handler replies `invalid request: <serde err>`
+        // (see daemon::ipc::handle_conn). That's not a search fault — the daemon
+        // simply doesn't speak this request. Fall back to the direct backend (what
+        // grep did before IPC search existed) so a new CLI still works against an
+        // already-running old daemon during a rolling upgrade.
+        Ok(Response::Error { message }) if message.starts_with("invalid request") => {
+            tracing::debug!(
+                "daemon does not understand the Search request ({message}); \
+                 falling back to direct search (likely an older daemon)"
+            );
+            DaemonSearch::Unreachable
+        }
+        // Daemon reachable and it DID understand the request but the search failed
+        // — a real fault, not absence. Don't reclassify as Unreachable (which would
+        // silently route to a different backend); surface it.
         Ok(Response::Error { message }) => DaemonSearch::Failed(message),
         // A response of the wrong type from a live daemon is a protocol fault,
         // not absence — surface it rather than silently falling back.

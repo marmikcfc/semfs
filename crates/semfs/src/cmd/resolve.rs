@@ -235,7 +235,33 @@ struct DirCleanup(std::path::PathBuf);
 #[cfg(feature = "pglite")]
 impl Drop for DirCleanup {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        // Can't propagate from Drop — but a cleanup failure leaves ephemeral state
+        // on disk that a later same-path mount could resurrect, so log it loudly
+        // rather than swallow it.
+        if let Err(e) = std::fs::remove_dir_all(&self.0) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(
+                    dir = %self.0.display(),
+                    error = %e,
+                    "failed to remove ephemeral pglite dir at unmount; stale data may remain on disk"
+                );
+            }
+        }
+    }
+}
+
+/// Remove a pglite data dir, treating "already gone" as success but FAILING on
+/// any other error — a `--clean`/ephemeral cleanup that silently failed would
+/// reopen the previous on-disk index, the opposite of the requested semantics.
+#[cfg(feature = "pglite")]
+fn clear_pglite_dir(data_dir: &std::path::Path, why: &str) -> Result<()> {
+    match std::fs::remove_dir_all(data_dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(anyhow::anyhow!(
+            "{why}: failed to clear pglite dir {}: {e}",
+            data_dir.display()
+        )),
     }
 }
 
@@ -271,7 +297,8 @@ pub async fn build_pglite_store(
         let data_dir = std::env::temp_dir()
             .join("semfs-pglite-ephemeral")
             .join(format!("{container}-pid{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&data_dir); // start fresh even if a stale dir lingers
+        // Fail closed: a leftover dir we can't clear could resurrect stale data.
+        clear_pglite_dir(&data_dir, "ephemeral pglite startup")?;
         let mut store = PgVectorStore::embedded(data_dir.clone(), container, embedder).await?;
         // Wipe the dir when the store drops (pushed AFTER the server, so the
         // server shuts down first).
@@ -283,7 +310,9 @@ pub async fn build_pglite_store(
             .join(org_id)
             .join(container);
         if clean {
-            let _ = std::fs::remove_dir_all(&data_dir);
+            // Fail closed: a clean remount that couldn't delete must NOT silently
+            // reopen the old index.
+            clear_pglite_dir(&data_dir, "--clean")?;
         }
         PgVectorStore::embedded(data_dir, container, embedder).await?
     };

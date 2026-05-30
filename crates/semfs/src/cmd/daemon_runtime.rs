@@ -186,6 +186,21 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         )
     };
 
+    // SECURITY: `org_id` comes from the server's session response and gets joined
+    // into cache paths (`cache_db_path`, and the pglite data dir) that `--clean`
+    // / ephemeral cleanup hand to `remove_dir_all`. A hostile or compromised
+    // server returning an org id with path separators or `..` would escape the
+    // cache subtree and delete an unintended location. Reject it at the boundary,
+    // before any path is built — `container_tag` is already validated at parse time.
+    if let Some(org_id) = session.as_ref().and_then(|s| s.org_id.as_deref()) {
+        if !semfs_core::config::is_safe_path_component(org_id) {
+            anyhow::bail!(
+                "server returned an org id that is not a safe path component \
+                 ({org_id:?}); refusing to build cache paths from it"
+            );
+        }
+    }
+
     // Captured for the marker so a separate `grep` can find the cache offline.
     let mut local_db_path: Option<String> = None;
     let db = if cfg.ephemeral {
