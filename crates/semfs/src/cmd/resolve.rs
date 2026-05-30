@@ -225,28 +225,69 @@ pub async fn build_pg_store(
     Ok(store)
 }
 
-/// Build an EMBEDDED pglite store (shipped in-box, no external Postgres). Persists
-/// under the cache dir at `pglite/{org_id}/{container}`, mirroring the SQLite
-/// cache layout (`cache_db_path`) so two different orgs reusing the SAME tag on
-/// one machine get PHYSICALLY separate pglite databases — never a shared data
-/// directory. The per-org directory is the isolation boundary, so the in-DB
-/// `container` namespace stays the bare tag (the daemon writes and the IPC search
-/// read it consistently; pglite has no direct grep path that could disagree).
-/// Only compiled with the `pglite` feature.
+/// Removes a directory tree when dropped — used to give an EPHEMERAL pglite mount
+/// true throwaway semantics. Kept alive inside the store (`push_keepalive`), so
+/// the pglite server (also held there, pushed first) shuts down before the dir is
+/// wiped at unmount.
+#[cfg(feature = "pglite")]
+struct DirCleanup(std::path::PathBuf);
+
+#[cfg(feature = "pglite")]
+impl Drop for DirCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Build an EMBEDDED pglite store (shipped in-box, no external Postgres). Only
+/// compiled with the `pglite` feature.
+///
+/// Lifecycle mirrors the SQLite cache:
+/// - **persistent** (default): persists at `cache_dir()/pglite/{org_id}/{container}`,
+///   matching `cache_db_path`, so two orgs reusing the SAME tag on one machine get
+///   PHYSICALLY separate pglite databases. The per-org directory IS the isolation
+///   boundary, so the in-DB `container` namespace stays the bare tag (daemon writes
+///   and IPC search agree; pglite has no direct grep path to disagree). When
+///   `clean` is set, the directory is wiped before reopening (a "clean" remount
+///   must not resurrect old vectors).
+/// - **ephemeral** (`--ephemeral`): uses a unique throwaway directory under the OS
+///   temp dir, off the persistent per-org tree entirely, and registers a cleanup
+///   guard so it's removed at unmount — nothing survives the daemon, matching the
+///   in-memory metadata cache.
 #[cfg(feature = "pglite")]
 pub async fn build_pglite_store(
     env: &ResolveEnv,
     org_id: &str,
     container: &str,
+    ephemeral: bool,
+    clean: bool,
     embedder: Arc<dyn Embedder>,
 ) -> Result<semfs_core::backend::pgvector::PgVectorStore> {
-    let data_dir = semfs_core::config::cache_dir()
-        .join("pglite")
-        .join(org_id)
-        .join(container);
-    let mut store =
-        semfs_core::backend::pgvector::PgVectorStore::embedded(data_dir, container, embedder)
-            .await?;
+    use semfs_core::backend::pgvector::PgVectorStore;
+
+    let mut store = if ephemeral {
+        // Throwaway dir, unique per daemon process (one daemon per tag per pid),
+        // under the OS temp dir — never the persistent per-org cache tree.
+        let data_dir = std::env::temp_dir()
+            .join("semfs-pglite-ephemeral")
+            .join(format!("{container}-pid{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data_dir); // start fresh even if a stale dir lingers
+        let mut store = PgVectorStore::embedded(data_dir.clone(), container, embedder).await?;
+        // Wipe the dir when the store drops (pushed AFTER the server, so the
+        // server shuts down first).
+        store.push_keepalive(Box::new(DirCleanup(data_dir)));
+        store
+    } else {
+        let data_dir = semfs_core::config::cache_dir()
+            .join("pglite")
+            .join(org_id)
+            .join(container);
+        if clean {
+            let _ = std::fs::remove_dir_all(&data_dir);
+        }
+        PgVectorStore::embedded(data_dir, container, embedder).await?
+    };
+
     if let Some(reranker) = build_reranker(env)? {
         store = store.with_reranker(reranker);
     }

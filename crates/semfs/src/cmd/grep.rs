@@ -108,21 +108,30 @@ enum DaemonSearch {
 
 /// Ask the daemon (if running) to run the search over its owned index.
 async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> DaemonSearch {
+    use semfs_core::daemon::client::SendError;
     use semfs_core::daemon::protocol::{Request, Response};
     let req = Request::Search {
         query: query.to_string(),
         filepath: filepath.map(|s| s.to_string()),
     };
-    match semfs_core::daemon::client::send_request(tag, req).await {
+    match semfs_core::daemon::client::send_request_classified(tag, req).await {
         Ok(Response::SearchHits { hits, searchable: true }) => DaemonSearch::Hits(hits),
         Ok(Response::SearchHits { searchable: false, .. }) => DaemonSearch::NoIndex,
         // Daemon reachable but its search failed — a real fault, not absence.
         // Don't reclassify as Unreachable (which would silently route to a
         // different backend); surface it.
         Ok(Response::Error { message }) => DaemonSearch::Failed(message),
-        Ok(_) => DaemonSearch::Unreachable,
-        // No socket / not running / connect error — fall back to direct.
-        Err(_) => DaemonSearch::Unreachable,
+        // A response of the wrong type from a live daemon is a protocol fault,
+        // not absence — surface it rather than silently falling back.
+        Ok(other) => DaemonSearch::Failed(format!("unexpected daemon response: {other:?}")),
+        // Only a genuinely ABSENT daemon (no socket / connect refused/timeout)
+        // falls back to a directly-resolved backend.
+        Err(SendError::Unreachable(_)) => DaemonSearch::Unreachable,
+        // Daemon was reachable but the exchange failed mid-flight (read timeout,
+        // disconnect, malformed reply) — a daemon-side fault. Surface it.
+        Err(SendError::PostConnect(e)) => {
+            DaemonSearch::Failed(format!("daemon transport error: {e}"))
+        }
     }
 }
 

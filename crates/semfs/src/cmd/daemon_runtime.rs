@@ -40,6 +40,8 @@ async fn build_local_indexer(
     db: Arc<Db>,
     org_id: &str,
     container: &str,
+    ephemeral: bool,
+    clean: bool,
     env: &crate::cmd::resolve::ResolveEnv,
 ) -> anyhow::Result<IndexPair> {
     use crate::cmd::resolve::{choose_storage, StorageChoice};
@@ -47,9 +49,10 @@ async fn build_local_indexer(
 
     match choose_storage(env) {
         StorageChoice::Pgvector => {
-            let _ = (&db, org_id); // external Postgres isolation is the operator's
-                                   // job (connection string / database); the SQLite
-                                   // cache db and per-org dir are unused here.
+            let _ = (&db, org_id, ephemeral, clean); // external Postgres isolation
+                                   // is the operator's job (connection string /
+                                   // database); local cache db, per-org dir, and
+                                   // ephemeral/clean lifecycle don't apply here.
             #[cfg(feature = "pg")]
             {
                 let store =
@@ -71,17 +74,20 @@ async fn build_local_indexer(
             #[cfg(feature = "pglite")]
             {
                 let store = Arc::new(
-                    crate::cmd::resolve::build_pglite_store(env, org_id, container, embedder)
-                        .await?,
+                    crate::cmd::resolve::build_pglite_store(
+                        env, org_id, container, ephemeral, clean, embedder,
+                    )
+                    .await?,
                 );
                 eprintln!(
-                    "storage backend: embedded pglite, org={org_id}, container={container}"
+                    "storage backend: embedded pglite, org={org_id}, container={container}, \
+                     ephemeral={ephemeral}"
                 );
                 Ok((store.clone(), store))
             }
             #[cfg(not(feature = "pglite"))]
             {
-                let _ = (org_id, container, embedder);
+                let _ = (org_id, container, ephemeral, clean, embedder);
                 anyhow::bail!(
                     "SEMFS_STORAGE_BACKEND=pglite but this binary was built without the `pglite` \
                      feature — rebuild with `cargo build --features pglite`"
@@ -284,7 +290,16 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         .and_then(|s| s.org_id.as_deref())
         .unwrap_or("_ephemeral");
     let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) {
-        match build_local_indexer(db.clone(), org_scope, &cfg.container_tag, &resolve_env).await {
+        match build_local_indexer(
+            db.clone(),
+            org_scope,
+            &cfg.container_tag,
+            cfg.ephemeral,
+            cfg.clean,
+            &resolve_env,
+        )
+        .await
+        {
             Ok((indexer, index)) => {
                 eprintln!("local semantic index enabled");
                 search_index = Some(index);

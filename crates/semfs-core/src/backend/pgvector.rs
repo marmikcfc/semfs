@@ -77,9 +77,12 @@ pub struct PgVectorStore {
     embedder: Arc<dyn Embedder>,
     reranker: Option<Arc<dyn Reranker>>,
     graph_llm: Option<Arc<LlmClient>>,
-    /// Keeps an embedded server (pglite) alive for as long as the store lives.
-    /// Opaque so the struct stays feature-agnostic; `None` for external Postgres.
-    _keepalive: Option<Box<dyn std::any::Any + Send + Sync>>,
+    /// Keeps embedded-backend resources alive for as long as the store lives, in
+    /// DROP ORDER (front first): the pglite server is pushed before any temp-dir
+    /// cleanup guard, so the server shuts down (releasing its files) BEFORE the
+    /// directory is removed. Opaque so the struct stays feature-agnostic; empty
+    /// for external Postgres.
+    _keepalive: Vec<Box<dyn std::any::Any + Send + Sync>>,
 }
 
 impl std::fmt::Debug for PgVectorStore {
@@ -202,7 +205,7 @@ impl PgVectorStore {
             embedder,
             reranker: None,
             graph_llm: None,
-            _keepalive: None,
+            _keepalive: Vec::new(),
         })
     }
 
@@ -227,8 +230,18 @@ impl PgVectorStore {
             .map_err(|e| anyhow::anyhow!("start embedded pglite: {e}"))?;
         let url = server.database_url();
         let mut store = Self::connect(&url, container, embedder).await?;
-        store._keepalive = Some(Box::new(server));
+        // Server FIRST so it drops (and releases its data-dir files) before any
+        // cleanup guard the caller pushes afterward.
+        store._keepalive.push(Box::new(server));
         Ok(store)
+    }
+
+    /// Attach an extra resource to keep alive for the store's lifetime (e.g. a
+    /// temp-dir cleanup guard for an ephemeral embedded mount). Pushed AFTER the
+    /// server, so on drop the server shuts down before this guard runs.
+    #[cfg(feature = "pg-local")]
+    pub fn push_keepalive(&mut self, guard: Box<dyn std::any::Any + Send + Sync>) {
+        self._keepalive.push(guard);
     }
 
     /// Whether this container's index is usable for local search: it must be
@@ -386,9 +399,17 @@ impl SemanticIndex for PgVectorStore {
         query: &str,
         filepath: Option<&str>,
     ) -> anyhow::Result<Vec<SearchHit>> {
-        let qvec = self
-            .embedder
-            .embed(&[query.to_string()])?
+        // Embed the query on a blocking thread. The Embedder trait is synchronous
+        // (local fastembed = CPU-bound; cloud = blocking `ureq`), and running it
+        // inline would NOT yield — so the daemon's `tokio::time::timeout` around
+        // this search could never fire while embedding stalled, leaving the single
+        // connection pinned past the client deadline. `spawn_blocking` lets the
+        // future await (yield), so the timeout stays effective and cancellable.
+        let embedder = self.embedder.clone();
+        let q = query.to_string();
+        let qvec = tokio::task::spawn_blocking(move || embedder.embed(&[q]))
+            .await
+            .map_err(|e| anyhow::anyhow!("query embed task failed: {e}"))??
             .pop()
             .unwrap_or_default();
         let qlit = vec_literal(&qvec);
@@ -455,9 +476,18 @@ impl SemanticIndex for PgVectorStore {
 
         // L5 rerank runs OUTSIDE the connection lock — the reranker trait is
         // synchronous and may block on a local model or HTTP; holding the only
-        // connection across it would stall every other search/index/write.
+        // connection across it would stall every other search/index/write. Run it
+        // on a blocking thread for the same reason as the query embed above: keep
+        // the search future yielding so the IPC timeout stays effective.
         if let Some(reranker) = &self.reranker {
-            rank::apply_reranker(&mut hits, reranker.as_ref(), query)?;
+            let reranker = reranker.clone();
+            let q = query.to_string();
+            let mut h = hits;
+            hits = tokio::task::spawn_blocking(move || {
+                rank::apply_reranker(&mut h, reranker.as_ref(), &q).map(|()| h)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("rerank task failed: {e}"))??;
         }
 
         // Phase 2 — re-acquire the connection for salience/entity stats + access
