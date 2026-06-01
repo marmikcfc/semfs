@@ -124,28 +124,17 @@ enum DaemonSearch {
     /// Daemon answered from its local index (hits may be empty = genuine miss).
     Hits(Vec<semfs_core::backend::SearchHit>),
     /// Daemon is up but has no usable local index → caller should try cloud.
-    NoIndex,
+    /// Carries the daemon's authoritative backend (for the fail-closed decision).
+    NoIndex { backend: Option<String> },
     /// Daemon is up and OWNS the index, but the search itself errored (backend
     /// fault, embedder outage, timeout). The caller must NOT silently re-resolve
     /// a different backend: for pglite there's no direct path, so falling back
     /// would return stale cloud results that omit unsynced local writes and mask
-    /// the real fault. Surface it instead.
-    Failed(String),
+    /// the real fault. Carries the daemon's authoritative backend (from the SAME
+    /// response — no separate Status RPC to race) so the policy is decided right.
+    Failed { message: String, backend: Option<String> },
     /// No daemon reachable for this tag → caller falls back to direct/cloud.
     Unreachable,
-}
-
-/// Ask the daemon (if reachable) for its AUTHORITATIVE storage backend via the
-/// Status response. Used when the local marker doesn't carry the backend (e.g. an
-/// explicit `--tag` run from outside the target mount): the fail-closed policy for
-/// pglite must not be lost by guessing `sqlite` from absent metadata. Returns
-/// `None` if the daemon is unreachable or is an older build without the field.
-async fn daemon_backend(tag: &str) -> Option<String> {
-    use semfs_core::daemon::protocol::{Request, Response};
-    match semfs_core::daemon::client::send_request(tag, Request::Status).await {
-        Ok(Response::Status { backend, .. }) => backend,
-        _ => None,
-    }
 }
 
 /// Ask the daemon (if running) to run the search over its owned index.
@@ -157,8 +146,14 @@ async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> Daemon
         filepath: filepath.map(|s| s.to_string()),
     };
     match semfs_core::daemon::client::send_request_classified(tag, req).await {
-        Ok(Response::SearchHits { hits, searchable: true }) => DaemonSearch::Hits(hits),
-        Ok(Response::SearchHits { searchable: false, .. }) => DaemonSearch::NoIndex,
+        Ok(Response::SearchHits { hits, searchable: true, .. }) => DaemonSearch::Hits(hits),
+        Ok(Response::SearchHits { searchable: false, backend, .. }) => {
+            DaemonSearch::NoIndex { backend }
+        }
+        // Genuine search fault from a daemon that DID understand the request. The
+        // backend rides on this same response, so the fail-closed decision needs
+        // no separate (race-prone) Status lookup.
+        Ok(Response::SearchError { message, backend }) => DaemonSearch::Failed { message, backend },
         // Version skew: an OLDER daemon (pre-IPC-search) can't deserialize the new
         // `Search` request, so its handler replies `invalid request: <serde err>`
         // (see daemon::ipc::handle_conn). That's not a search fault — the daemon
@@ -172,21 +167,22 @@ async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> Daemon
             );
             DaemonSearch::Unreachable
         }
-        // Daemon reachable and it DID understand the request but the search failed
-        // — a real fault, not absence. Don't reclassify as Unreachable (which would
-        // silently route to a different backend); surface it.
-        Ok(Response::Error { message }) => DaemonSearch::Failed(message),
-        // A response of the wrong type from a live daemon is a protocol fault,
-        // not absence — surface it rather than silently falling back.
-        Ok(other) => DaemonSearch::Failed(format!("unexpected daemon response: {other:?}")),
+        // Any other generic error / wrong-type response from a live daemon is a
+        // protocol fault — surface it (no backend carried → policy uses the marker).
+        Ok(Response::Error { message }) => DaemonSearch::Failed { message, backend: None },
+        Ok(other) => DaemonSearch::Failed {
+            message: format!("unexpected daemon response: {other:?}"),
+            backend: None,
+        },
         // Only a genuinely ABSENT daemon (no socket / connect refused/timeout)
         // falls back to a directly-resolved backend.
         Err(SendError::Unreachable(_)) => DaemonSearch::Unreachable,
         // Daemon was reachable but the exchange failed mid-flight (read timeout,
         // disconnect, malformed reply) — a daemon-side fault. Surface it.
-        Err(SendError::PostConnect(e)) => {
-            DaemonSearch::Failed(format!("daemon transport error: {e}"))
-        }
+        Err(SendError::PostConnect(e)) => DaemonSearch::Failed {
+            message: format!("daemon transport error: {e}"),
+            backend: None,
+        },
     }
 }
 
@@ -480,16 +476,12 @@ pub async fn run(args: Args) -> Result<()> {
     // network. Absent for non-SQLite mounts (they don't store vectors there).
     let db_path = meta.and_then(|m| m.db_path.as_deref());
 
-    // Storage backend the daemon mounted with, from the SAME (tag-matched) marker.
-    // Drives the daemon fallback policy so a pglite mount never resolves through
-    // SQLite/cloud even if this grep process lacks the original env. When the
-    // tag-matched marker doesn't carry it (e.g. explicit --tag from OUTSIDE the
-    // mount), ask the live daemon for the authoritative backend — otherwise an
-    // absent backend would default to sqlite and lose pglite's fail-closed policy.
-    let mut backend = meta.and_then(|m| m.backend.as_deref()).map(String::from);
-    if backend.is_none() {
-        backend = daemon_backend(&tag).await;
-    }
+    // Storage backend from the tag-matched marker. This is the fallback source for
+    // the daemon-UNREACHABLE path (resolve_index). On the daemon-REACHABLE failure
+    // paths (NoIndex/Failed) the daemon carries its AUTHORITATIVE backend in the
+    // same response, which takes precedence (see below) — so no separate Status RPC
+    // is needed and a flaky side-channel can't erase pglite's fail-closed policy.
+    let backend = meta.and_then(|m| m.backend.as_deref()).map(String::from);
 
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
@@ -568,25 +560,39 @@ pub async fn run(args: Args) -> Result<()> {
     // daemon is reachable (e.g. grepping a persisted cache after unmount).
     let hits = match daemon_search(&tag, &effective_query, filepath.as_deref()).await {
         DaemonSearch::Hits(hits) => hits,
-        DaemonSearch::NoIndex => {
-            // Daemon up but no local index (hash embedder) → cloud.
+        DaemonSearch::NoIndex { backend: resp_backend } => {
+            // Daemon up but reports no usable local index. For sqlite/hash that's
+            // the cloud path. A pglite daemon can never report this (an index-build
+            // failure is mount-fatal), but guard anyway: prefer the daemon's
+            // authoritative backend, and fail closed if it somehow says pglite.
+            use super::resolve::{storage_choice_from, StorageChoice};
+            let effective = resp_backend.as_deref().or(backend.as_deref());
+            if storage_choice_from(effective) == StorageChoice::Pglite {
+                return Err(anyhow::anyhow!(
+                    "pglite daemon for '{tag}' reports no usable index; not falling back to \
+                     cloud (would omit local writes). Re-mount the container."
+                ));
+            }
             cloud_index(&api_url, key.as_deref(), &tag)?
                 .search(&effective_query, filepath.as_deref())
                 .await?
         }
-        DaemonSearch::Failed(message) => {
-            // The daemon was reachable and its search FAILED. Behavior is
-            // backend-dependent:
-            //  - pglite is DAEMON-ONLY: cloud would return stale results that omit
-            //    unsynced local writes (and there's no direct path), so a failure
-            //    must be surfaced, not masked.
+        DaemonSearch::Failed { message, backend: resp_backend } => {
+            // The daemon was reachable and its search FAILED. Decide on the
+            // AUTHORITATIVE backend carried in this SAME response (resp_backend),
+            // falling back to the tag-matched marker only if the response lacked it
+            // (older daemon). No separate Status RPC — so a flaky side channel can't
+            // erase the policy below:
+            //  - pglite is DAEMON-ONLY: cloud would return stale results omitting
+            //    unsynced local writes (no direct path) → surface, never mask.
             //  - sqlite/pgvector historically degraded to cloud on a local search
-            //    failure (transient embedder outage, local index corruption); a
-            //    reachable-daemon failure shouldn't be MORE fatal than a direct
-            //    one, so preserve that fallback (non-silent: logged) when a key is
-            //    available. With no key there's nothing to fall back to → surface.
+            //    failure (transient embedder outage, index corruption); a
+            //    reachable-daemon failure shouldn't be MORE fatal than a direct one,
+            //    so preserve that fallback (logged) when a key is available. No key
+            //    → nothing to fall back to → surface.
             use super::resolve::{storage_choice_from, StorageChoice};
-            if storage_choice_from(backend.as_deref()) == StorageChoice::Pglite || key.is_none() {
+            let effective = resp_backend.as_deref().or(backend.as_deref());
+            if storage_choice_from(effective) == StorageChoice::Pglite || key.is_none() {
                 return Err(anyhow::anyhow!(
                     "search failed on the mount daemon for '{tag}': {message}\n\
                      (not falling back to a different backend, which could return \

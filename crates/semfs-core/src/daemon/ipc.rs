@@ -161,15 +161,18 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
                 Ok(Ok(hits)) => Response::SearchHits {
                     hits,
                     searchable: true,
+                    backend: Some(state.backend.clone()),
                 },
-                Ok(Err(e)) => Response::Error {
+                // Genuine search fault — carry the backend so the client can apply
+                // the right fail-closed policy from THIS one response (no separate
+                // Status RPC to race).
+                Ok(Err(e)) => Response::SearchError {
                     message: format!("search failed: {e}"),
+                    backend: Some(state.backend.clone()),
                 },
-                Err(_) => Response::Error {
-                    message: format!(
-                        "search timed out after {}s",
-                        SEARCH_TIMEOUT.as_secs()
-                    ),
+                Err(_) => Response::SearchError {
+                    message: format!("search timed out after {}s", SEARCH_TIMEOUT.as_secs()),
+                    backend: Some(state.backend.clone()),
                 },
             },
             // No local index (hash embedder / indexing disabled) — tell the
@@ -177,6 +180,7 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             None => Response::SearchHits {
                 hits: Vec::new(),
                 searchable: false,
+                backend: Some(state.backend.clone()),
             },
         },
     }

@@ -59,9 +59,24 @@ pub enum Response {
     UnmountAck,
     /// Ranked hits from a `Search` request. `searchable=false` means the daemon
     /// has no usable local index (so the client should fall back to cloud).
+    /// `backend` is the daemon's AUTHORITATIVE storage backend, carried in the
+    /// SAME response so the client's fallback policy needs no second RPC.
     SearchHits {
         hits: Vec<crate::backend::SearchHit>,
         searchable: bool,
+        #[serde(default)]
+        backend: Option<String>,
+    },
+    /// A `Search` that REACHED the daemon's index but FAILED (backend fault,
+    /// embedder outage, timeout). Distinct from the generic `Error` (which also
+    /// covers unparseable requests from an older daemon) so the client can tell a
+    /// genuine search fault from version skew — and it carries the authoritative
+    /// `backend` so a daemon-only backend (pglite) stays fail-closed without a
+    /// separate Status lookup that could flake independently.
+    SearchError {
+        message: String,
+        #[serde(default)]
+        backend: Option<String>,
     },
     Error {
         message: String,
