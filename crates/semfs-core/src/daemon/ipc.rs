@@ -36,21 +36,31 @@ pub struct IpcState {
     pub shutdown_notify: Arc<Notify>,
 }
 
-/// Bind to `socket_path`, accept connections, dispatch one request per.
-/// Exits when the shutdown watch channel flips true.
-pub async fn serve(
-    state: Arc<IpcState>,
-    socket_path: std::path::PathBuf,
-    mut shutdown: watch::Receiver<bool>,
-) -> anyhow::Result<()> {
+/// Bind the IPC socket SYNCHRONOUSLY (clearing any stale socket first). Kept
+/// separate from [`serve`] so the daemon can confirm bind success — and surface a
+/// bind failure via `?` — BEFORE it publishes mount state (pid file, `.semfs`
+/// marker, `ready`). Binding inside the spawned `serve` task would only log a bind
+/// failure, leaving a marker advertising a control plane that never came up.
+/// `tokio::net::UnixListener::bind` is synchronous, so this needs no runtime.
+pub fn bind(socket_path: &std::path::Path) -> anyhow::Result<UnixListener> {
     // Clean any leftover socket from a crashed prior run.
-    let _ = std::fs::remove_file(&socket_path);
+    let _ = std::fs::remove_file(socket_path);
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let listener = UnixListener::bind(&socket_path)?;
+    let listener = UnixListener::bind(socket_path)?;
     tracing::info!(socket = %socket_path.display(), "IPC socket ready");
+    Ok(listener)
+}
 
+/// Accept connections on a PRE-BOUND listener (see [`bind`]), dispatching one
+/// request per connection. Exits when the shutdown watch channel flips true.
+pub async fn serve(
+    state: Arc<IpcState>,
+    listener: UnixListener,
+    socket_path: std::path::PathBuf,
+    mut shutdown: watch::Receiver<bool>,
+) -> anyhow::Result<()> {
     loop {
         tokio::select! {
             _ = shutdown.changed() => {

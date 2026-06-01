@@ -473,10 +473,16 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         shutdown_notify: ipc_shutdown_notify.clone(),
     });
     let socket_path = daemon::socket_path(&cfg.container_tag);
+    // Bind the control socket SYNCHRONOUSLY here so a bind failure aborts the
+    // mount (via `?`) BEFORE we publish the pid file / `.semfs` marker / `ready`.
+    // Binding inside the spawned task would only log the failure, leaving a marker
+    // that advertises a control plane which never came up (and a parent waiting on
+    // Ping would then time out and SIGKILL the child, bypassing marker cleanup).
+    let ipc_listener = daemon::ipc::bind(&socket_path).context("binding IPC control socket")?;
     let ipc_shutdown_rx = shutdown_rx.clone();
     let ipc_socket = socket_path.clone();
     let ipc_handle = tokio::spawn(async move {
-        if let Err(e) = daemon::ipc::serve(state, ipc_socket, ipc_shutdown_rx).await {
+        if let Err(e) = daemon::ipc::serve(state, ipc_listener, ipc_socket, ipc_shutdown_rx).await {
             tracing::warn!(error = %e, "ipc server exited with error");
         }
     });

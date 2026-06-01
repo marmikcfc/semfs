@@ -28,14 +28,30 @@ async fn resolve_index(
     tag: &str,
 ) -> Result<(Arc<dyn SemanticIndex>, bool)> {
     use super::resolve::StorageChoice;
+    // Decide the backend from the PERSISTED marker (how the daemon actually
+    // mounted), NOT this process's env — env can drift between mount and grep, and
+    // defaulting a pglite mount to SQLite here would reopen a stale on-disk vec
+    // index as authoritative. `env` is still used only to BUILD the resolved store.
+    let choice = super::resolve::storage_choice_from(backend);
     let env = super::resolve::ResolveEnv::from_env();
+
+    // pglite is DAEMON-OWNED with no direct path (single connection, embedded in
+    // the daemon). Reaching here means the daemon is UNREACHABLE — so there is no
+    // valid local route, and cloud search would omit unsynced daemon-local writes.
+    // Fail CLOSED (not cloud, not the SQLite db_path) regardless of this process's
+    // embedder env, mirroring the daemon-`Failed` policy: a pglite container can
+    // only be searched through its daemon. Checked before the embedder gate so a
+    // grep without a configured embedder can't slip through to cloud.
+    if choice == StorageChoice::Pglite {
+        anyhow::bail!(
+            "pglite mount '{tag}' is daemon-owned and its daemon is not reachable; its index \
+             lives only in the daemon (no direct path), and cloud search would omit unsynced \
+             local writes. Re-mount the container to search it."
+        );
+    }
+
     if super::resolve::local_indexing_enabled(&env) {
-        // Decide the backend from the PERSISTED marker (how the daemon actually
-        // mounted), NOT this process's env — env can drift between mount and grep,
-        // and defaulting a pglite mount to SQLite here would reopen a stale on-disk
-        // vec index as authoritative. `env` is still used to BUILD the resolved
-        // store (embedder/url/reranker).
-        match super::resolve::storage_choice_from(backend) {
+        match choice {
             // Postgres/pgvector storage backend (opt-in via SEMFS_STORAGE_BACKEND).
             // Connects directly to Postgres — no local cache db. Fail-open to cloud.
             StorageChoice::Pgvector => {
@@ -64,19 +80,6 @@ async fn resolve_index(
                      feature; falling back to cloud search"
                 );
             }
-            // Embedded pglite is DAEMON-OWNED with no direct path (single
-            // connection, embedded in the daemon process). With the daemon
-            // unreachable there is NO local route — and crucially we must NOT
-            // fall into the SQLite `db_path` branch below: that cache db is not
-            // pglite's store, and a leftover compatible SQLite vec index from an
-            // earlier backend/config would be served as if authoritative (a silent
-            // stale-result trap). Skip straight to cloud.
-            StorageChoice::Pglite => {
-                tracing::warn!(
-                    "pglite is daemon-owned with no direct path; daemon unreachable for '{tag}' \
-                     → cloud search (not reopening any on-disk SQLite cache)"
-                );
-            }
             StorageChoice::Sqlite => {
                 if let Some(p) = db_path.filter(|p| std::path::Path::new(p).exists()) {
                     // Default SQLite. Degraded-dependency states (corrupt cache,
@@ -94,6 +97,8 @@ async fn resolve_index(
                     }
                 }
             }
+            // Handled above (fail-closed) before the embedder gate.
+            StorageChoice::Pglite => unreachable!("pglite returns early above"),
         }
     }
     // Cloud fallback (Supermemory) — requires a key.
@@ -577,8 +582,10 @@ pub async fn run(args: Args) -> Result<()> {
         }
         DaemonSearch::Unreachable => {
             // No daemon: resolve a backend directly (SQLite file / external
-            // Postgres / cloud). pglite has no direct path — it lives in the
-            // daemon — so an un-mounted pglite container resolves to cloud here.
+            // Postgres / cloud). pglite has no direct path and FAILS CLOSED inside
+            // resolve_index (its index lives only in the daemon; cloud would be
+            // stale) — so an un-mounted pglite container errors here, telling the
+            // user to remount, rather than silently returning cloud results.
             let (index, used_local) =
                 resolve_index(db_path, backend, &api_url, key.as_deref(), &tag).await?;
             match index.search(&effective_query, filepath.as_deref()).await {
