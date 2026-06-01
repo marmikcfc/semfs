@@ -505,7 +505,17 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
             tag: cfg.container_tag.clone(),
             api_url: cfg.api_url.clone(),
             mount_path: Some(cfg.mount_path.display().to_string()),
-            db_path: local_db_path.clone(),
+            // Record db_path ONLY for the SQLite backend. It exists so `grep` can
+            // reopen the SQLite *vector* index offline — but pgvector/pglite don't
+            // store vectors there (the SQLite cache holds only file metadata for
+            // those backends). Advertising it for a non-SQLite mount is exactly the
+            // stale-result trap: grep could reopen a leftover SQLite vec index from
+            // an earlier config. So a non-SQLite marker carries NO db_path, closing
+            // that route structurally regardless of the backend field or env.
+            db_path: match storage {
+                StorageChoice::Sqlite => local_db_path.clone(),
+                StorageChoice::Pgvector | StorageChoice::Pglite => None,
+            },
             backend: Some(storage.as_str().to_string()),
         };
         let content = if marker_path.exists() {
