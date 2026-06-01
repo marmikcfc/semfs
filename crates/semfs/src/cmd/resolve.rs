@@ -189,14 +189,32 @@ pub enum StorageChoice {
     Pglite,
 }
 
-/// Storage backend selection — SQLite (default); external Postgres or embedded
-/// pglite opt-in via `SEMFS_STORAGE_BACKEND`.
-pub fn choose_storage(env: &ResolveEnv) -> StorageChoice {
-    match env.storage_backend.as_deref() {
+impl StorageChoice {
+    /// Canonical token persisted in the `.semfs` marker so `grep` can recover the
+    /// mounted backend without depending on its own (possibly-drifted) env.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StorageChoice::Sqlite => "sqlite",
+            StorageChoice::Pgvector => "pgvector",
+            StorageChoice::Pglite => "pglite",
+        }
+    }
+}
+
+/// Map a backend token (from `SEMFS_STORAGE_BACKEND` or the persisted marker) to a
+/// `StorageChoice`. Unknown/absent → SQLite (the default + historical behavior).
+pub fn storage_choice_from(s: Option<&str>) -> StorageChoice {
+    match s {
         Some("pgvector") | Some("pg") | Some("postgres") => StorageChoice::Pgvector,
         Some("pglite") | Some("embedded") => StorageChoice::Pglite,
         _ => StorageChoice::Sqlite,
     }
+}
+
+/// Storage backend selection — SQLite (default); external Postgres or embedded
+/// pglite opt-in via `SEMFS_STORAGE_BACKEND`.
+pub fn choose_storage(env: &ResolveEnv) -> StorageChoice {
+    storage_choice_from(env.storage_backend.as_deref())
 }
 
 /// An EXPLICITLY-selected external/embedded backend (pgvector/pglite) is the sole

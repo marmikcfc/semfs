@@ -22,14 +22,20 @@ use std::sync::Arc;
 /// not abort the command.
 async fn resolve_index(
     db_path: Option<&str>,
+    backend: Option<&str>,
     api_url: &str,
     key: Option<&str>,
     tag: &str,
 ) -> Result<(Arc<dyn SemanticIndex>, bool)> {
-    use super::resolve::{choose_storage, StorageChoice};
+    use super::resolve::StorageChoice;
     let env = super::resolve::ResolveEnv::from_env();
     if super::resolve::local_indexing_enabled(&env) {
-        match choose_storage(&env) {
+        // Decide the backend from the PERSISTED marker (how the daemon actually
+        // mounted), NOT this process's env — env can drift between mount and grep,
+        // and defaulting a pglite mount to SQLite here would reopen a stale on-disk
+        // vec index as authoritative. `env` is still used to BUILD the resolved
+        // store (embedder/url/reranker).
+        match super::resolve::storage_choice_from(backend) {
             // Postgres/pgvector storage backend (opt-in via SEMFS_STORAGE_BACKEND).
             // Connects directly to Postgres — no local cache db. Fail-open to cloud.
             StorageChoice::Pgvector => {
@@ -451,6 +457,14 @@ pub async fn run(args: Args) -> Result<()> {
         .and_then(|m| m.db_path.as_deref())
         .or_else(|| path_marker.as_ref().and_then(|m| m.db_path.as_deref()));
 
+    // Storage backend the daemon mounted with, from the SAME marker. Drives the
+    // daemon-unreachable fallback so a pglite mount never resolves through SQLite
+    // even if this grep process lacks the original SEMFS_STORAGE_BACKEND env.
+    let backend = marker
+        .as_ref()
+        .and_then(|m| m.backend.as_deref())
+        .or_else(|| path_marker.as_ref().and_then(|m| m.backend.as_deref()));
+
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
     // canonicalizes whichever mount we resolved (CWD or path marker).
@@ -550,7 +564,7 @@ pub async fn run(args: Args) -> Result<()> {
             // Postgres / cloud). pglite has no direct path — it lives in the
             // daemon — so an un-mounted pglite container resolves to cloud here.
             let (index, used_local) =
-                resolve_index(db_path, &api_url, key.as_deref(), &tag).await?;
+                resolve_index(db_path, backend, &api_url, key.as_deref(), &tag).await?;
             match index.search(&effective_query, filepath.as_deref()).await {
                 Ok(hits) => hits,
                 Err(e) if used_local && key.is_some() => {

@@ -6,6 +6,12 @@ pub struct SmfsMarker {
     /// locally-indexed cache). Lets `grep` open the local index with no network
     /// — no `validate_key`/`org_id` round-trip. Absent for ephemeral mounts.
     pub db_path: Option<String>,
+    /// Storage backend the daemon ACTUALLY mounted with (`sqlite`/`pgvector`/
+    /// `pglite`). `grep`'s daemon-unreachable fallback must honor THIS, not its own
+    /// process env (which can drift between mount and grep) — otherwise a pglite
+    /// mount could be searched against a stale SQLite cache at `db_path`. Absent on
+    /// markers written before this field existed → treated as `sqlite`.
+    pub backend: Option<String>,
 }
 
 pub fn parse_all_markers(content: &str) -> Vec<SmfsMarker> {
@@ -17,6 +23,7 @@ fn parse_one_marker(block: &str) -> Option<SmfsMarker> {
     let mut url = None;
     let mut mount_path = None;
     let mut db_path = None;
+    let mut backend = None;
     for line in block.lines() {
         if let Some(v) = line.strip_prefix("container_tag=") {
             tag = Some(v.to_string());
@@ -32,12 +39,18 @@ fn parse_one_marker(block: &str) -> Option<SmfsMarker> {
                 db_path = Some(v.to_string());
             }
         }
+        if let Some(v) = line.strip_prefix("backend=") {
+            if !v.is_empty() {
+                backend = Some(v.to_string());
+            }
+        }
     }
     Some(SmfsMarker {
         tag: tag?,
         api_url: url.unwrap_or_else(|| "https://api.supermemory.ai".to_string()),
         mount_path,
         db_path,
+        backend,
     })
 }
 
@@ -56,11 +69,12 @@ fn select_for_path<'a>(
 
 pub fn format_marker(m: &SmfsMarker) -> String {
     format!(
-        "container_tag={}\napi_url={}\nmount_path={}\ndb_path={}\n",
+        "container_tag={}\napi_url={}\nmount_path={}\ndb_path={}\nbackend={}\n",
         m.tag,
         m.api_url,
         m.mount_path.as_deref().unwrap_or(""),
-        m.db_path.as_deref().unwrap_or("")
+        m.db_path.as_deref().unwrap_or(""),
+        m.backend.as_deref().unwrap_or("")
     )
 }
 
@@ -82,6 +96,7 @@ pub fn read_semfs_marker_for_path(start: &std::path::Path) -> Option<SmfsMarker>
                     api_url: m.api_url.clone(),
                     mount_path: m.mount_path.clone(),
                     db_path: m.db_path.clone(),
+                    backend: m.backend.clone(),
                 });
             }
             return markers.into_iter().next();

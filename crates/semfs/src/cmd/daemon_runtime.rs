@@ -236,6 +236,12 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         Arc::new(Db::open(&db_path)?)
     };
 
+    // Resolve the storage backend up front so the marker can RECORD it — `grep`'s
+    // daemon-unreachable fallback must use the persisted backend, never its own
+    // (possibly-drifted) env. Reused for the index gate below.
+    let resolve_env = crate::cmd::resolve::ResolveEnv::from_env();
+    let storage = crate::cmd::resolve::choose_storage(&resolve_env);
+
     // Write the `.semfs` marker now that the db path is known (db_path is set
     // only for persistent, non-ephemeral caches).
     {
@@ -245,6 +251,7 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
             api_url: cfg.api_url.clone(),
             mount_path: Some(cfg.mount_path.display().to_string()),
             db_path: local_db_path.clone(),
+            backend: Some(storage.as_str().to_string()),
         };
         let content = if marker_path.exists() {
             let existing = std::fs::read_to_string(&marker_path).unwrap_or_default();
@@ -291,7 +298,6 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     // (on flush), deletes, and renames maintain the local index alongside cloud
     // sync. Otherwise behavior is unchanged.
     let fs_base = CacheFs::with_api(db.clone(), api);
-    let resolve_env = crate::cmd::resolve::ResolveEnv::from_env();
     // The daemon owns the index as BOTH a write-path indexer and a search index;
     // the search half is handed to the IPC server so `grep` can query it without
     // opening its own backend connection.
@@ -304,8 +310,8 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         .as_ref()
         .and_then(|s| s.org_id.as_deref())
         .unwrap_or("_ephemeral");
-    use crate::cmd::resolve::{choose_storage, StorageChoice};
-    let storage = choose_storage(&resolve_env);
+    // `resolve_env` and `storage` were computed up front (before the marker write).
+    use crate::cmd::resolve::StorageChoice;
     let explicit_backend = matches!(storage, StorageChoice::Pgvector | StorageChoice::Pglite);
     // An explicitly-selected external/embedded backend with the `hash` floor is a
     // contradiction (no semantic vectors). Fail closed with a clear message rather
