@@ -578,25 +578,28 @@ pub async fn run(args: Args) -> Result<()> {
                 .await?
         }
         DaemonSearch::Failed { message, backend: resp_backend } => {
-            // The daemon was reachable and its search FAILED. Decide on the
-            // AUTHORITATIVE backend carried in this SAME response (resp_backend),
-            // falling back to the tag-matched marker only if the response lacked it
-            // (older daemon). No separate Status RPC — so a flaky side channel can't
-            // erase the policy below:
-            //  - pglite is DAEMON-ONLY: cloud would return stale results omitting
-            //    unsynced local writes (no direct path) → surface, never mask.
-            //  - sqlite/pgvector historically degraded to cloud on a local search
-            //    failure (transient embedder outage, index corruption); a
-            //    reachable-daemon failure shouldn't be MORE fatal than a direct one,
-            //    so preserve that fallback (logged) when a key is available. No key
-            //    → nothing to fall back to → surface.
+            // The daemon was REACHABLE and the search FAILED. Cloud fallback is
+            // allowed ONLY with POSITIVE evidence of a cloud-safe backend
+            // (sqlite/pgvector) plus a key. Anything else fails closed:
+            //  - pglite is DAEMON-ONLY → cloud would omit unsynced local writes.
+            //  - UNKNOWN backend (None) — e.g. a transport fault (timeout/
+            //    disconnect/malformed reply) carries no backend, and there's no
+            //    tag-matched marker — must NOT default to sqlite/cloud, because the
+            //    reachable daemon could be pglite. Defaulting unknown to cloud is
+            //    exactly the stale-result trap; surface it instead.
+            // Backend is taken from the SAME response when present (resp_backend),
+            // else the trusted tag-matched marker — never a second RPC.
             use super::resolve::{storage_choice_from, StorageChoice};
             let effective = resp_backend.as_deref().or(backend.as_deref());
-            if storage_choice_from(effective) == StorageChoice::Pglite || key.is_none() {
+            let cloud_safe = matches!(
+                effective.map(|b| storage_choice_from(Some(b))),
+                Some(StorageChoice::Sqlite) | Some(StorageChoice::Pgvector)
+            );
+            if !cloud_safe || key.is_none() {
                 return Err(anyhow::anyhow!(
                     "search failed on the mount daemon for '{tag}': {message}\n\
-                     (not falling back to a different backend, which could return \
-                     stale results; pglite is daemon-only and/or no API key is set)"
+                     (not falling back to a different backend, which could return stale \
+                     results — the backend is daemon-only/unknown and/or no API key is set)"
                 ));
             }
             tracing::warn!(
