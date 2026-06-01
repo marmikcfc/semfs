@@ -444,31 +444,33 @@ pub async fn run(args: Args) -> Result<()> {
         path_marker.as_ref().map(|m| (m.tag.as_str(), m.api_url.as_str())),
     )?;
 
-    // mount_path drives project-scoped credential lookup. Mirror the tag
-    // precedence: CWD marker, then the path-argument marker — otherwise project
-    // credentials for a mount are ignored when grep runs from outside it.
-    let mount_path = marker
+    // Bind ALL fallback metadata to the RESOLVED tag, not to CWD/path marker
+    // precedence. With an explicit `--tag`, the CWD/path markers may describe a
+    // DIFFERENT container; borrowing their mount_path/db_path/backend would let
+    // `grep --tag <other>` reopen THIS mount's SQLite cache (cross-container stale
+    // results) or use the wrong project credentials. Pick the one marker entry
+    // whose tag matches; if none matches the explicit tag, use no local metadata
+    // (fall through to the daemon, then cloud) rather than an unrelated mount's.
+    let meta = marker
         .as_ref()
+        .filter(|m| m.tag == tag)
+        .or_else(|| path_marker.as_ref().filter(|m| m.tag == tag));
+
+    // mount_path drives project-scoped credential lookup + local line-range reads.
+    let mount_path = meta
         .and_then(|m| m.mount_path.as_deref())
-        .or_else(|| path_marker.as_ref().and_then(|m| m.mount_path.as_deref()))
         .map(std::path::Path::new);
     // Key is only needed for the cloud fallback; a local search needs none.
     let key = super::auth::resolve_api_key(args.key.as_deref(), mount_path).ok();
 
-    // Local cache db path from the marker (CWD marker, then path-argument marker)
-    // — opening it needs no network.
-    let db_path = marker
-        .as_ref()
-        .and_then(|m| m.db_path.as_deref())
-        .or_else(|| path_marker.as_ref().and_then(|m| m.db_path.as_deref()));
+    // Local cache db path from the SAME (tag-matched) marker — opening it needs no
+    // network. Absent for non-SQLite mounts (they don't store vectors there).
+    let db_path = meta.and_then(|m| m.db_path.as_deref());
 
-    // Storage backend the daemon mounted with, from the SAME marker. Drives the
-    // daemon-unreachable fallback so a pglite mount never resolves through SQLite
-    // even if this grep process lacks the original SEMFS_STORAGE_BACKEND env.
-    let backend = marker
-        .as_ref()
-        .and_then(|m| m.backend.as_deref())
-        .or_else(|| path_marker.as_ref().and_then(|m| m.backend.as_deref()));
+    // Storage backend the daemon mounted with, from the SAME (tag-matched) marker.
+    // Drives the daemon-unreachable fallback so a pglite mount never resolves
+    // through SQLite even if this grep process lacks the original env.
+    let backend = meta.and_then(|m| m.backend.as_deref());
 
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
