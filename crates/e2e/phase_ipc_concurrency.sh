@@ -69,10 +69,14 @@ declare -a sentences=(
   "parse the yaml config and validate it against the json schema"
   "the sourdough starter doubled overnight at room temperature"
 )
+# NOTE: collect job PIDs and wait ONLY those — a bare `wait` would also block on
+# the long-lived mount daemon (backgrounded above), hanging the test forever.
+wpids=()
 for k in $(seq 0 $((N-1))); do
   printf '%s\n' "${sentences[$k]}" > "$MNT/doc_$k.md" &
+  wpids+=("$!")
 done
-wait
+wait "${wpids[@]}"
 echo "wrote $(ls "$MNT"/doc_*.md | wc -l | tr -d ' ') files in parallel"
 sleep 10   # flush -> embed -> index all N into the single-connection backend
 
@@ -81,10 +85,12 @@ sleep 10   # flush -> embed -> index all N into the single-connection backend
 M=8
 echo "-- $M concurrent greps over IPC --"
 rm -f /tmp/conc_grep_*.out
+gpids=()
 for j in $(seq 1 $M); do
   ( "$BIN" grep --tag "$TAG" "how does login credential renewal work" 2>/dev/null > /tmp/conc_grep_$j.out ) &
+  gpids+=("$!")
 done
-wait
+wait "${gpids[@]}"   # only the grep jobs, not the daemon
 ok=0
 for j in $(seq 1 $M); do
   if grep -q "auth.md\|access token" /tmp/conc_grep_$j.out 2>/dev/null; then ok=$((ok+1)); fi
