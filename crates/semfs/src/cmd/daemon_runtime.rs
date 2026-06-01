@@ -242,32 +242,12 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     let resolve_env = crate::cmd::resolve::ResolveEnv::from_env();
     let storage = crate::cmd::resolve::choose_storage(&resolve_env);
 
-    // Write the `.semfs` marker now that the db path is known (db_path is set
-    // only for persistent, non-ephemeral caches).
-    {
-        use super::marker::{format_marker, parse_all_markers, SmfsMarker};
-        let new_entry = SmfsMarker {
-            tag: cfg.container_tag.clone(),
-            api_url: cfg.api_url.clone(),
-            mount_path: Some(cfg.mount_path.display().to_string()),
-            db_path: local_db_path.clone(),
-            backend: Some(storage.as_str().to_string()),
-        };
-        let content = if marker_path.exists() {
-            let existing = std::fs::read_to_string(&marker_path).unwrap_or_default();
-            let mut entries = parse_all_markers(&existing);
-            entries.retain(|m| m.tag != cfg.container_tag);
-            entries.push(new_entry);
-            entries
-                .iter()
-                .map(format_marker)
-                .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            format_marker(&new_entry)
-        };
-        std::fs::write(&marker_path, content)?;
-    }
+    // NOTE: the `.semfs` marker is written LATER — only after the index, mount,
+    // and IPC are all up (see below). Writing it here (before mount success) would
+    // leave a stale marker advertising a backend/db_path/tag for a mount that
+    // never came up if any startup step fails, so commands run from that directory
+    // would resolve a phantom mount. db_path + backend are captured now
+    // (`local_db_path`, `storage`) and used at the deferred write.
 
     startup.report("configuring_api", "configuring API client")?;
     let mut api_client =
@@ -508,6 +488,36 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&pid_path, std::process::id().to_string())?;
+
+    // Write the `.semfs` marker ONLY now — index, mount_fs, IPC socket, and the
+    // pid file have all succeeded, so the mount is known-good. A failure on any
+    // earlier step returned before reaching here, leaving NO marker for a mount
+    // that never came up. The unmount epilogue removes this entry.
+    {
+        use super::marker::{format_marker, parse_all_markers, SmfsMarker};
+        let new_entry = SmfsMarker {
+            tag: cfg.container_tag.clone(),
+            api_url: cfg.api_url.clone(),
+            mount_path: Some(cfg.mount_path.display().to_string()),
+            db_path: local_db_path.clone(),
+            backend: Some(storage.as_str().to_string()),
+        };
+        let content = if marker_path.exists() {
+            let existing = std::fs::read_to_string(&marker_path).unwrap_or_default();
+            let mut entries = parse_all_markers(&existing);
+            entries.retain(|m| m.tag != cfg.container_tag);
+            entries.push(new_entry);
+            entries
+                .iter()
+                .map(format_marker)
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            format_marker(&new_entry)
+        };
+        std::fs::write(&marker_path, content)?;
+    }
+
     startup.report("ready", "filesystem mounted and IPC ready")?;
 
     eprintln!(

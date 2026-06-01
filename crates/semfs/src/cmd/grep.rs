@@ -549,15 +549,31 @@ pub async fn run(args: Args) -> Result<()> {
                 .await?
         }
         DaemonSearch::Failed(message) => {
-            // Daemon owns the index and the search FAILED. Do not silently fall
-            // back to a different backend — that would mask the fault and (for
-            // pglite, which has no direct path) return stale cloud results that
-            // omit unsynced local writes. Surface the error.
-            return Err(anyhow::anyhow!(
-                "search failed on the mount daemon for '{tag}': {message}\n\
-                 (the daemon owns this container's index; not falling back to a \
-                 different backend, which could return stale results)"
-            ));
+            // The daemon was reachable and its search FAILED. Behavior is
+            // backend-dependent:
+            //  - pglite is DAEMON-ONLY: cloud would return stale results that omit
+            //    unsynced local writes (and there's no direct path), so a failure
+            //    must be surfaced, not masked.
+            //  - sqlite/pgvector historically degraded to cloud on a local search
+            //    failure (transient embedder outage, local index corruption); a
+            //    reachable-daemon failure shouldn't be MORE fatal than a direct
+            //    one, so preserve that fallback (non-silent: logged) when a key is
+            //    available. With no key there's nothing to fall back to → surface.
+            use super::resolve::{storage_choice_from, StorageChoice};
+            if storage_choice_from(backend) == StorageChoice::Pglite || key.is_none() {
+                return Err(anyhow::anyhow!(
+                    "search failed on the mount daemon for '{tag}': {message}\n\
+                     (not falling back to a different backend, which could return \
+                     stale results; pglite is daemon-only and/or no API key is set)"
+                ));
+            }
+            tracing::warn!(
+                "daemon search failed ({message}); falling back to cloud search \
+                 (sqlite/pgvector degraded-dependency path)"
+            );
+            cloud_index(&api_url, key.as_deref(), &tag)?
+                .search(&effective_query, filepath.as_deref())
+                .await?
         }
         DaemonSearch::Unreachable => {
             // No daemon: resolve a backend directly (SQLite file / external
