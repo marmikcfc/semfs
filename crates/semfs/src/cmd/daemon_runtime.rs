@@ -148,8 +148,8 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         std::fs::create_dir_all(&cfg.mount_path)?;
     }
 
-    let pre_existing_files = if cfg.import_existing && !created_dir {
-        let files = collect_files_recursive(&cfg.mount_path, &cfg.mount_path);
+    let pre_existing_paths = if cfg.import_existing && !created_dir {
+        let files = collect_file_paths_recursive(&cfg.mount_path, &cfg.mount_path);
         if !files.is_empty() {
             eprintln!("collected {} file(s) for import", files.len());
         }
@@ -411,19 +411,30 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         }
     };
 
-    if !pre_existing_files.is_empty() {
+    if !pre_existing_paths.is_empty() {
         if !pull_succeeded {
             eprintln!(
                 "skipping auto-import of {} file(s): initial sync failed, \
                  cache cannot reliably detect duplicates. Remount when online to import.",
-                pre_existing_files.len()
+                pre_existing_paths.len()
             );
         } else {
             let mut imported = 0usize;
             let mut skipped = 0usize;
             let mut errors = 0usize;
-            for (rel_path, contents) in &pre_existing_files {
-                match fs.import_file_with_ownership(rel_path, contents, uid, gid).await {
+            // Read each file's content lazily, one at a time, so we never hold
+            // the whole corpus in memory (the import runs before `mount_fs`, so
+            // the underlying files are still readable by their real path).
+            for (rel_path, real_path) in &pre_existing_paths {
+                let contents = match std::fs::read(real_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(path = %real_path.display(), error = %e, "import: read failed");
+                        errors += 1;
+                        continue;
+                    }
+                };
+                match fs.import_file_with_ownership(rel_path, &contents, uid, gid).await {
                     Ok(true) => imported += 1,
                     Ok(false) => skipped += 1,
                     Err(e) => {
@@ -467,6 +478,7 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         index: search_index,
         started_at: Instant::now(),
         pull_enabled: !cfg.no_sync,
+        backend: storage.as_str().to_string(),
         user_id: session_user_id,
         user_name: session_user_name,
         org_name: session_org_name,
@@ -648,10 +660,15 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     Ok(())
 }
 
-fn collect_files_recursive(
+/// Collect `(vfs_path, real_path)` for every file under `dir`, WITHOUT reading
+/// content. Content is read lazily at import time, one file at a time, so the
+/// whole corpus is never buffered in memory at once — a non-empty mount of a
+/// large container would otherwise hold every file's bytes simultaneously and
+/// OOM (see `rcas/2026-06-01-semfs-prewarm-oom-import-collection.md`).
+fn collect_file_paths_recursive(
     dir: &std::path::Path,
     root: &std::path::Path,
-) -> Vec<(String, Vec<u8>)> {
+) -> Vec<(String, std::path::PathBuf)> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return out;
@@ -660,19 +677,14 @@ fn collect_files_recursive(
         let Ok(ft) = entry.file_type() else { continue };
         let path = entry.path();
         if ft.is_dir() {
-            out.extend(collect_files_recursive(&path, root));
+            out.extend(collect_file_paths_recursive(&path, root));
         } else if ft.is_file() {
             let rel = path.strip_prefix(root).unwrap_or(&path);
             let vfs_path = format!("/{}", rel.to_string_lossy());
             if semfs_core::cache::is_macos_noise_path(&vfs_path) {
                 continue;
             }
-            match std::fs::read(&path) {
-                Ok(data) => out.push((vfs_path, data)),
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "skipping unreadable file");
-                }
-            }
+            out.push((vfs_path, path));
         }
     }
     out

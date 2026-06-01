@@ -44,6 +44,13 @@ pub enum Response {
         user_name: Option<String>,
         #[serde(default)]
         org_name: Option<String>,
+        /// Storage backend the daemon actually mounted with (`sqlite`/`pgvector`/
+        /// `pglite`). Lets a client (`grep`) learn the AUTHORITATIVE backend from
+        /// the live daemon when its local marker doesn't carry it (e.g. an
+        /// explicit `--tag` run from outside the mount), so it can apply the right
+        /// fail-closed policy. `#[serde(default)]` → `None` from older daemons.
+        #[serde(default)]
+        backend: Option<String>,
     },
     SyncDone {
         pulled: usize,

@@ -33,6 +33,7 @@ pub async fn run(args: Args) -> Result<()> {
             user_id,
             user_name,
             org_name,
+            backend,
         } => {
             if args.json {
                 let out = serde_json::json!({
@@ -45,6 +46,7 @@ pub async fn run(args: Args) -> Result<()> {
                     "user_id": user_id,
                     "user_name": user_name,
                     "org_name": org_name,
+                    "backend": backend,
                 });
                 println!("{}", serde_json::to_string(&out)?);
             } else {
@@ -54,6 +56,9 @@ pub async fn run(args: Args) -> Result<()> {
                 println!("uptime:       {uptime_secs}s");
                 println!("push queue:   {queue_len} pending");
                 println!("pull enabled: {pull_enabled}");
+                if let Some(b) = &backend {
+                    println!("backend:      {b}");
+                }
                 if let Some(u) = &user_name {
                     println!("user:         {u}");
                 }

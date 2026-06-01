@@ -28,6 +28,9 @@ pub struct IpcState {
     pub index: Option<Arc<dyn crate::backend::SemanticIndex>>,
     pub started_at: Instant,
     pub pull_enabled: bool,
+    /// Storage backend this daemon mounted with (`sqlite`/`pgvector`/`pglite`),
+    /// surfaced in `Status` so a client can learn the authoritative backend.
+    pub backend: String,
     pub user_id: Option<String>,
     pub user_name: Option<String>,
     pub org_name: Option<String>,
@@ -122,6 +125,7 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             user_id: state.user_id.clone(),
             user_name: state.user_name.clone(),
             org_name: state.org_name.clone(),
+            backend: Some(state.backend.clone()),
         },
         Request::Sync => {
             let pulled = crate::sync::pull::delta_pull(&state.fs).await.unwrap_or(0);

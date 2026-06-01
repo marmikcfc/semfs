@@ -135,6 +135,19 @@ enum DaemonSearch {
     Unreachable,
 }
 
+/// Ask the daemon (if reachable) for its AUTHORITATIVE storage backend via the
+/// Status response. Used when the local marker doesn't carry the backend (e.g. an
+/// explicit `--tag` run from outside the target mount): the fail-closed policy for
+/// pglite must not be lost by guessing `sqlite` from absent metadata. Returns
+/// `None` if the daemon is unreachable or is an older build without the field.
+async fn daemon_backend(tag: &str) -> Option<String> {
+    use semfs_core::daemon::protocol::{Request, Response};
+    match semfs_core::daemon::client::send_request(tag, Request::Status).await {
+        Ok(Response::Status { backend, .. }) => backend,
+        _ => None,
+    }
+}
+
 /// Ask the daemon (if running) to run the search over its owned index.
 async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> DaemonSearch {
     use semfs_core::daemon::client::SendError;
@@ -468,9 +481,15 @@ pub async fn run(args: Args) -> Result<()> {
     let db_path = meta.and_then(|m| m.db_path.as_deref());
 
     // Storage backend the daemon mounted with, from the SAME (tag-matched) marker.
-    // Drives the daemon-unreachable fallback so a pglite mount never resolves
-    // through SQLite even if this grep process lacks the original env.
-    let backend = meta.and_then(|m| m.backend.as_deref());
+    // Drives the daemon fallback policy so a pglite mount never resolves through
+    // SQLite/cloud even if this grep process lacks the original env. When the
+    // tag-matched marker doesn't carry it (e.g. explicit --tag from OUTSIDE the
+    // mount), ask the live daemon for the authoritative backend — otherwise an
+    // absent backend would default to sqlite and lose pglite's fail-closed policy.
+    let mut backend = meta.and_then(|m| m.backend.as_deref()).map(String::from);
+    if backend.is_none() {
+        backend = daemon_backend(&tag).await;
+    }
 
     // Determine filepath prefix from path arg, stripping the mount path if present.
     // `mount_path` already falls back to the path-argument marker above, so this
@@ -567,7 +586,7 @@ pub async fn run(args: Args) -> Result<()> {
             //    one, so preserve that fallback (non-silent: logged) when a key is
             //    available. With no key there's nothing to fall back to → surface.
             use super::resolve::{storage_choice_from, StorageChoice};
-            if storage_choice_from(backend) == StorageChoice::Pglite || key.is_none() {
+            if storage_choice_from(backend.as_deref()) == StorageChoice::Pglite || key.is_none() {
                 return Err(anyhow::anyhow!(
                     "search failed on the mount daemon for '{tag}': {message}\n\
                      (not falling back to a different backend, which could return \
@@ -589,7 +608,7 @@ pub async fn run(args: Args) -> Result<()> {
             // stale) — so an un-mounted pglite container errors here, telling the
             // user to remount, rather than silently returning cloud results.
             let (index, used_local) =
-                resolve_index(db_path, backend, &api_url, key.as_deref(), &tag).await?;
+                resolve_index(db_path, backend.as_deref(), &api_url, key.as_deref(), &tag).await?;
             match index.search(&effective_query, filepath.as_deref()).await {
                 Ok(hits) => hits,
                 Err(e) if used_local && key.is_some() => {
