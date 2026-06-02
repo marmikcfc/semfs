@@ -282,6 +282,8 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     // the search half is handed to the IPC server so `grep` can query it without
     // opening its own backend connection.
     let mut search_index: Option<Arc<dyn semfs_core::backend::SemanticIndex>> = None;
+    // Held for the background L7 (entity-graph) worker — see run_graph_worker.
+    let mut graph_indexer: Option<Arc<dyn semfs_core::cache::LocalIndexer>> = None;
     // Org scope for backends that persist per-org on local disk (embedded pglite),
     // mirroring the SQLite cache layout (`cache_db_path(org_id, tag)`). Ephemeral
     // mounts may have no validated org → a stable sentinel keeps same-tag ephemeral
@@ -322,6 +324,7 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
             Ok((indexer, index)) => {
                 eprintln!("local semantic index enabled");
                 search_index = Some(index);
+                graph_indexer = Some(indexer.clone());
                 Arc::new(fs_base.with_indexer(indexer))
             }
             Err(e) => {
@@ -456,6 +459,17 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         push_enabled: !cfg.no_push,
     };
     let sync_tasks = semfs_core::sync::SyncEngine::start(fs.clone(), sync_opts, shutdown_rx.clone());
+
+    // L7 background entity-graph worker: drains the indexer's extraction queue
+    // with bounded concurrency so the per-file blocking LLM call never sits on
+    // the synchronous index/flush path. No-op (exits immediately) when the
+    // indexer has no graph extractor attached.
+    if let Some(idx) = graph_indexer {
+        let gw_shutdown = shutdown_rx.clone();
+        tokio::spawn(async move {
+            semfs_core::cache::run_graph_worker(idx, gw_shutdown).await;
+        });
+    }
 
     startup.report("mounting_fs", "mounting filesystem")?;
     let handle = mount_fs(fs.clone(), opts).await?;

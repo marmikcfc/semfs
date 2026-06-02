@@ -77,6 +77,10 @@ pub struct PgVectorStore {
     embedder: Arc<dyn Embedder>,
     reranker: Option<Arc<dyn Reranker>>,
     graph_llm: Option<Arc<LlmClient>>,
+    /// Pending L7-extraction queue, present iff `graph_llm` is. `index()` enqueues
+    /// here after writing chunks; `run_graph_worker` drains it so the per-file
+    /// blocking LLM call stays OFF the synchronous index/flush path.
+    graph_queue: Option<Arc<crate::cache::GraphQueue>>,
     /// Keeps embedded-backend resources alive for as long as the store lives, in
     /// DROP ORDER (front first): the pglite server is pushed before any temp-dir
     /// cleanup guard, so the server shuts down (releasing its files) BEFORE the
@@ -205,6 +209,7 @@ impl PgVectorStore {
             embedder,
             reranker: None,
             graph_llm: None,
+            graph_queue: None,
             _keepalive: Vec::new(),
         })
     }
@@ -266,6 +271,7 @@ impl PgVectorStore {
 
     pub fn with_graph_extractor(mut self, llm: Arc<LlmClient>) -> Self {
         self.graph_llm = Some(llm);
+        self.graph_queue = Some(crate::cache::GraphQueue::new());
         self
     }
 
@@ -273,13 +279,6 @@ impl PgVectorStore {
     pub async fn index(&self, ino: u64, filepath: &str, content: &str) -> anyhow::Result<()> {
         let chunks = chunk::recursive_chunks(content, &chunk::ChunkOptions::default());
         let vectors = self.embedder.embed(&chunks)?;
-        let entities = match &self.graph_llm {
-            Some(llm) => graph::extract_entities(llm, content).unwrap_or_else(|e| {
-                tracing::warn!("entity extraction failed ({e}); no graph edges for {filepath}");
-                Vec::new()
-            }),
-            None => Vec::new(),
-        };
         let now = now_ms();
         let mut conn = self.conn.lock().await;
         let mut tx = conn.begin().await?;
@@ -289,12 +288,10 @@ impl PgVectorStore {
         // concurrent reindex/remove/rename — otherwise two writers on different
         // MVCC snapshots could both commit and leave duplicate/mixed chunks.
         lock_path(&mut tx, &self.container, filepath).await?;
+        // Drop only this file's CHUNKS (not its edges — L7 is deferred to the
+        // graph worker, so edges persist until it re-derives them; mirrors the
+        // SQLite backend).
         sqlx::query("DELETE FROM chunks WHERE container = $1 AND filepath = $2")
-            .bind(&self.container)
-            .bind(filepath)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM edges WHERE container = $1 AND from_path = $2")
             .bind(&self.container)
             .bind(filepath)
             .execute(&mut *tx)
@@ -314,6 +311,61 @@ impl PgVectorStore {
             .execute(&mut *tx)
             .await?;
         }
+        tx.commit().await?;
+        drop(conn);
+
+        // L7 is DEFERRED: enqueue for background entity extraction so the blocking
+        // per-file LLM call never sits on the synchronous index/flush path.
+        if let Some(q) = &self.graph_queue {
+            q.enqueue(ino, filepath.to_string());
+        }
+        Ok(())
+    }
+
+    /// L7 (deferred): extract entities for one already-indexed file and write its
+    /// `edges`. PgVectorStore has no cache-DB handle, so it reconstructs the
+    /// file's content from its stored chunk `text` (verbatim windows; overlap
+    /// duplication is harmless for entity extraction). The blocking LLM call runs
+    /// on the blocking pool; sqlx writes are async. Fail-open. No-op without an
+    /// extractor.
+    pub async fn index_graph(&self, _ino: u64, filepath: &str) -> anyhow::Result<()> {
+        let Some(llm) = self.graph_llm.clone() else {
+            return Ok(());
+        };
+        let content: String = {
+            let mut conn = self.conn.lock().await;
+            let rows: Vec<(String,)> = sqlx::query_as(
+                "SELECT text FROM chunks WHERE container = $1 AND filepath = $2 ORDER BY ord",
+            )
+            .bind(&self.container)
+            .bind(filepath)
+            .fetch_all(&mut *conn)
+            .await?;
+            rows.into_iter().map(|(t,)| t).collect::<Vec<_>>().join("\n")
+        };
+        if content.is_empty() {
+            return Ok(());
+        }
+        // Blocking ureq LLM call → off the async runtime so many can overlap.
+        let entities = match tokio::task::spawn_blocking(move || graph::extract_entities(&llm, &content))
+            .await?
+        {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(filepath, "entity extraction failed ({e}); no edges");
+                return Ok(());
+            }
+        };
+        let now = now_ms();
+        let mut conn = self.conn.lock().await;
+        let mut tx = conn.begin().await?;
+        lock_path(&mut tx, &self.container, filepath).await?;
+        // Replace this file's edges (idempotent re-derive).
+        sqlx::query("DELETE FROM edges WHERE container = $1 AND from_path = $2")
+            .bind(&self.container)
+            .bind(filepath)
+            .execute(&mut *tx)
+            .await?;
         for ent in &entities {
             sqlx::query(
                 "INSERT INTO edges(container, from_path, to_path, edge_kind, created_at) \
@@ -587,6 +639,12 @@ impl crate::cache::LocalIndexer for PgVectorStore {
     async fn rename(&self, old: &str, new: &str) -> anyhow::Result<()> {
         PgVectorStore::rename(self, old, new).await
     }
+    fn graph_queue(&self) -> Option<Arc<crate::cache::GraphQueue>> {
+        self.graph_queue.clone()
+    }
+    async fn index_graph(&self, ino: u64, filepath: &str) -> anyhow::Result<()> {
+        PgVectorStore::index_graph(self, ino, filepath).await
+    }
 }
 
 // Tests use the embedded pglite server (the `pg-local` feature); the production
@@ -611,6 +669,27 @@ mod tests {
             .extension(pglite_oxide::extensions::VECTOR)
             .start()
             .expect("start pglite with pgvector")
+    }
+
+    /// With a graph extractor attached, `index()` ENQUEUES the file for deferred
+    /// L7 extraction (rather than calling the LLM inline). Constructing the client
+    /// does no network I/O — only `index_graph` (not exercised here) would.
+    #[tokio::test]
+    async fn pg_index_enqueues_graph_work_when_extractor_present() {
+        use crate::cache::LocalIndexer;
+        let server = pg();
+        let llm = Arc::new(crate::llm::LlmClient::openrouter("test-key".into()));
+        let store =
+            PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
+                .await
+                .unwrap()
+                .with_graph_extractor(llm);
+        let q = store.graph_queue().expect("graph queue present with extractor");
+        assert!(q.is_idle());
+        store.index(7, "/notes/a.md", "hello world").await.unwrap();
+        assert_eq!(q.depth(), 1, "index() must enqueue the file for L7 extraction");
+        drop(store);
+        let _ = server.shutdown();
     }
 
     /// Spike + parity: index two docs, search finds the right one; rename relabels;

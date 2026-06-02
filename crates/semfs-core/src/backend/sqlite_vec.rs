@@ -51,9 +51,14 @@ pub struct SqliteVecStore {
     code_embedder: Option<Arc<dyn Embedder>>,
     /// Optional L5 reranker, applied to candidates after RRF in `search`.
     reranker: Option<Arc<dyn Reranker>>,
-    /// Optional L7 graph extractor (LLM). When present, `index` extracts typed
-    /// entities and writes file→entity edges. `None` = no graph.
+    /// Optional L7 graph extractor (LLM). When present, the background graph
+    /// worker extracts typed entities and writes file→entity edges. `None` = no
+    /// graph.
     graph_llm: Option<Arc<crate::llm::LlmClient>>,
+    /// Pending L7-extraction queue, present iff `graph_llm` is. `index()` enqueues
+    /// a file here after writing its vectors; `run_graph_worker` drains it. Keeps
+    /// the blocking per-file LLM call OFF the synchronous index/flush path.
+    graph_queue: Option<Arc<crate::cache::GraphQueue>>,
 }
 
 impl SqliteVecStore {
@@ -169,6 +174,7 @@ impl SqliteVecStore {
             code_embedder: None,
             reranker: None,
             graph_llm: None,
+            graph_queue: None,
         })
     }
 
@@ -265,6 +271,7 @@ impl SqliteVecStore {
             code_embedder: None,
             reranker: None,
             graph_llm: None,
+            graph_queue: None,
         }
     }
 
@@ -395,6 +402,7 @@ impl SqliteVecStore {
     /// this; search reads whatever edges exist.
     pub fn with_graph_extractor(mut self, llm: Arc<crate::llm::LlmClient>) -> Self {
         self.graph_llm = Some(llm);
+        self.graph_queue = Some(crate::cache::GraphQueue::new());
         self
     }
 
@@ -432,25 +440,18 @@ impl SqliteVecStore {
         let vec_table = if use_code { "vchunks_code" } else { "vchunks" };
         let vectors = embedder.embed(&chunks)?;
 
-        // L7: extract entities via the LLM BEFORE locking the db (network call).
-        // Fail-open — a write never fails because extraction did.
-        let entities = match &self.graph_llm {
-            Some(llm) => super::graph::extract_entities(llm, content).unwrap_or_else(|e| {
-                tracing::warn!("entity extraction failed ({e}); no graph edges for {filepath}");
-                Vec::new()
-            }),
-            None => Vec::new(),
-        };
-
         let mut conn = self.db.conn.lock();
         // IMMEDIATE: take the write lock at BEGIN. These transactions read
-        // (e.g. drop_file_chunks SELECTs) before writing; a DEFERRED tx would
+        // (e.g. drop_file_vectors SELECTs) before writing; a DEFERRED tx would
         // let two concurrent writers deadlock on the read→write upgrade in WAL
         // (instant SQLITE_BUSY, no busy_timeout retry).
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
-        // Drop this file's prior chunks + their rowid-linked vec0/fts rows.
-        drop_file_chunks(&tx, filepath)?;
+        // Drop this file's prior chunks + their rowid-linked vec0/fts rows. NOT
+        // its edges — L7 is now deferred (see graph_queue): edges persist until
+        // the background worker re-derives them, so a re-index doesn't blank the
+        // graph in the gap before extraction completes.
+        drop_file_vectors(&tx, filepath)?;
 
         // Insert fresh chunks; the chunk's rowid is reused for vec0 + fts so the
         // three tables join back on the same id. `last_accessed_at` = now so a
@@ -474,23 +475,60 @@ impl SqliteVecStore {
             )?;
         }
 
-        // L7: file → entity edges (the entities the LLM found). Old edges were
-        // dropped above; re-derive from this write.
-        for ent in &entities {
-            tx.execute(
-                "INSERT OR IGNORE INTO edges(from_path, to_path, edge_kind, created_at) \
-                 VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![
-                    filepath,
-                    super::graph::entity_path(&ent.name),
-                    ent.kind,
-                    now
-                ],
-            )?;
-        }
-
         tx.commit()?;
+        drop(conn);
+
+        // L7 is DEFERRED: enqueue this file for background entity extraction so
+        // the blocking per-file LLM call never sits on the synchronous write
+        // path (which the FUSE single dispatch thread serializes). The worker
+        // (run_graph_worker) drains the queue with bounded concurrency.
+        if let Some(q) = &self.graph_queue {
+            q.enqueue(ino, filepath.to_string());
+        }
         Ok(())
+    }
+
+    /// L7 (deferred): extract entities for one already-indexed file and write its
+    /// `edges`. Reads the file's content from the local cache, runs the blocking
+    /// LLM extraction on the blocking pool (so many can overlap), then replaces
+    /// the file's edge rows. Fail-open: a missing graph only weakens the ±5%
+    /// co-mention boost, never recall. No-op without a graph extractor.
+    pub async fn index_graph(&self, ino: u64, filepath: &str) -> anyhow::Result<()> {
+        let Some(llm) = self.graph_llm.clone() else {
+            return Ok(());
+        };
+        let db = self.db.clone();
+        let fp = filepath.to_string();
+        // The whole unit (content read → blocking LLM → edge write) is sync, so
+        // run it on the blocking pool; the worker's semaphore bounds concurrency.
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let raw = db.read_all_content(ino);
+            let Ok(content) = String::from_utf8(raw) else {
+                return Ok(()); // binary/non-UTF8 — nothing to extract
+            };
+            let entities = match super::graph::extract_entities(&llm, &content) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(filepath = %fp, "entity extraction failed ({e}); no edges");
+                    return Ok(());
+                }
+            };
+            let now = now_ms();
+            let mut conn = db.conn.lock();
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            // Replace this file's edges (idempotent re-derive).
+            drop_file_edges(&tx, &fp)?;
+            for ent in &entities {
+                tx.execute(
+                    "INSERT OR IGNORE INTO edges(from_path, to_path, edge_kind, created_at) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![fp, super::graph::entity_path(&ent.name), ent.kind, now],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await?
     }
 
     /// Drop a file's chunks (and their rowid-linked vec0/fts rows) from the
@@ -584,7 +622,9 @@ fn is_code_path(filepath: &str) -> bool {
 }
 
 /// Delete a file's chunks and their rowid-linked vec0/fts rows within a txn.
-fn drop_file_chunks(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Result<()> {
+/// Does NOT touch `edges` — L7 is maintained separately (see `drop_file_edges`),
+/// so a vector re-index doesn't transiently blank the graph.
+fn drop_file_vectors(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Result<()> {
     let ids: Vec<i64> = {
         let mut stmt = tx.prepare("SELECT id FROM chunks WHERE filepath = ?1")?;
         let rows = stmt.query_map([filepath], |r| r.get::<_, i64>(0))?;
@@ -605,8 +645,20 @@ fn drop_file_chunks(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Res
         tx.execute("DELETE FROM ffts WHERE rowid = ?1", [id])?;
     }
     tx.execute("DELETE FROM chunks WHERE filepath = ?1", [filepath])?;
-    // L7: this file's outbound edges go too (re-derived on write, gone on delete).
+    Ok(())
+}
+
+/// Delete a file's outbound L7 graph edges within a txn (re-derived on the next
+/// deferred extraction, gone on delete).
+fn drop_file_edges(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Result<()> {
     tx.execute("DELETE FROM edges WHERE from_path = ?1", [filepath])?;
+    Ok(())
+}
+
+/// Delete a file's vectors AND its edges — full removal (delete / rename clear).
+fn drop_file_chunks(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Result<()> {
+    drop_file_vectors(tx, filepath)?;
+    drop_file_edges(tx, filepath)?;
     Ok(())
 }
 
@@ -625,6 +677,12 @@ impl crate::cache::LocalIndexer for SqliteVecStore {
     }
     async fn rename(&self, old: &str, new: &str) -> anyhow::Result<()> {
         SqliteVecStore::rename(self, old, new)
+    }
+    fn graph_queue(&self) -> Option<Arc<crate::cache::GraphQueue>> {
+        self.graph_queue.clone()
+    }
+    async fn index_graph(&self, ino: u64, filepath: &str) -> anyhow::Result<()> {
+        SqliteVecStore::index_graph(self, ino, filepath).await
     }
 }
 
@@ -1515,11 +1573,13 @@ mod tests {
         assert_eq!(n, 1, "re-index must replace, not accumulate, chunks");
     }
 
-    /// L7 edge lifecycle (LLM extraction itself is gated/tested in `graph.rs`):
-    /// re-indexing drops a file's prior edges and delete removes them. Edges are
-    /// inserted manually here since unit tests have no LLM.
+    /// L7 edge lifecycle. Edges are now maintained by the DEFERRED graph worker
+    /// (`index_graph`), NOT by `index()`. So a vector re-index PRESERVES a file's
+    /// edges (the worker re-derives them shortly after), and only delete/rename
+    /// clears them. Edges inserted manually since unit tests have no LLM (the
+    /// extraction itself is tested in `graph.rs`).
     #[tokio::test]
-    async fn reindex_and_delete_clear_a_files_edges() {
+    async fn reindex_preserves_edges_delete_clears_them() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
             Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
@@ -1546,11 +1606,36 @@ mod tests {
         };
         add_edge();
         assert_eq!(count(), 1);
+        // Vector re-index must NOT touch edges (deferred L7 owns them now).
         store.index(2, "/notes/proj.md", "changed").unwrap();
-        assert_eq!(count(), 0, "re-index must drop prior edges");
-        add_edge();
+        assert_eq!(count(), 1, "vector re-index must PRESERVE edges");
+        // Delete clears them.
         store.remove("/notes/proj.md").unwrap();
         assert_eq!(count(), 0, "delete must drop edges");
+    }
+
+    /// With a graph extractor attached, `index()` ENQUEUES the file for deferred
+    /// L7 extraction (rather than calling the LLM inline). Constructing the
+    /// client does no network I/O — only `index_graph` (not exercised here) would.
+    #[tokio::test]
+    async fn index_enqueues_graph_work_when_extractor_present() {
+        use crate::cache::LocalIndexer;
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let llm = Arc::new(crate::llm::LlmClient::openrouter("test-key".into()));
+        let store = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384)))
+            .unwrap()
+            .with_graph_extractor(llm);
+        let q = store.graph_queue().expect("graph queue present with extractor");
+        assert!(q.is_idle());
+        store.index(7, "/notes/a.md", "hello world").unwrap();
+        assert_eq!(q.depth(), 1, "index() must enqueue the file for L7 extraction");
+        // A store WITHOUT an extractor has no queue and enqueues nothing.
+        let plain = SqliteVecStore::new(
+            Arc::new(Db::open_in_memory().unwrap()),
+            Arc::new(HashEmbedder::new(384)),
+        )
+        .unwrap();
+        assert!(plain.graph_queue().is_none());
     }
 
     /// Rename relabels the index (no re-embed) and drops the overwritten
