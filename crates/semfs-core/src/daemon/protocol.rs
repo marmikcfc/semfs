@@ -51,6 +51,12 @@ pub enum Response {
         /// fail-closed policy. `#[serde(default)]` → `None` from older daemons.
         #[serde(default)]
         backend: Option<String>,
+        /// Depth (queued + in-flight) of the L7 entity-graph extraction queue.
+        /// `Some(0)` once the background graph worker has fully drained; `None`
+        /// when no graph extractor is attached (or an older daemon). Lets a warm
+        /// wait for the graph to finish before unmounting.
+        #[serde(default)]
+        graph_queue_depth: Option<usize>,
     },
     SyncDone {
         pulled: usize,

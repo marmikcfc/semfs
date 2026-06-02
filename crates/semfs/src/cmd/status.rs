@@ -34,6 +34,7 @@ pub async fn run(args: Args) -> Result<()> {
             user_name,
             org_name,
             backend,
+            graph_queue_depth,
         } => {
             if args.json {
                 let out = serde_json::json!({
@@ -47,6 +48,7 @@ pub async fn run(args: Args) -> Result<()> {
                     "user_name": user_name,
                     "org_name": org_name,
                     "backend": backend,
+                    "graph_queue_depth": graph_queue_depth,
                 });
                 println!("{}", serde_json::to_string(&out)?);
             } else {
@@ -58,6 +60,9 @@ pub async fn run(args: Args) -> Result<()> {
                 println!("pull enabled: {pull_enabled}");
                 if let Some(b) = &backend {
                     println!("backend:      {b}");
+                }
+                if let Some(d) = graph_queue_depth {
+                    println!("graph queue:  {d} pending");
                 }
                 if let Some(u) = &user_name {
                     println!("user:         {u}");

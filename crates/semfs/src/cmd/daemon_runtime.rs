@@ -460,6 +460,12 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     };
     let sync_tasks = semfs_core::sync::SyncEngine::start(fs.clone(), sync_opts, shutdown_rx.clone());
 
+    // Capture the L7 queue handle for IPC `Status` (lets a client/warm wait for
+    // graph extraction to fully drain) BEFORE the worker spawn moves the indexer.
+    let graph_queue = graph_indexer
+        .as_ref()
+        .and_then(|i| i.graph_queue());
+
     // L7 background entity-graph worker: drains the indexer's extraction queue
     // with bounded concurrency so the per-file blocking LLM call never sits on
     // the synchronous index/flush path. No-op (exits immediately) when the
@@ -496,6 +502,7 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         user_id: session_user_id,
         user_name: session_user_name,
         org_name: session_org_name,
+        graph_queue,
         shutdown_notify: ipc_shutdown_notify.clone(),
     });
     let socket_path = daemon::socket_path(&cfg.container_tag);

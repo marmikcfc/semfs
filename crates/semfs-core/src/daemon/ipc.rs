@@ -34,6 +34,12 @@ pub struct IpcState {
     pub user_id: Option<String>,
     pub user_name: Option<String>,
     pub org_name: Option<String>,
+    /// L7 entity-graph extraction queue, if a graph extractor is attached. Its
+    /// depth (queued + in-flight) is surfaced in `Status` so a client/warm can
+    /// wait for the background graph worker to fully drain before unmounting —
+    /// store/file size is NOT a reliable drain signal (it's dominated by the
+    /// already-written vectors). `None` → no graph work.
+    pub graph_queue: Option<Arc<crate::cache::GraphQueue>>,
     /// Fired when an `Unmount` request arrives — daemon main loop awaits this
     /// and treats it the same as SIGTERM.
     pub shutdown_notify: Arc<Notify>,
@@ -126,6 +132,7 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             user_name: state.user_name.clone(),
             org_name: state.org_name.clone(),
             backend: Some(state.backend.clone()),
+            graph_queue_depth: state.graph_queue.as_ref().map(|q| q.depth()),
         },
         Request::Sync => {
             let pulled = crate::sync::pull::delta_pull(&state.fs).await.unwrap_or(0);
