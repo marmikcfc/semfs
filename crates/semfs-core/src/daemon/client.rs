@@ -130,7 +130,10 @@ async fn send_request_classified_to_path(
         writer.shutdown().await?;
 
         let mut lines = BufReader::new(reader).lines();
-        let line = tokio::time::timeout(Duration::from_secs(30), lines.next_line())
+        // Must stay ABOVE the daemon's `SEARCH_TIMEOUT` (50s, see daemon::ipc) so
+        // the daemon's typed error wins before the client gives up. Raised 30s →
+        // 60s alongside the 25s → 50s search-bound bump (2026-06-05).
+        let line = tokio::time::timeout(Duration::from_secs(60), lines.next_line())
             .await
             .context("timeout waiting for daemon response")?
             .context("read response line")?

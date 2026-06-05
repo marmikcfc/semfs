@@ -10,11 +10,20 @@ use tokio::sync::{watch, Notify};
 use super::protocol::{Request, Response};
 use crate::cache::CacheFs;
 
-/// Server-side bound on a single IPC search. Must stay below the client's 30s
+/// Server-side bound on a single IPC search. Must stay below the client's 60s
 /// response timeout (see `daemon::client::send_request`) so the daemon returns a
 /// typed error BEFORE the client gives up — otherwise a timed-out search would
 /// keep holding the single backend connection (pgvector/pglite) in the dark.
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(25);
+///
+/// Raised 25s → 50s (2026-06-05): under the post-mount indexing burst a search
+/// blocks on the single `Mutex<Connection>` (cache::Db) behind the indexer's
+/// write txns; 25s was too tight and the first searches failed-over to an
+/// empty cloud result, so the agent abandoned semantic search and brute-forced
+/// the FS (24 tool calls / ~4x tokens — see ticket `explore-agent-search-behavior`
+/// and `rcas/2026-06-05-agent-search-token-blowup-turn-multiplication.md`). This
+/// is a HEADROOM mitigation, not the throughput fix (dedicated read connection —
+/// see ticket `search-throughput-readpath-isolation`).
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(50);
 
 /// State the IPC handler reads to answer requests.
 #[allow(missing_debug_implementations)] // CacheFs doesn't implement Debug in full
@@ -133,6 +142,7 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             org_name: state.org_name.clone(),
             backend: Some(state.backend.clone()),
             graph_queue_depth: state.graph_queue.as_ref().map(|q| q.depth()),
+            unindexed_files: Some(state.fs.unindexed_count()),
         },
         Request::Sync => {
             let pulled = crate::sync::pull::delta_pull(&state.fs).await.unwrap_or(0);

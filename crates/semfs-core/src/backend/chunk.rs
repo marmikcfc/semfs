@@ -22,6 +22,29 @@ impl Default for ChunkOptions {
     }
 }
 
+/// Hard per-file ceiling on the content handed to the indexer. Chunk count
+/// (→ embedding time + memory) MUST be bounded per file: a large file that is
+/// valid UTF-8 — e.g. a minified `node_modules` bundle, or a huge extracted
+/// spreadsheet — otherwise chunks into thousands of windows and stalls the whole
+/// import on the embed lane (RCAs `2026-06-03-extract-unbounded-large-doc-hang`
+/// and `…-uncapped-utf8-text-path-node-modules-hang`). Applied at `index()` so it
+/// bounds EVERY source — plain text, code, and extracted document text alike. A
+/// retrieval index only needs the document's head.
+pub const MAX_INDEX_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// Borrow at most `MAX_INDEX_BYTES` of `content`, truncated to a UTF-8 char
+/// boundary so the slice stays valid (cheap — no allocation).
+pub fn cap_index_content(content: &str) -> &str {
+    if content.len() <= MAX_INDEX_BYTES {
+        return content;
+    }
+    let mut end = MAX_INDEX_BYTES;
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    &content[..end]
+}
+
 /// Split `content` into overlapping, word-aligned, verbatim chunks.
 pub fn recursive_chunks(content: &str, opts: &ChunkOptions) -> Vec<String> {
     // Byte spans of each whitespace-delimited word, over the ORIGINAL content.
@@ -125,5 +148,20 @@ mod tests {
         // First word in first chunk, last word in last chunk.
         assert!(chunks[0].starts_with("t1"));
         assert!(chunks.last().unwrap().ends_with("t12"));
+    }
+
+    #[test]
+    fn cap_index_content_leaves_small_untouched() {
+        assert_eq!(cap_index_content("small content"), "small content");
+    }
+
+    #[test]
+    fn cap_index_content_truncates_on_char_boundary() {
+        // Multibyte fill (each '中' = 3 bytes) past the cap; the slice must land on
+        // a char boundary (slicing mid-char would panic).
+        let big = "中".repeat(MAX_INDEX_BYTES); // 3 × MAX_INDEX_BYTES bytes
+        let capped = cap_index_content(&big);
+        assert!(capped.len() <= MAX_INDEX_BYTES);
+        assert!(capped.chars().all(|c| c == '中'), "split a multibyte char");
     }
 }

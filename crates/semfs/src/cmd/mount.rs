@@ -111,7 +111,17 @@ pub async fn run(args: Args) -> Result<()> {
 
     let (container_tag, mount_path) = resolve_tag_and_path(&args.container_tag, args.path)?;
 
-    let api_key = super::auth::resolve_api_key(args.key.as_deref(), Some(&mount_path))?;
+    // A local-only mount (`--no-push --no-sync`) never contacts the Supermemory
+    // server and its cache is org-independent (`~/.semfs/<tag>.db`), so it needs no
+    // key at all. Fall back to an empty key when none is configured rather than
+    // bailing — enabling fully keyless, offline local mounts.
+    // (tickets/decouple-sqlite-cache-scoping-from-supermemory.)
+    let local_only = args.no_push && args.no_sync;
+    let api_key = match super::auth::resolve_api_key(args.key.as_deref(), Some(&mount_path)) {
+        Ok(k) => k,
+        Err(_) if local_only => String::new(),
+        Err(e) => return Err(e),
+    };
     let api_url_str = args
         .api_url
         .clone()

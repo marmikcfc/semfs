@@ -33,7 +33,7 @@ const RERANK_CANDIDATES: usize = 50;
 /// never zero a result that matched: past the deadline it still returns the
 /// retrieved RRF hits but SKIPS the expensive cross-encoder rerank (the stage
 /// worth guarding the shared `Mutex<Connection>` against). Kept STRICTLY UNDER
-/// `daemon::ipc::SEARCH_TIMEOUT` (25s) — by a margin — so the in-search
+/// `daemon::ipc::SEARCH_TIMEOUT` (50s) — by a margin — so the in-search
 /// cooperative degrade (return RRF hits, skip rerank) reliably wins the race
 /// against the daemon's outer hard timeout, which would otherwise cut the search
 /// off with nothing. (RCA 2026-06-04-semfs-grep-hangs-post-search-under-load #3.)

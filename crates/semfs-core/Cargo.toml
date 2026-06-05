@@ -49,6 +49,20 @@ directories = { workspace = true }
 lru = { workspace = true }
 fs2 = "0.4"
 
+# Local document text extractors (L1 parse) — pure-Rust, no native libs.
+# `zip` with the miniz_oxide deflate backend (no C). docx/pptx are zip+XML;
+# we unzip and join the text runs with quick-xml.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
+# Spreadsheets: calamine reads both OOXML xlsx and legacy OLE2 xls (pure-Rust).
+calamine = "0.26"
+# Content-addressed cache key for per-sheet LLM summaries (cost + re-seed
+# determinism). Already in the lockfile transitively; fast, no C.
+blake3 = "1"
+# PDF text layer (pure-Rust). Scanned/image-only PDFs have no text layer and
+# remain a gap (routed to the unindexed bucket, never silently dropped).
+pdf-extract = "0.7"
+
 # Mount backends — target-gated (M3a)
 # nfsserve compiles on both macOS and Linux (pure Rust).
 # fuser is Linux-only because on macOS it would require macFUSE,

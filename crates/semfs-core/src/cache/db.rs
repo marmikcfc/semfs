@@ -757,6 +757,35 @@ impl Db {
         out
     }
 
+    /// Record a binary file whose content could not be extracted to searchable
+    /// text. Keyed by inode (idempotent) so the row reflects the current state.
+    pub(crate) fn mark_unindexed(&self, ino: u64, filepath: &str, format: &str) {
+        let conn = self.conn.lock();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO fs_unindexed (ino, filepath, format, ts)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![ino as i64, filepath, format, Timestamp::now().sec],
+        );
+    }
+
+    /// Drop a file's unindexed marker (a later flush extracted it, or it was
+    /// deleted). No-op if absent.
+    pub(crate) fn clear_unindexed(&self, ino: u64) {
+        let conn = self.conn.lock();
+        let _ = conn.execute("DELETE FROM fs_unindexed WHERE ino = ?1", [ino as i64]);
+    }
+
+    /// Count of binary files currently recorded as unindexed. Surfaced as
+    /// `unindexed_files` in `semfs status`.
+    pub(crate) fn count_unindexed(&self) -> usize {
+        let conn = self.conn.lock();
+        conn.query_row("SELECT COUNT(*) FROM fs_unindexed", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map(|n| n as usize)
+        .unwrap_or(0)
+    }
+
     /// Inodes whose server-side processing has not reached `done`. Drives the
     /// status poller (loop E) and stuck detection.
     pub(crate) fn inodes_awaiting_done(&self) -> Vec<AwaitingDone> {

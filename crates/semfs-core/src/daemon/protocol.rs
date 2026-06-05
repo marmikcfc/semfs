@@ -57,6 +57,12 @@ pub enum Response {
         /// wait for the graph to finish before unmounting.
         #[serde(default)]
         graph_queue_depth: Option<usize>,
+        /// Count of binary files whose content could not be extracted to
+        /// searchable text (unsupported format, parse failure, OCR key absent).
+        /// `Some(0)` when everything indexed; `None` from an older daemon. Makes
+        /// silent binary-document data loss visible (L1 parse accounting).
+        #[serde(default)]
+        unindexed_files: Option<usize>,
     },
     SyncDone {
         pulled: usize,

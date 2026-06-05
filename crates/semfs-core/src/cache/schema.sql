@@ -132,3 +132,14 @@ CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_path);
 -- BM25 keyword index over chunk text. rowid is kept equal to chunks.id so the
 -- vec0 KNN and fts5 BM25 result sets join back to the same chunk.
 CREATE VIRTUAL TABLE IF NOT EXISTS ffts USING fts5(text);
+
+-- L1 parse accounting: binary files whose content could not be extracted to
+-- searchable text (unsupported format, parse failure, OCR key absent). Keyed by
+-- inode so a later successful flush or an unlink clears the row. Surfaced as
+-- `unindexed_files` in `semfs status` — no binary is ever silently dropped.
+CREATE TABLE IF NOT EXISTS fs_unindexed (
+    ino       INTEGER PRIMARY KEY,
+    filepath  TEXT    NOT NULL,
+    format    TEXT    NOT NULL,
+    ts        INTEGER NOT NULL
+);

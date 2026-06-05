@@ -839,6 +839,12 @@ impl CacheFs {
         self.db.push_queue_len()
     }
 
+    /// Count of binary files recorded as unindexed (could not be extracted to
+    /// searchable text). Surfaced as `unindexed_files` in `semfs status`.
+    pub fn unindexed_count(&self) -> usize {
+        self.db.count_unindexed()
+    }
+
     /// Snapshot of the push_queue row for a given filepath (for tests /
     /// diagnostics only).
     pub fn push_queue_inspect(&self, filepath: &str) -> Option<PushQueueSnapshot> {
@@ -1635,6 +1641,8 @@ impl FileSystem for CacheFs {
                 }
             }
         }
+        // Clear any unindexed marker — the file is gone, not merely unparsed.
+        self.db.clear_unindexed(child_ino as u64);
 
         // Push delete to API via the push queue (durable, coalescing).
         if self.api.is_some() {
@@ -1960,6 +1968,10 @@ impl FileSystem for CacheFs {
                     .map_err(sql_err)?;
                 tx.execute("DELETE FROM fs_inode WHERE ino = ?1", [dst_ino])
                     .map_err(sql_err)?;
+                // The overwritten inode is gone — drop any unindexed marker so
+                // `unindexed_files` doesn't overcount a file that no longer exists.
+                tx.execute("DELETE FROM fs_unindexed WHERE ino = ?1", [dst_ino])
+                    .map_err(sql_err)?;
                 did_overwrite = true;
             }
 
@@ -1976,6 +1988,17 @@ impl FileSystem for CacheFs {
             ],
         )
         .map_err(sql_err)?;
+
+            // Relabel any unindexed marker atomically WITH the rename (keyed by
+            // inode) so `fs_unindexed.filepath` can never drift from the dentry.
+            // `dst_filepath_for_delete` is the destination path resolved above.
+            if let Some(new_fp) = dst_filepath_for_delete.as_deref() {
+                tx.execute(
+                    "UPDATE fs_unindexed SET filepath = ?2 WHERE ino = ?1",
+                    rusqlite::params![src_ino, new_fp],
+                )
+                .map_err(sql_err)?;
+            }
 
             // Update timestamps on source inode and both parents.
             tx.execute(
