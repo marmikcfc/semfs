@@ -23,6 +23,20 @@ use semfs_core::rerank::{CohereReranker, LocalReranker, RelaceReranker, Reranker
 // tickets/local-ranking-precision-vs-supermemory.
 const TEXT_EMBED_MODEL: EmbeddingModel = EmbeddingModel::MultilingualE5Small; // 384d, multilingual
 const CODE_EMBED_MODEL: EmbeddingModel = EmbeddingModel::JinaEmbeddingsV2BaseCode; // 768d
+
+/// Map `SEMFS_EMBED_MODEL` → a fastembed registry text model. Unknown/absent →
+/// the default (`TEXT_EMBED_MODEL`). Keep names short + stable; dims are read
+/// from the registry, so a swap requires a re-seed (different index identity).
+fn text_embed_model(name: Option<&str>) -> EmbeddingModel {
+    match name {
+        Some("embeddinggemma") | Some("gemma") | Some("embeddinggemma-300m") => {
+            EmbeddingModel::EmbeddingGemma300M // 768d, multilingual
+        }
+        Some("e5-small") | Some("multilingual-e5-small") => EmbeddingModel::MultilingualE5Small,
+        Some("arctic-s") | Some("snowflake-arctic-embed-s") => EmbeddingModel::SnowflakeArcticEmbedS,
+        _ => TEXT_EMBED_MODEL,
+    }
+}
 const RERANK_MODEL: RerankerModel = RerankerModel::JINARerankerV2BaseMultiligual;
 /// The int8-quantized ONNX of the reranker (smaller/faster than the registry's
 /// pinned full-precision `onnx/model.onnx`), fetched from the model's HF repo.
@@ -38,8 +52,20 @@ const CLOUD_OPENAI_DIMS: usize = 1536;
 pub struct ResolveEnv {
     /// `SEMFS_EMBED_BACKEND`: `local` (default) | `openai` | `openrouter`.
     pub embed_backend: Option<String>,
+    /// `SEMFS_EMBED_MODEL`: override the LOCAL text-embed registry model
+    /// (default `multilingual-e5-small`). e.g. `embeddinggemma` | `e5-small` |
+    /// `arctic-s`. Lets us evaluate stronger multilingual embedders.
+    pub embed_model: Option<String>,
     /// `SEMFS_RERANK_BACKEND`: `local` (default) | `cohere` | `relace` | `none`.
     pub rerank_backend: Option<String>,
+    /// `SEMFS_RERANK_MODEL`: override the model slug for the `cohere`-schema cloud
+    /// reranker (default `cohere/rerank-v3.5`). Any Cohere `/rerank`-compatible
+    /// slug on the chosen base URL works, e.g. `cohere/rerank-4-pro`.
+    pub rerank_model: Option<String>,
+    /// `SEMFS_RERANK_BASE_URL`: override the base URL for the `cohere`-schema cloud
+    /// reranker (default OpenRouter `https://openrouter.ai/api/v1`). Lets any
+    /// Cohere-`/rerank`-schema endpoint be used without new per-vendor code.
+    pub rerank_base_url: Option<String>,
     /// `SEMFS_STORAGE_BACKEND`: `sqlite` (default) | `pgvector` | `pglite` | `cloud`.
     /// Where search happens. `cloud` = no local index (Supermemory embeds + searches);
     /// `pgvector` requires the `pg` feature and `SEMFS_PG_URL`; `pglite` the `pglite`
@@ -60,7 +86,10 @@ impl ResolveEnv {
         let var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
         Self {
             embed_backend: var("SEMFS_EMBED_BACKEND"),
+            embed_model: var("SEMFS_EMBED_MODEL"),
             rerank_backend: var("SEMFS_RERANK_BACKEND"),
+            rerank_model: var("SEMFS_RERANK_MODEL"),
+            rerank_base_url: var("SEMFS_RERANK_BASE_URL"),
             storage_backend: var("SEMFS_STORAGE_BACKEND"),
             pg_url: var("SEMFS_PG_URL"),
             openrouter_key: var("OPENROUTER_API_KEY"),
@@ -133,7 +162,10 @@ pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
         );
     }
     Ok(match choose_embed(env) {
-        EmbedChoice::Local => Arc::new(LocalEmbedder::from_registry(TEXT_EMBED_MODEL, None)?),
+        EmbedChoice::Local => Arc::new(LocalEmbedder::from_registry(
+            text_embed_model(env.embed_model.as_deref()),
+            None,
+        )?),
         EmbedChoice::CloudOpenAi => Arc::new(OpenAiEmbedder::new(
             env.openai_key.clone().ok_or_else(|| {
                 anyhow::anyhow!("SEMFS_EMBED_BACKEND=openai but OPENAI_API_KEY not set")
@@ -177,11 +209,23 @@ pub fn build_reranker(env: &ResolveEnv) -> Result<Option<Arc<dyn Reranker>>> {
             RERANK_REV,
             None,
         )?)),
-        RerankChoice::Cohere => Some(Arc::new(CohereReranker::openrouter(
-            env.openrouter_key.clone().ok_or_else(|| {
+        RerankChoice::Cohere => {
+            let key = env.openrouter_key.clone().ok_or_else(|| {
                 anyhow::anyhow!("SEMFS_RERANK_BACKEND=cohere but OPENROUTER_API_KEY not set")
-            })?,
-        ))),
+            })?;
+            // Defaults preserve prior behavior (OpenRouter + rerank-v3.5); both are
+            // overridable so any Cohere-`/rerank`-schema model/endpoint works
+            // (e.g. SEMFS_RERANK_MODEL=cohere/rerank-4-pro).
+            let base_url = env
+                .rerank_base_url
+                .clone()
+                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+            let model = env
+                .rerank_model
+                .clone()
+                .unwrap_or_else(|| "cohere/rerank-v3.5".to_string());
+            Some(Arc::new(CohereReranker::new(key, base_url, model)))
+        }
         RerankChoice::Relace => Some(Arc::new(RelaceReranker::new(
             env.relace_key.clone().ok_or_else(|| {
                 anyhow::anyhow!("SEMFS_RERANK_BACKEND=relace but RELACE_API_KEY not set")
