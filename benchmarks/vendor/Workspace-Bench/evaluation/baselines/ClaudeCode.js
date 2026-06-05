@@ -225,7 +225,19 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
   };
 
   const env = buildEnv(task.customProvider);
-  if (task.cwd) env.HOME = task.cwd;
+  // Per-task isolated HOME, but OUTSIDE the workspace. Setting HOME = task.cwd
+  // (the old behavior) put Claude Code's ~/.claude/projects/*.jsonl SESSION
+  // TRANSCRIPTS *inside* the workspace the agent searches — so the agent's
+  // own (growing) transcript leaked into find/ls/grep and got Read back,
+  // replaying in cache_read every turn (a self-referential token blowup;
+  // measured 47K+36K-char transcript Reads → ~95% of a 1.23M-token run).
+  // A sibling dir keeps isolation without polluting the searchable tree.
+  if (task.cwd) {
+    const homeDir = path.join(path.dirname(path.resolve(task.cwd)), '.cchome_' + path.basename(task.cwd));
+    try { fs.mkdirSync(homeDir, { recursive: true }); } catch { /* best effort */ }
+    env.HOME = homeDir;
+    process.stderr.write(`[semfs] HOME set OUTSIDE workspace: ${homeDir}\n`);
+  }
   const timeoutSec = task.timeout ?? 300;
   const abortController = new AbortController();
 
@@ -257,10 +269,74 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
       return true;
     };
 
+    // semfs: if this workdir is under a semfs mount, tell Claude how to reach
+    // semantic search — its native Grep/Glob bypass the shell grep wrapper, so it
+    // otherwise just crawls the tree. semfs writes the `.semfs` marker in the PARENT
+    // of the mount (it can't drop a plain file inside its own FUSE fs), so we walk UP
+    // from cwd to find it and confirm cwd is under one of its mount_path= entries —
+    // mirroring semfs's own read_semfs_marker_for_path. Delivered via
+    // appendSystemPrompt so it is independent of HOME and of the SDK's settingSources
+    // default ([]). Scoped to semfs runs only, so the plain baseline is unaffected.
+    let semfsHint;
+    try {
+      const cwdAbs = path.resolve(task.cwd ?? process.cwd());
+      let dir = cwdAbs, mountPath = null;
+      for (let i = 0; i < 40 && !mountPath; i++) {
+        const mf = path.join(dir, '.semfs');
+        if (fs.existsSync(mf)) {
+          for (const blk of fs.readFileSync(mf, 'utf8').split('\n\n')) {
+            const m = blk.match(/^mount_path=(.+)$/m);
+            if (!m) continue;
+            const mp = path.resolve(m[1].trim());
+            if (cwdAbs === mp || cwdAbs.startsWith(mp + path.sep)) { mountPath = mp; break; }
+          }
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+      if (mountPath) {
+        semfsHint =
+          `IMPORTANT — read fully before acting.\n` +
+          `The directory ${mountPath}/ is NOT a normal filesystem. Every file in it is indexed in a ` +
+          `semantic knowledge graph. To find anything, run ONE command via your Bash tool:\n` +
+          `    semfs grep "<natural-language description of what you need>" ${mountPath}/\n` +
+          `It returns the most relevant files AND their content excerpts, ranked by meaning (not literal text). ` +
+          `Do NOT explore with ls / find / grep / Glob or read files one by one — that is slow and unnecessary here; ` +
+          `start with semfs grep, then open only the top-ranked results.\n` +
+          `ACKNOWLEDGEMENT REQUIRED: to confirm you received these instructions, your VERY FIRST line of output ` +
+          `must be exactly "[SEMFS-ACK]" followed by, on the same line, the semfs grep query you will run.`;
+        // Deliver via a PROJECT CLAUDE.md (the SDK loads CLAUDE.md only with
+        // settingSources:['project']; it ignores the user-level ~/.claude/CLAUDE.md
+        // that semfs writes). cwd == mountPath, so this is the project root.
+        try {
+          fs.writeFileSync(path.join(mountPath, 'CLAUDE.md'), semfsHint + '\n');
+          process.stderr.write(`[semfs] wrote project CLAUDE.md at ${mountPath}/CLAUDE.md\n`);
+        } catch (e) { process.stderr.write(`[semfs] CLAUDE.md write failed: ${e}\n`); }
+
+        // Transparent semantic search: point Claude's native Grep tool (and Bash
+        // grep) at our rg/grep shim, which routes content searches under the mount
+        // to `semfs grep` and passes everything else through to real ripgrep.
+        // USE_BUILTIN_RIPGREP=0 makes the native Grep tool resolve `rg` from PATH
+        // instead of the SDK's bundled binary — so Claude greps normally and gets
+        // semantic results without ever invoking `semfs grep` itself.
+        const shimDir = process.env.SEMFS_SHIM_DIR || '/srv/semfs-benchmark/semfs-shims';
+        if (fs.existsSync(path.join(shimDir, 'rg'))) {
+          env.PATH = `${shimDir}:${env.PATH || process.env.PATH || ''}`;
+          env.USE_BUILTIN_RIPGREP = '0';
+          process.stderr.write(`[semfs] rg/grep shim enabled (USE_BUILTIN_RIPGREP=0, PATH+=${shimDir})\n`);
+        }
+      }
+    } catch (e) { process.stderr.write(`[semfs] hint detection failed: ${e}\n`); }
+
     const q = query({
       prompt: task.prompt,
       options: {
         cwd: task.cwd ?? process.cwd(),
+        // The hint lives in the project CLAUDE.md (written above). The SDK loads
+        // CLAUDE.md ONLY when settingSources includes 'project'; the claude_code
+        // preset ensures that loaded project memory is applied to the system prompt.
+        ...(semfsHint ? { settingSources: ['project'], systemPrompt: { type: 'preset', preset: 'claude_code' } } : {}),
         abortController,
         env,
         pathToClaudeCodeExecutable: getClaudeCodePath(),

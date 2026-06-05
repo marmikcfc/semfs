@@ -12,6 +12,11 @@ FILESYS_ROOT="${FILESYS_ROOT:-${EVAL_ROOT}/filesys}"
 TELEMETRY_ROOT="${TELEMETRY_ROOT:-${OUTPUT_ROOT}/_telemetry}"
 RUN_STAMP="${RUN_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 SKIP_PREPARE="${SKIP_PREPARE:-0}"
+# SEMFS_FRESH=1 → start every run cold: wipe the semfs local cache DB (forces a
+# fresh pull from supermemory) and remove this target's prior output dir (avoids
+# the grader's stale-resume skip). Off by default; warm cache is faster.
+SEMFS_FRESH="${SEMFS_FRESH:-0}"
+SEMFS_CACHE_ROOT="${SEMFS_CACHE_ROOT:-${HOME}/.cache/semfs}"
 
 cleanup_stale_mounts() {
   local target=""
@@ -24,6 +29,42 @@ cleanup_stale_mounts() {
       $2 == "on" && index($3, root) == 1 && $4 == "type" && $5 == "fuse" { print $3 }
     '
   )
+}
+
+# Cold-start a run when SEMFS_FRESH=1: drop the semfs local cache (re-pull from
+# supermemory) and remove this target's prior output dir. No-op otherwise.
+fresh_clear() {
+  [[ "${SEMFS_FRESH}" == "1" ]] || return 0
+  local target="$1"
+
+  # 1. semfs local cache DBs. Scope to SEMFS_CONTAINER_TAG when set, else all.
+  local cache_glob="*.db"
+  [[ -n "${SEMFS_CONTAINER_TAG:-}" ]] && cache_glob="${SEMFS_CONTAINER_TAG}.db"
+  if [[ -d "${SEMFS_CACHE_ROOT}" ]]; then
+    while IFS= read -r f; do
+      [[ -n "${f}" ]] || continue
+      log "fresh: rm cache ${f}*"
+      rm -f "${f}" "${f}-shm" "${f}-wal"
+    done < <(find "${SEMFS_CACHE_ROOT}" -type f -name "${cache_glob}" 2>/dev/null)
+  fi
+
+  # 2. prior output for this target's label prefix (anchored — plain labels do
+  #    not match the SEMFS* prefixes, so plain runs never delete semfs output).
+  local prefix=""
+  case "${target}" in
+    codex)            prefix="Codex--" ;;
+    semfs-codex)      prefix="SEMFSCodex--" ;;
+    claudecode)       prefix="ClaudeCode--" ;;
+    semfs-claudecode) prefix="SEMFSClaudeCode--" ;;
+  esac
+  if [[ -n "${prefix}" ]]; then
+    local d
+    for d in "${OUTPUT_ROOT}/${prefix}"*/; do
+      [[ -d "${d}" ]] || continue
+      log "fresh: rm output ${d}"
+      rm -rf "${d}"
+    done
+  fi
 }
 
 snapshot_workspace() {
@@ -259,6 +300,7 @@ main() {
   mkdir -p "${OUTPUT_ROOT}"
   cd "${EVAL_ROOT}"
   cleanup_stale_mounts
+  fresh_clear "$1"
   local telemetry_dir="${TELEMETRY_ROOT}/${RUN_STAMP}-$1-${DATASET}"
   local narrative_prefix="${telemetry_dir}/run_narrative"
   local timing_json="${telemetry_dir}/timing_breakdown.json"

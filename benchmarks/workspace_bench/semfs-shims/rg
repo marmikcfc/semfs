@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# semfs rg shim — transparent semantic search for Claude Code's native Grep tool.
+#
+# With USE_BUILTIN_RIPGREP=0, Claude Code's Grep tool resolves `rg` from PATH.
+# This shim intercepts that: a content search whose path is under a semfs mount is
+# routed to `semfs grep` (vector search) and re-emitted in whatever rg output mode
+# the Grep tool asked for (--json / -l / -c / content). Everything else — file
+# enumeration (`--files`), paths outside a mount, no pattern — passes through to
+# the real bundled ripgrep unchanged. Claude greps normally; results are semantic.
+set -uo pipefail
+
+LOG="${SEMFS_SHIM_LOG:-/tmp/semfs-shim.log}"
+REAL_RG="${SEMFS_REAL_RG:-/srv/semfs-benchmark/Workspace-Bench/evaluation/node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-linux/rg}"
+SEMFS_BIN="${SEMFS_BIN:-/home/ubuntu/.local/bin/semfs}"
+SEMFS_HOME="${SEMFS_REAL_HOME:-/home/ubuntu}"     # where semfs creds live (run sets HOME=workdir)
+FMT="$(dirname "$(readlink -f "$0")")/_fmt.py"
+
+printf '[%s] rg argv: %s\n' "$(date -u +%H:%M:%S)" "$*" >> "$LOG" 2>/dev/null || true
+
+# ── parse args ───────────────────────────────────────────────────────────────
+# Determine: search pattern, search path, output mode, and whether this is a
+# file-enumeration call (which we never route). Flags that consume a value must
+# skip that value so it isn't mistaken for the pattern/path.
+declare -A TAKESARG=(
+  [-e]=1 [--regexp]=1 [-f]=1 [--file]=1 [-g]=1 [--glob]=1 [--iglob]=1
+  [-t]=1 [--type]=1 [--type-not]=1 [-m]=1 [--max-count]=1 [--max-depth]=1
+  [-A]=1 [-B]=1 [-C]=1 [--context]=1 [--colors]=1 [-M]=1 [--max-columns]=1
+  [--sort]=1 [--sortr]=1 [--pre]=1 [-j]=1 [--threads]=1 [--ignore-file]=1 [-d]=1
+)
+pattern=""; have_pattern=0; searchpath=""
+mode="content"; want_json=0; enumerate=0
+args=("$@"); n=${#args[@]}; i=0
+while (( i < n )); do
+  a="${args[$i]}"
+  case "$a" in
+    --files)                                   enumerate=1 ;;
+    -l|--files-with-matches|--files-without-match) mode="files" ;;
+    -c|--count|--count-matches)                mode="count" ;;
+    --json)                                    want_json=1 ;;
+    -e|--regexp)                               (( i++ )); pattern="${args[$i]:-}"; have_pattern=1 ;;
+    --)                                        ;;
+    -*)  [[ -n "${TAKESARG[$a]:-}" ]] && (( i++ )) ;;
+    *)   if (( have_pattern == 0 )); then pattern="$a"; have_pattern=1
+         elif [[ -z "$searchpath" && -e "$a" ]]; then searchpath="$a"; fi ;;
+  esac
+  (( i++ ))
+done
+[[ -z "$searchpath" ]] && searchpath="$PWD"
+
+# `rg --files` = enumerate files (no content match) → never semantic.
+[[ $enumerate -eq 1 || $have_pattern -eq 0 ]] && exec "$REAL_RG" "$@"
+
+# ── is searchpath under a semfs mount? (pure-bash marker parse; no grep/cut) ──
+abspath="$(readlink -f "$searchpath" 2>/dev/null || echo "$searchpath")"
+mountpath=""; dir="$abspath"
+for ((depth=0; depth<40; depth++)); do
+  if [[ -f "$dir/.semfs" ]]; then
+    while IFS= read -r ln || [[ -n "$ln" ]]; do
+      [[ "$ln" == mount_path=* ]] || continue
+      mp="${ln#mount_path=}"; mp="$(readlink -f "$mp" 2>/dev/null || echo "$mp")"
+      [[ "$abspath" == "$mp" || "$abspath" == "$mp"/* ]] && mountpath="$mp"
+    done < "$dir/.semfs"
+  fi
+  [[ -n "$mountpath" ]] && break
+  parent="$(dirname "$dir")"; [[ "$parent" == "$dir" ]] && break; dir="$parent"
+done
+[[ -z "$mountpath" ]] && exec "$REAL_RG" "$@"
+
+# ── route to semfs grep and re-emit in the requested rg mode ─────────────────
+printf '[%s]  -> ROUTING to semfs grep: mode=%s json=%s q=%q path=%q\n' \
+  "$(date -u +%H:%M:%S)" "$mode" "$want_json" "$pattern" "$searchpath" >> "$LOG" 2>/dev/null || true
+if out="$(HOME="$SEMFS_HOME" "$SEMFS_BIN" grep "$pattern" "$searchpath" 2>>"$LOG")"; then
+  printf '%s\n' "$out" | python3 "$FMT" --mode "$mode" --json "$want_json" --mount "$mountpath" --pattern "$pattern"
+  exit 0
+fi
+printf '[%s]  semfs grep FAILED, falling back to real rg\n' "$(date -u +%H:%M:%S)" >> "$LOG" 2>/dev/null || true
+exec "$REAL_RG" "$@"

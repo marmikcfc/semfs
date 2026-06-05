@@ -212,6 +212,18 @@ def _mount_semfs(*, work_dir: str, container_tag: str, memory_paths: Optional[st
     cmd = [_semfs_bin(), "mount", container_tag, "--path", os.path.abspath(work_dir)]
     if _truthy(os.environ.get("SEMFS_NO_SYNC"), default=False):
         cmd.append("--no-sync")
+    if _truthy(os.environ.get("SEMFS_NO_PUSH"), default=False):
+        cmd.append("--no-push")
+    if _truthy(os.environ.get("SEMFS_CLEAN"), default=False):
+        cmd.append("--clean")
+    # `semfs mount` aborts if the daemon makes no startup progress for
+    # --startup-timeout seconds (default 30). Local-model indexing embeds files
+    # on import in a silent, CPU-bound phase that easily exceeds 30s, so raise it
+    # for local runs via SEMFS_STARTUP_TIMEOUT_SEC. Keep it <= SEMFS_MOUNT_TIMEOUT_SEC
+    # (the subprocess timeout) or the subprocess kills mount first.
+    startup_to = os.environ.get("SEMFS_STARTUP_TIMEOUT_SEC")
+    if startup_to:
+        cmd.extend(["--startup-timeout", startup_to])
     if memory_paths is not None:
         cmd.extend(["--memory-paths", memory_paths])
     return _run_cmd(cmd, cwd=os.path.abspath(work_dir), timeout_s=mount_timeout)
@@ -575,18 +587,23 @@ def _path_is_dead_or_mounted(path: str) -> bool:
 
 
 def _force_clear_mount(work_dir: str) -> bool:
-    """semfs unmount can leave an orphaned kernel FUSE entry (daemon gone, mount
-    still registered → ENOTCONN). Restore would write into a dead mount, so clear
-    it first. Returns True if a clear was attempted and the path is now usable."""
+    """semfs unmount tears the daemon down ASYNCHRONOUSLY, briefly leaving an
+    orphaned FUSE entry (daemon gone, mount still registered → ENOTCONN). A single
+    fusermount3 -u can race that teardown and fail to stick, so retry in a short
+    loop until the path is a real, usable directory. Returns True if cleared."""
     if not _path_is_dead_or_mounted(work_dir):
         return False
-    for cmd in (["fusermount3", "-u", work_dir], ["fusermount", "-u", work_dir], ["umount", work_dir]):
-        try:
-            subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
-        except Exception:
-            continue
+    for _attempt in range(20):
         if not _path_is_dead_or_mounted(work_dir):
             return True
+        for cmd in (["fusermount3", "-u", work_dir], ["fusermount", "-u", work_dir], ["umount", work_dir]):
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+            except Exception:
+                continue
+            if not _path_is_dead_or_mounted(work_dir):
+                return True
+        time.sleep(1)
     return not _path_is_dead_or_mounted(work_dir)
 
 

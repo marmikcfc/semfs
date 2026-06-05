@@ -86,11 +86,25 @@ def _parse_usage_from_stdout(stdout_text: str) -> Tuple[Dict[str, int], Optional
             continue
         pt = u.get("input_tokens") if isinstance(u.get("input_tokens"), int) else u.get("prompt_tokens")
         ct = u.get("output_tokens") if isinstance(u.get("output_tokens"), int) else u.get("completion_tokens")
+        cw = u.get("cache_creation_input_tokens")
+        cr = u.get("cache_read_input_tokens")
         if isinstance(pt, int):
             usage_total["prompt_tokens"] += pt
         if isinstance(ct, int):
             usage_total["completion_tokens"] += ct
-    usage_total["total_tokens"] = usage_total["total_tokens"] or (usage_total["prompt_tokens"] + usage_total["completion_tokens"])
+        if isinstance(cw, int):
+            usage_total["cache_write"] += cw
+        if isinstance(cr, int):
+            usage_total["cache_read"] += cr
+    # NOTE: input_tokens (prompt_tokens) is the UNCACHED slice only. With prompt
+    # caching on, the bulk of the prompt lands in cache_read/cache_write, so the
+    # true total input = prompt_tokens + cache_write + cache_read.
+    usage_total["total_tokens"] = (
+        usage_total["prompt_tokens"]
+        + usage_total["cache_write"]
+        + usage_total["cache_read"]
+        + usage_total["completion_tokens"]
+    )
     return usage_total, provider, model
 
 

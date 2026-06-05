@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# semfs grep shim — for Claude Code's Bash tool (`grep PATTERN PATH`).
+# Same idea as the rg shim: a flagless-ish content search whose path is under a
+# semfs mount routes to `semfs grep`; everything else (flags, pipes/stdin, paths
+# outside a mount) passes through to the real grep. Mirrors `semfs init`'s zsh
+# wrapper, but as a PATH executable so non-interactive bash honours it too.
+set -uo pipefail
+
+LOG="${SEMFS_SHIM_LOG:-/tmp/semfs-shim.log}"
+REAL_GREP="${SEMFS_REAL_GREP:-/usr/bin/grep}"
+SEMFS_BIN="${SEMFS_BIN:-/home/ubuntu/.local/bin/semfs}"
+SEMFS_HOME="${SEMFS_REAL_HOME:-/home/ubuntu}"
+
+printf '[%s] grep argv: %s\n' "$(date -u +%H:%M:%S)" "$*" >> "$LOG" 2>/dev/null || true
+
+# Any flag → literal grep (semantic doesn't understand grep flags). Also bail to
+# real grep if stdin is piped (no path to scope a mount to).
+for a in "$@"; do [[ "$a" == -* && "$a" != "--" ]] && exec "$REAL_GREP" "$@"; done
+[[ ! -t 0 ]] && exec "$REAL_GREP" "$@"
+
+# args: PATTERN PATH...
+pattern="${1:-}"; shift || true
+searchpath="${1:-$PWD}"
+abspath="$(readlink -f "$searchpath" 2>/dev/null || echo "$searchpath")"
+
+is_mount=0; dir="$abspath"
+for ((depth=0; depth<40; depth++)); do
+  if [[ -f "$dir/.semfs" ]]; then
+    # Pure-bash marker parse — NO external grep/cut here, or it would resolve to
+    # this shim (semfs-shims is first on PATH) and recurse into itself.
+    while IFS= read -r ln || [[ -n "$ln" ]]; do
+      [[ "$ln" == mount_path=* ]] || continue
+      mp="${ln#mount_path=}"
+      mp="$(readlink -f "$mp" 2>/dev/null || echo "$mp")"
+      [[ "$abspath" == "$mp" || "$abspath" == "$mp"/* ]] && is_mount=1
+    done < "$dir/.semfs"
+  fi
+  [[ $is_mount -eq 1 ]] && break
+  parent="$(dirname "$dir")"; [[ "$parent" == "$dir" ]] && break; dir="$parent"
+done
+
+if [[ -n "$pattern" && $is_mount -eq 1 ]]; then
+  printf '[%s]  -> ROUTING grep to semfs grep: q=%q path=%q\n' "$(date -u +%H:%M:%S)" "$pattern" "$searchpath" >> "$LOG" 2>/dev/null || true
+  if out="$(HOME="$SEMFS_HOME" "$SEMFS_BIN" grep "$pattern" "$searchpath" 2>>"$LOG")"; then
+    printf '%s\n' "$out"; exit 0
+  fi
+fi
+exec "$REAL_GREP" "$pattern" "$searchpath"
