@@ -277,6 +277,18 @@ impl PgVectorStore {
 
     /// Chunk → embed → write chunks/edges atomically; re-index replaces by path.
     pub async fn index(&self, ino: u64, filepath: &str, content: &str) -> anyhow::Result<()> {
+        // Bound content per file before chunking (see chunk::MAX_INDEX_BYTES) so a
+        // single large file can't drive unbounded chunks/embeds. Source-independent.
+        let full_len = content.len();
+        let content = chunk::cap_index_content(content);
+        if content.len() < full_len {
+            tracing::warn!(
+                filepath,
+                full_len,
+                capped = content.len(),
+                "content exceeds index cap; indexing head only (partial)"
+            );
+        }
         let chunks = chunk::recursive_chunks(content, &chunk::ChunkOptions::default());
         let vectors = self.embedder.embed(&chunks)?;
         let now = now_ms();
@@ -472,7 +484,7 @@ impl SemanticIndex for PgVectorStore {
         // and `_` in real paths as wildcards and over-match.
         let scope = filepath.map(|p| p.to_string());
 
-        let mut by_file: HashMap<String, (String, f64)> = HashMap::new();
+        let mut by_file: HashMap<String, rank::FileAcc> = HashMap::new();
         // filepath -> the representative chunk's row id, captured at retrieval.
         // Used in phase 2 to detect a concurrent same-path reindex (new ids), so
         // we never return a snippet/score from pre-rewrite content.
@@ -497,7 +509,7 @@ impl SemanticIndex for PgVectorStore {
             for (i, row) in rows.iter().enumerate() {
                 let (id, fp): (i64, String) = (row.get(0), row.get(1));
                 rep_chunk.entry(fp.clone()).or_insert(id);
-                rank::rrf_bump(&mut by_file, fp, row.get(2), i);
+                rank::rrf_bump(&mut by_file, fp, row.get(2), i, rank::Lane::Text);
             }
 
             // Keyword (Postgres FTS). Fail-soft — vector hits stand.
@@ -519,7 +531,7 @@ impl SemanticIndex for PgVectorStore {
                 for (i, row) in rows.iter().enumerate() {
                     let (id, fp): (i64, String) = (row.get(0), row.get(1));
                     rep_chunk.entry(fp.clone()).or_insert(id);
-                    rank::rrf_bump(&mut by_file, fp, row.get(2), i);
+                    rank::rrf_bump(&mut by_file, fp, row.get(2), i, rank::Lane::Fts);
                 }
             }
         }
@@ -652,7 +664,7 @@ impl crate::cache::LocalIndexer for PgVectorStore {
 #[cfg(all(test, feature = "pg-local"))]
 mod tests {
     use super::*;
-    use crate::embed::HashEmbedder;
+    use crate::embed::StubEmbedder;
 
     /// Serializes pglite server *startup*: parallel `temporary()` servers race
     /// while first populating pglite-oxide's SHARED on-disk template/extension
@@ -680,7 +692,7 @@ mod tests {
         let server = pg();
         let llm = Arc::new(crate::llm::LlmClient::openrouter("test-key".into()));
         let store =
-            PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
+            PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
                 .await
                 .unwrap()
                 .with_graph_extractor(llm);
@@ -697,7 +709,7 @@ mod tests {
     #[tokio::test]
     async fn pg_index_search_and_rename() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
+        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
             .await
             .expect("connect + schema");
 
@@ -743,14 +755,14 @@ mod tests {
 
         // alice indexes /README.md, then releases her connection.
         {
-            let a = PgVectorStore::connect(&url, "alice", Arc::new(HashEmbedder::new(384)))
+            let a = PgVectorStore::connect(&url, "alice", Arc::new(StubEmbedder::new(384)))
                 .await
                 .unwrap();
             a.index(2, "/README.md", "alice alpha credential login secret").await.unwrap();
         }
         // bob indexes the SAME path with different content.
         {
-            let b = PgVectorStore::connect(&url, "bob", Arc::new(HashEmbedder::new(384)))
+            let b = PgVectorStore::connect(&url, "bob", Arc::new(StubEmbedder::new(384)))
                 .await
                 .unwrap();
             b.index(2, "/README.md", "bob banana bread recipe walnuts").await.unwrap();
@@ -762,7 +774,7 @@ mod tests {
         // alice's row survived bob's write to the same path, and her remove does
         // not touch bob's.
         {
-            let a = PgVectorStore::connect(&url, "alice", Arc::new(HashEmbedder::new(384)))
+            let a = PgVectorStore::connect(&url, "alice", Arc::new(StubEmbedder::new(384)))
                 .await
                 .unwrap();
             let ha = a.search("credential login", None).await.unwrap();
@@ -772,7 +784,7 @@ mod tests {
             assert!(!a.is_searchable().await, "alice's index now empty");
         }
         {
-            let b = PgVectorStore::connect(&url, "bob", Arc::new(HashEmbedder::new(384)))
+            let b = PgVectorStore::connect(&url, "bob", Arc::new(StubEmbedder::new(384)))
                 .await
                 .unwrap();
             assert!(b.is_searchable().await, "bob untouched by alice's remove");
@@ -786,7 +798,7 @@ mod tests {
     #[tokio::test]
     async fn pg_scoped_search_survives_crowding() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
+        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
             .await
             .expect("connect");
         for i in 0..100 {
@@ -825,7 +837,7 @@ mod tests {
     #[tokio::test]
     async fn pg_scoped_search_treats_like_wildcards_literally() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
+        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
             .await
             .expect("connect");
         store
@@ -860,14 +872,14 @@ mod tests {
     #[tokio::test]
     async fn pg_connect_rejects_dimension_drift() {
         let server = pg();
-        let first = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
+        let first = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
             .await
             .expect("first connect creates vector(384)");
         // Close the connection so the single-connection server is free.
         drop(first);
 
         let mismatched =
-            PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(256))).await;
+            PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(256))).await;
         assert!(
             mismatched.is_err(),
             "connect must reject a 256-d embedder against an existing vector(384) table"
@@ -898,7 +910,7 @@ mod tests {
         }
 
         let server = pg();
-        let first = PgVectorStore::connect(&server.database_url(), "t", Arc::new(HashEmbedder::new(384)))
+        let first = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
             .await
             .expect("first connect stamps identity hash:384");
         drop(first);

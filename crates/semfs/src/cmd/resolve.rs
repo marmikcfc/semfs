@@ -10,11 +10,18 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use semfs_core::embed::{Embedder, EmbeddingModel, HashEmbedder, LocalEmbedder, OpenAiEmbedder};
+use semfs_core::embed::{Embedder, EmbeddingModel, LocalEmbedder, OpenAiEmbedder};
 use semfs_core::rerank::{CohereReranker, LocalReranker, RelaceReranker, Reranker, RerankerModel};
 
 /// The fastembed-rs registry models we standardize on (project goal).
-const TEXT_EMBED_MODEL: EmbeddingModel = EmbeddingModel::SnowflakeArcticEmbedS; // 384d
+// Multilingual text embedder (384d — same dim as the prior English-only
+// arctic-embed-s, so it's a drop-in for the vec0 schema; but vectors are
+// model-specific, so a swap REQUIRES a fresh seed). The corpus is heavily
+// non-English (Chinese) and arctic-embed-s gave poor cross-lingual recall —
+// English code/roadmap files outranked Chinese sales data. The reranker below is
+// already multilingual, so retrieval was the weak link. See
+// tickets/local-ranking-precision-vs-supermemory.
+const TEXT_EMBED_MODEL: EmbeddingModel = EmbeddingModel::MultilingualE5Small; // 384d, multilingual
 const CODE_EMBED_MODEL: EmbeddingModel = EmbeddingModel::JinaEmbeddingsV2BaseCode; // 768d
 const RERANK_MODEL: RerankerModel = RerankerModel::JINARerankerV2BaseMultiligual;
 /// The int8-quantized ONNX of the reranker (smaller/faster than the registry's
@@ -23,20 +30,20 @@ const RERANK_ONNX: &str = "onnx/model_int8.onnx";
 /// Pinned commit of `jinaai/jina-reranker-v2-base-multilingual` so the int8 ONNX
 /// + tokenizer are reproducible (an HF HEAD update can't swap them underneath us).
 const RERANK_REV: &str = "9cfeff2df7d40d1b78e75e5e9cebec92a99813c9";
-/// Cloud OpenAI embedding fallback dims (text-embedding-3-small) + hash floor dims.
+/// Cloud OpenAI embedding fallback dims (text-embedding-3-small).
 const CLOUD_OPENAI_DIMS: usize = 1536;
-const HASH_DIMS: usize = 384;
 
 /// Signals the resolver reads from the environment.
 #[derive(Debug, Clone, Default)]
 pub struct ResolveEnv {
-    /// `SEMFS_EMBED_BACKEND`: `local` (default) | `openai` | `openrouter` | `hash`.
+    /// `SEMFS_EMBED_BACKEND`: `local` (default) | `openai` | `openrouter`.
     pub embed_backend: Option<String>,
     /// `SEMFS_RERANK_BACKEND`: `local` (default) | `cohere` | `relace` | `none`.
     pub rerank_backend: Option<String>,
-    /// `SEMFS_STORAGE_BACKEND`: `sqlite` (default) | `pgvector`. Where vectors are
-    /// stored + searched. `pgvector` requires the binary to be built with the
-    /// `pg` feature and `SEMFS_PG_URL` to be set.
+    /// `SEMFS_STORAGE_BACKEND`: `sqlite` (default) | `pgvector` | `pglite` | `cloud`.
+    /// Where search happens. `cloud` = no local index (Supermemory embeds + searches);
+    /// `pgvector` requires the `pg` feature and `SEMFS_PG_URL`; `pglite` the `pglite`
+    /// feature. This axis — not the embedder — decides local vs. cloud search.
     pub storage_backend: Option<String>,
     /// `SEMFS_PG_URL`: Postgres connection string for the pgvector backend.
     /// Only read under the `pg` feature (the pgvector builder).
@@ -68,7 +75,6 @@ pub enum EmbedChoice {
     Local,
     CloudOpenAi,
     CloudOpenRouter,
-    Hash,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -79,10 +85,9 @@ pub enum RerankChoice {
     None,
 }
 
-/// Embedder choice — local fastembed registry by default; cloud/hash opt-in.
+/// Embedder choice — local fastembed registry by default; cloud providers opt-in.
 pub fn choose_embed(env: &ResolveEnv) -> EmbedChoice {
     match env.embed_backend.as_deref() {
-        Some("hash") => EmbedChoice::Hash,
         Some("openai") => EmbedChoice::CloudOpenAi,
         Some("openrouter") => EmbedChoice::CloudOpenRouter,
         _ => EmbedChoice::Local,
@@ -99,14 +104,22 @@ pub fn choose_rerank(env: &ResolveEnv) -> RerankChoice {
     }
 }
 
-/// True when a real (non-hash) embedder is configured — i.e. local indexing is
-/// worth enabling.
-pub fn local_indexing_enabled(env: &ResolveEnv) -> bool {
-    choose_embed(env) != EmbedChoice::Hash
-}
-
 /// Build the resolved TEXT embedder.
 pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
+    // `hash` was a fake embedder used as a cloud-routing hack — removed. Reject it
+    // explicitly (rather than silently defaulting to local, which would change a
+    // `hash` user's runtime backend with no signal) and point at the replacement.
+    // This fires only where a real local embedder is actually needed: a `hash`
+    // mount on the default SQLite backend fails open to cloud (the old behavior,
+    // now with a clear log); `cloud` storage never reaches here.
+    if env.embed_backend.as_deref() == Some("hash") {
+        anyhow::bail!(
+            "SEMFS_EMBED_BACKEND=hash was removed (it was a fake, no-semantics embedder \
+             used only to route search to the cloud). For cloud search set \
+             SEMFS_STORAGE_BACKEND=cloud; otherwise choose a real embedder \
+             (local|openai|openrouter)."
+        );
+    }
     // Non-silent default: if we're defaulting to local registry models while a
     // cloud key is present (and no backend was explicitly chosen), say so — local
     // is the intended default but the switch shouldn't surprise a key-only config.
@@ -134,7 +147,6 @@ pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
                 anyhow::anyhow!("SEMFS_EMBED_BACKEND=openrouter but OPENROUTER_API_KEY not set")
             })?,
         )),
-        EmbedChoice::Hash => Arc::new(HashEmbedder::new(HASH_DIMS)),
     })
 }
 
@@ -179,7 +191,7 @@ pub fn build_reranker(env: &ResolveEnv) -> Result<Option<Arc<dyn Reranker>>> {
     })
 }
 
-/// Where the local vector index is stored + searched.
+/// Where search happens. This — NOT the embedder — is the local-vs-cloud router.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageChoice {
     Sqlite,
@@ -187,6 +199,9 @@ pub enum StorageChoice {
     Pgvector,
     /// Embedded pglite (shipped in-box), persisting under the cache dir.
     Pglite,
+    /// No local index — Supermemory stores + searches (it embeds query + docs).
+    /// The mount builds no local index; `grep` routes to `CloudIndex`.
+    Cloud,
 }
 
 impl StorageChoice {
@@ -197,7 +212,16 @@ impl StorageChoice {
             StorageChoice::Sqlite => "sqlite",
             StorageChoice::Pgvector => "pgvector",
             StorageChoice::Pglite => "pglite",
+            StorageChoice::Cloud => "cloud",
         }
+    }
+
+    /// True for every backend that builds + searches a LOCAL index (so it needs a
+    /// real local embedder). False only for `Cloud`, which has no local index. This
+    /// is the routing predicate that replaced the old embedder-sniffing
+    /// `local_indexing_enabled` (see tickets/remove-hash-embedder).
+    pub fn is_local(self) -> bool {
+        !matches!(self, StorageChoice::Cloud)
     }
 }
 
@@ -207,6 +231,7 @@ pub fn storage_choice_from(s: Option<&str>) -> StorageChoice {
     match s {
         Some("pgvector") | Some("pg") | Some("postgres") => StorageChoice::Pgvector,
         Some("pglite") | Some("embedded") => StorageChoice::Pglite,
+        Some("cloud") | Some("supermemory") => StorageChoice::Cloud,
         _ => StorageChoice::Sqlite,
     }
 }
@@ -215,23 +240,6 @@ pub fn storage_choice_from(s: Option<&str>) -> StorageChoice {
 /// pglite opt-in via `SEMFS_STORAGE_BACKEND`.
 pub fn choose_storage(env: &ResolveEnv) -> StorageChoice {
     storage_choice_from(env.storage_backend.as_deref())
-}
-
-/// An EXPLICITLY-selected external/embedded backend (pgvector/pglite) is the sole
-/// search path for its mount and is meaningless with the `hash` floor embedder
-/// (no semantic vectors). If the config pairs such a backend with `hash`, return
-/// the backend name so the caller can FAIL the mount with a clear error rather
-/// than silently mounting with no usable index (which would degrade search to
-/// cloud and omit local writes). `None` = the config is fine.
-pub fn explicit_backend_without_embedder(env: &ResolveEnv) -> Option<&'static str> {
-    if local_indexing_enabled(env) {
-        return None; // a real (non-hash) embedder is configured
-    }
-    match choose_storage(env) {
-        StorageChoice::Pgvector => Some("pgvector"),
-        StorageChoice::Pglite => Some("pglite"),
-        StorageChoice::Sqlite => None,
-    }
 }
 
 /// Build a `PgVectorStore` from the resolved embedder + reranker + LLM graph
@@ -303,10 +311,11 @@ fn clear_pglite_dir(data_dir: &std::path::Path, why: &str) -> Result<()> {
 /// Build an EMBEDDED pglite store (shipped in-box, no external Postgres). Only
 /// compiled with the `pglite` feature.
 ///
-/// Lifecycle mirrors the SQLite cache:
+/// Lifecycle:
 /// - **persistent** (default): persists at `cache_dir()/pglite/{org_id}/{container}`,
-///   matching `cache_db_path`, so two orgs reusing the SAME tag on one machine get
-///   PHYSICALLY separate pglite databases. The per-org directory IS the isolation
+///   so two orgs reusing the SAME tag on one machine get PHYSICALLY separate pglite
+///   databases. (The SQLite cache is org-independent — `~/.semfs/<tag>.db` — but
+///   pglite retains its per-org dir.) The per-org directory IS the isolation
 ///   boundary, so the in-DB `container` namespace stays the bare tag (daemon writes
 ///   and IPC search agree; pglite has no direct grep path to disagree). When
 ///   `clean` is set, the directory is wiped before reopening (a "clean" remount
@@ -370,7 +379,9 @@ mod tests {
         let e = ResolveEnv::default();
         assert_eq!(choose_embed(&e), EmbedChoice::Local);
         assert_eq!(choose_rerank(&e), RerankChoice::Local);
-        assert!(local_indexing_enabled(&e));
+        // Default storage is local (SQLite) → a local embedder is needed.
+        assert_eq!(choose_storage(&e), StorageChoice::Sqlite);
+        assert!(choose_storage(&e).is_local());
     }
 
     fn with_embed(backend: &str) -> ResolveEnv {
@@ -385,13 +396,27 @@ mod tests {
             ..Default::default()
         }
     }
+    fn with_storage(backend: &str) -> ResolveEnv {
+        ResolveEnv {
+            storage_backend: Some(backend.into()),
+            ..Default::default()
+        }
+    }
 
     #[test]
-    fn embed_backend_overrides_select_cloud_or_hash() {
-        assert_eq!(choose_embed(&with_embed("hash")), EmbedChoice::Hash);
-        assert!(!local_indexing_enabled(&with_embed("hash")));
+    fn embed_backend_overrides_select_cloud_providers() {
+        // `hash` is gone — only real embedders remain.
         assert_eq!(choose_embed(&with_embed("openrouter")), EmbedChoice::CloudOpenRouter);
         assert_eq!(choose_embed(&with_embed("openai")), EmbedChoice::CloudOpenAi);
+    }
+
+    #[test]
+    fn removed_hash_embedder_is_rejected_with_migration_message() {
+        // The removed `hash` token must NOT silently fall back to a local embedder —
+        // building one fails fast and names the replacement (SEMFS_STORAGE_BACKEND=cloud).
+        let err = build_embedder(&with_embed("hash")).unwrap_err().to_string();
+        assert!(err.contains("SEMFS_STORAGE_BACKEND=cloud"), "got: {err}");
+        assert!(err.contains("was removed"), "got: {err}");
     }
 
     #[test]
@@ -402,47 +427,38 @@ mod tests {
         assert_eq!(choose_rerank(&with_rerank("relace")), RerankChoice::Relace);
     }
 
-    fn with_storage_embed(storage: &str, embed: &str) -> ResolveEnv {
-        ResolveEnv {
-            storage_backend: Some(storage.into()),
-            embed_backend: Some(embed.into()),
-            ..Default::default()
+    #[test]
+    fn storage_choice_parses_all_backends() {
+        assert_eq!(choose_storage(&ResolveEnv::default()), StorageChoice::Sqlite);
+        assert_eq!(choose_storage(&with_storage("sqlite")), StorageChoice::Sqlite);
+        assert_eq!(choose_storage(&with_storage("pgvector")), StorageChoice::Pgvector);
+        assert_eq!(choose_storage(&with_storage("pglite")), StorageChoice::Pglite);
+        assert_eq!(choose_storage(&with_storage("cloud")), StorageChoice::Cloud);
+        // Unknown token falls back to the historical default.
+        assert_eq!(choose_storage(&with_storage("bogus")), StorageChoice::Sqlite);
+    }
+
+    #[test]
+    fn cloud_is_the_only_non_local_storage() {
+        // The routing predicate: every backend builds a local index EXCEPT cloud.
+        assert!(StorageChoice::Sqlite.is_local());
+        assert!(StorageChoice::Pgvector.is_local());
+        assert!(StorageChoice::Pglite.is_local());
+        assert!(!StorageChoice::Cloud.is_local());
+    }
+
+    #[test]
+    fn storage_token_round_trips_through_marker() {
+        // The daemon persists `as_str()` in the `.semfs` marker; `grep` recovers it
+        // via `storage_choice_from`. Cloud must survive the round-trip so grep routes
+        // a cloud mount to the cloud index.
+        for c in [
+            StorageChoice::Sqlite,
+            StorageChoice::Pgvector,
+            StorageChoice::Pglite,
+            StorageChoice::Cloud,
+        ] {
+            assert_eq!(storage_choice_from(Some(c.as_str())), c, "round-trip {c:?}");
         }
-    }
-
-    #[test]
-    fn explicit_backend_with_hash_is_a_config_error() {
-        // pgvector/pglite + hash floor → contradiction, surface the backend name.
-        assert_eq!(
-            explicit_backend_without_embedder(&with_storage_embed("pgvector", "hash")),
-            Some("pgvector")
-        );
-        assert_eq!(
-            explicit_backend_without_embedder(&with_storage_embed("pglite", "hash")),
-            Some("pglite")
-        );
-    }
-
-    #[test]
-    fn explicit_backend_with_real_embedder_is_ok() {
-        assert_eq!(
-            explicit_backend_without_embedder(&with_storage_embed("pgvector", "local")),
-            None
-        );
-        assert_eq!(
-            explicit_backend_without_embedder(&with_storage_embed("pglite", "openai")),
-            None
-        );
-    }
-
-    #[test]
-    fn sqlite_with_hash_is_not_a_config_error() {
-        // Default SQLite + hash is the long-standing "no local index" path, not an
-        // error — it stays fail-open.
-        assert_eq!(
-            explicit_backend_without_embedder(&with_storage_embed("sqlite", "hash")),
-            None
-        );
-        assert_eq!(explicit_backend_without_embedder(&with_embed("hash")), None);
     }
 }

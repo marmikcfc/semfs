@@ -4,17 +4,19 @@ use anyhow::Result;
 use clap::Args as ClapArgs;
 use semfs_core::backend::{CloudIndex, SemanticIndex, SqliteVecStore};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Resolve the search backend — **config-driven, no flag, no network.**
 ///
-/// Uses the container's LOCAL SQLite index (full L1–L5: resolved embedder +
-/// reranker, read-only via `open_existing`) when BOTH hold: the daemon recorded
-/// a cache `db_path` in the `.semfs` marker, and this process can build the
-/// matching embedder (`local_indexing_enabled` — same resolver the daemon used).
-/// Otherwise falls back to the cloud (`CloudIndex`). No `validate_key`, so a
-/// local search needs neither credentials nor connectivity.
+/// Routing keys off the PERSISTED storage backend in the `.semfs` marker
+/// (`StorageChoice::is_local()`), never this process's embedder env. A local
+/// backend (sqlite/pgvector/pglite) uses the container's LOCAL index (full L1–L5:
+/// resolved embedder + reranker, read-only via `open_existing`) when the daemon
+/// recorded a usable `db_path`; the `cloud` backend (and any unusable local index)
+/// falls back to `CloudIndex`. No `validate_key`, so a local search needs neither
+/// credentials nor connectivity.
 ///
 /// Returns `(index, used_local)`. `used_local` lets the caller retry through the
 /// cloud if a local query fails at runtime (e.g. a cloud-backed query embedder
@@ -50,7 +52,10 @@ async fn resolve_index(
         );
     }
 
-    if super::resolve::local_indexing_enabled(&env) {
+    // Route on the mounted STORAGE backend (from the marker), not the embedder env:
+    // a local backend builds/searches a local index, `cloud` goes straight to the
+    // cloud index. `env` below only BUILDS the resolved local store/embedder.
+    if choice.is_local() {
         match choice {
             // Postgres/pgvector storage backend (opt-in via SEMFS_STORAGE_BACKEND).
             // Connects directly to Postgres — no local cache db. Fail-open to cloud.
@@ -97,8 +102,10 @@ async fn resolve_index(
                     }
                 }
             }
-            // Handled above (fail-closed) before the embedder gate.
+            // Handled above (fail-closed) before the storage gate.
             StorageChoice::Pglite => unreachable!("pglite returns early above"),
+            // Cloud is not local — excluded by the `choice.is_local()` gate.
+            StorageChoice::Cloud => unreachable!("cloud is not local; gated out above"),
         }
     }
     // Cloud fallback (Supermemory) — requires a key.
@@ -300,11 +307,49 @@ mod resolve_tests {
     }
 }
 
-fn read_local_or_sidecar(mount: &Path, filepath: &str) -> Option<String> {
+/// Bound on a single line-range file read off the FUSE mount. The line range is
+/// a display nicety — the agent needs `<file>:<chunk>` — but the daemon serves
+/// BOTH the IPC search and the FUSE reads, so under CPU contention a `read()` to
+/// it can block indefinitely. Output formatting must never hang on the mount it
+/// just searched (RCA 2026-06-04-semfs-grep-hangs-post-search-under-load).
+const LINE_RANGE_READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Outcome of a bounded read of one path off the mount.
+enum ReadOutcome {
+    /// Read succeeded.
+    Content(String),
+    /// Read completed but the file isn't present (real path nor sidecar).
+    Missing,
+    /// The read did not return within the budget — the mount is unresponsive.
+    TimedOut,
+}
+
+/// Read `path` to a string with a hard timeout. The blocking `read_to_string`
+/// runs on a throwaway thread; if it doesn't finish in `budget` we return
+/// `TimedOut` and abandon the thread — a hung FUSE read can't be cancelled, but a
+/// short-lived CLI leaking one blocked thread (reaped at process exit) is far
+/// better than hanging the whole grep forever.
+fn read_file_timed(path: PathBuf, budget: Duration) -> ReadOutcome {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(std::fs::read_to_string(&path).ok());
+    });
+    match rx.recv_timeout(budget) {
+        Ok(Some(c)) => ReadOutcome::Content(c),
+        Ok(None) => ReadOutcome::Missing,
+        Err(_) => ReadOutcome::TimedOut,
+    }
+}
+
+/// Read a hit's content (real file, else a transcription sidecar) for line-range
+/// computation, with each read time-bounded. A timeout on the primary read
+/// short-circuits — we don't then pay the budget on five more sidecar reads.
+fn read_local_or_sidecar(mount: &Path, filepath: &str) -> ReadOutcome {
     let stripped = filepath.trim_start_matches('/');
-    let local = mount.join(stripped);
-    if let Ok(c) = std::fs::read_to_string(&local) {
-        return Some(c);
+    match read_file_timed(mount.join(stripped), LINE_RANGE_READ_TIMEOUT) {
+        ReadOutcome::Content(c) => return ReadOutcome::Content(c),
+        ReadOutcome::TimedOut => return ReadOutcome::TimedOut,
+        ReadOutcome::Missing => {}
     }
     for suffix in &[
         ".pdf-transcription.md",
@@ -313,12 +358,16 @@ fn read_local_or_sidecar(mount: &Path, filepath: &str) -> Option<String> {
         ".audio-transcription.md",
         ".webpage-transcription.md",
     ] {
-        let sidecar = mount.join(format!("{stripped}{suffix}"));
-        if let Ok(c) = std::fs::read_to_string(&sidecar) {
-            return Some(c);
+        match read_file_timed(
+            mount.join(format!("{stripped}{suffix}")),
+            LINE_RANGE_READ_TIMEOUT,
+        ) {
+            ReadOutcome::Content(c) => return ReadOutcome::Content(c),
+            ReadOutcome::TimedOut => return ReadOutcome::TimedOut,
+            ReadOutcome::Missing => {}
         }
     }
-    None
+    ReadOutcome::Missing
 }
 
 fn line_range_in_file(file_content: &str, chunk: &str) -> Option<(usize, usize)> {
@@ -593,7 +642,9 @@ pub async fn run(args: Args) -> Result<()> {
             let effective = resp_backend.as_deref().or(backend.as_deref());
             let cloud_safe = matches!(
                 effective.map(|b| storage_choice_from(Some(b))),
-                Some(StorageChoice::Sqlite) | Some(StorageChoice::Pgvector)
+                Some(StorageChoice::Sqlite)
+                    | Some(StorageChoice::Pgvector)
+                    | Some(StorageChoice::Cloud)
             );
             if !cloud_safe || key.is_none() {
                 return Err(anyhow::anyhow!(
@@ -655,7 +706,11 @@ pub async fn run(args: Args) -> Result<()> {
     );
     eprintln!();
 
-    let mut file_cache: HashMap<String, Option<String>> = HashMap::new();
+    let mut file_cache: HashMap<String, ReadOutcome> = HashMap::new();
+    // Circuit breaker: once a line-range read times out (mount starved under the
+    // search load), stop reading and print <file>:<chunk> for all remaining hits —
+    // so the whole grep pays at most one timeout, never hangs.
+    let mut mount_reads_ok = true;
 
     for (i, result) in hits.iter().enumerate() {
         if i > 0 {
@@ -678,16 +733,31 @@ pub async fn run(args: Args) -> Result<()> {
             .replace('\n', "\\n")
             .replace('\r', "\\r");
 
-        let line_range = canonical_mount
-            .as_ref()
-            .zip(result.filepath.as_deref())
-            .and_then(|(cm, path)| {
-                let content = file_cache
-                    .entry(path.to_string())
-                    .or_insert_with(|| read_local_or_sidecar(cm, path))
-                    .as_deref()?;
-                line_range_in_file(content, chunk)
-            });
+        let line_range = if mount_reads_ok {
+            canonical_mount
+                .as_ref()
+                .zip(result.filepath.as_deref())
+                .and_then(|(cm, path)| {
+                    let outcome = file_cache
+                        .entry(path.to_string())
+                        .or_insert_with(|| read_local_or_sidecar(cm, path));
+                    match &*outcome {
+                        ReadOutcome::Content(content) => line_range_in_file(content, chunk),
+                        ReadOutcome::Missing => None,
+                        ReadOutcome::TimedOut => {
+                            // Mount is starved — stop reading; emit chunk-only from here.
+                            mount_reads_ok = false;
+                            eprintln!(
+                                "# mount slow under load; printing <file>:<chunk> \
+                                 without line ranges"
+                            );
+                            None
+                        }
+                    }
+                })
+        } else {
+            None
+        };
 
         if let Some((start, end)) = line_range {
             if start == end {
@@ -705,7 +775,58 @@ pub async fn run(args: Args) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::line_range_in_file;
+    use super::{line_range_in_file, read_file_timed, ReadOutcome};
+    use std::time::Duration;
+
+    /// The core of the fix (RCA 2026-06-04-semfs-grep-hangs-post-search-under-load):
+    /// a blocking read of an unresponsive path must TIME OUT, not hang. A FIFO with
+    /// no writer makes `read_to_string` block in `open()` forever — the bound must
+    /// fire instead of wedging grep's output formatting.
+    #[cfg(unix)]
+    #[test]
+    fn read_file_timed_times_out_on_blocking_fifo() {
+        let dir = std::env::temp_dir().join(format!("semfs_grep_fifo_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("hang.fifo");
+        let _ = std::fs::remove_file(&fifo);
+        let ok = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "mkfifo unavailable");
+
+        let start = std::time::Instant::now();
+        let outcome = read_file_timed(fifo.clone(), Duration::from_millis(200));
+        assert!(
+            matches!(outcome, ReadOutcome::TimedOut),
+            "blocking read must time out"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "timeout did not bound the read"
+        );
+
+        let _ = std::fs::remove_file(&fifo);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn read_file_timed_content_and_missing() {
+        let dir = std::env::temp_dir().join(format!("semfs_grep_read_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.txt");
+        std::fs::write(&f, "hello\nline two\n").unwrap();
+        assert!(matches!(
+            read_file_timed(f, Duration::from_secs(5)),
+            ReadOutcome::Content(c) if c.contains("line two")
+        ));
+        assert!(matches!(
+            read_file_timed(dir.join("nope.txt"), Duration::from_secs(5)),
+            ReadOutcome::Missing
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn verbatim_single_line() {

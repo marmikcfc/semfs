@@ -19,21 +19,102 @@ use crate::rerank::Reranker;
 /// Over-fetch per ranked list before collapsing chunks → files.
 const SEARCH_POOL: usize = 80;
 
+/// Cap on how many RRF candidates feed the L5 cross-encoder rerank. A rerank
+/// pass is O(candidates) and was a ~350% CPU hog under load; the answer is
+/// virtually always in the top RRF candidates, so rerank only the head and let
+/// the long tail keep its RRF order. Bounds per-query rerank cost. (ticket
+/// search-deadline-fails-closed-to-empty, fix #2.)
+const RERANK_CANDIDATES: usize = 50;
+
 /// Cooperative deadline for a single SQLite search. The whole search runs inside
 /// `spawn_blocking`, which Tokio CANNOT cancel — so the daemon's outer
 /// `tokio::time::timeout` only stops WAITING on the result, it can't abort the
-/// blocking work. To stop a timed-out search from later grabbing the shared
-/// `Mutex<Connection>` and blocking other search/index work, the body checks this
-/// deadline at its cancellation points (before taking the connection, before the
-/// blocking rerank) and bails early. Kept at/under `daemon::ipc::SEARCH_TIMEOUT`
-/// (25s) so a search self-aborts around when the daemon gives up on it.
-const SEARCH_DEADLINE: Duration = Duration::from_secs(25);
+/// blocking work. At its cancellation points the search may only ever SHED WORK,
+/// never zero a result that matched: past the deadline it still returns the
+/// retrieved RRF hits but SKIPS the expensive cross-encoder rerank (the stage
+/// worth guarding the shared `Mutex<Connection>` against). Kept STRICTLY UNDER
+/// `daemon::ipc::SEARCH_TIMEOUT` (25s) — by a margin — so the in-search
+/// cooperative degrade (return RRF hits, skip rerank) reliably wins the race
+/// against the daemon's outer hard timeout, which would otherwise cut the search
+/// off with nothing. (RCA 2026-06-04-semfs-grep-hangs-post-search-under-load #3.)
+const SEARCH_DEADLINE: Duration = Duration::from_secs(20);
 /// When a query is scoped to a path prefix, vec0 KNN can't filter on the joined
 /// `filepath` (it only post-filters the global k-nearest), so we raise `k` to
 /// this bound and GLOB-filter, ensuring in-scope hits aren't crowded out of the
 /// pool by out-of-scope files. 4096 is sqlite-vec's hard `k` ceiling; beyond
 /// that the exact-GLOB FTS lane still surfaces in-scope lexical matches.
 const SCOPED_KNN_POOL: usize = 4096;
+
+/// Knob B — how many ranked files we RETURN (Supermemory's `/v4/search` returns
+/// ~10 by default). The rerank POOL upstream stays at `RERANK_CANDIDATES`; this
+/// caps only the handed-back set so the agent isn't flooded with thin hits, and
+/// so we reconstruct whole-doc text for just the top-N. Override `SEMFS_RESULT_LIMIT`.
+const RESULT_LIMIT: usize = 10;
+
+/// Knob B — per-document byte ceiling on the whole-document text we attach per
+/// returned hit. We RANK on the matched chunk but RETURN the whole document
+/// (reconstructed from `chunks` — the raw file on the mount is binary for
+/// Office/PDF, so its text exists only here). Bounds the IPC payload: 10 docs ×
+/// this is ~Supermemory's footprint. The full file is always still on the mount.
+const DOC_RETURN_CAP: usize = 64 * 1024;
+
+/// `SEMFS_RESULT_LIMIT` override → how many hits to return (falls back to
+/// `RESULT_LIMIT`). A non-positive / unparsable value is ignored.
+fn result_limit() -> usize {
+    std::env::var("SEMFS_RESULT_LIMIT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(RESULT_LIMIT)
+}
+
+/// Largest index `<= max` that is a UTF-8 char boundary, so `&s[..n]` stays
+/// valid. Critical for the Chinese corpus (3-byte chars) — a mid-char cut panics.
+fn floor_char_boundary(s: &str, max: usize) -> usize {
+    if s.len() <= max {
+        return s.len();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
+/// Stitch a file's ordered chunks back into its (capped) document text. Chunks
+/// are verbatim, contiguous windows with a fixed word overlap, so consecutive
+/// chunks share a suffix/prefix span; we drop the largest such overlap to avoid
+/// duplicating it. Result is capped to `DOC_RETURN_CAP` on a char boundary.
+fn stitch_chunks(parts: &[String]) -> String {
+    let mut out = String::new();
+    for part in parts {
+        if out.is_empty() {
+            out.push_str(part);
+            continue;
+        }
+        // Largest k (on char boundaries) where the tail of `out` equals the head
+        // of `part` — the verbatim chunk overlap. Bounded so cost stays linear-ish.
+        let max = out.len().min(part.len()).min(8192);
+        let mut overlap = 0;
+        let mut k = max;
+        while k > 0 {
+            if part.is_char_boundary(k)
+                && out.is_char_boundary(out.len() - k)
+                && out[out.len() - k..] == part[..k]
+            {
+                overlap = k;
+                break;
+            }
+            k -= 1;
+        }
+        out.push_str(&part[overlap..]);
+        if out.len() >= DOC_RETURN_CAP {
+            break;
+        }
+    }
+    out.truncate(floor_char_boundary(&out, DOC_RETURN_CAP));
+    out
+}
 
 /// Local, offline semantic index over the SQLite cache.
 ///
@@ -429,6 +510,20 @@ impl SqliteVecStore {
             return Ok(());
         }
 
+        // Bound content BEFORE chunking so one large file (text, code, or
+        // extracted) can't produce unbounded chunks → embed grind that stalls
+        // the whole import (see chunk::MAX_INDEX_BYTES). Source-independent: this
+        // guards the UTF-8 text path too, not just extraction.
+        let full_len = content.len();
+        let content = super::chunk::cap_index_content(content);
+        if content.len() < full_len {
+            tracing::warn!(
+                filepath,
+                full_len,
+                capped = content.len(),
+                "content exceeds index cap; indexing head only (partial)"
+            );
+        }
         let chunks = super::chunk::recursive_chunks(content, &super::chunk::ChunkOptions::default());
         // Route code-like files to the code embedder + `vchunks_code` lane when a
         // code embedder is attached; everything else uses the text lane.
@@ -702,9 +797,14 @@ impl SemanticIndex for SqliteVecStore {
         let store = self.clone();
         let query = query.to_string();
         let filepath = filepath.map(|s| s.to_string());
-        tokio::task::spawn_blocking(move || store.search_blocking(&query, filepath.as_deref()))
-            .await
-            .map_err(|e| anyhow::anyhow!("sqlite search task failed: {e}"))?
+        // Compute the cooperative deadline here (passed into the blocking body so
+        // it is also injectable in tests).
+        let deadline = Instant::now() + SEARCH_DEADLINE;
+        tokio::task::spawn_blocking(move || {
+            store.search_blocking(&query, filepath.as_deref(), deadline)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("sqlite search task failed: {e}"))?
     }
 }
 
@@ -715,17 +815,20 @@ impl SqliteVecStore {
         &self,
         query: &str,
         filepath: Option<&str>,
+        deadline: Instant,
     ) -> anyhow::Result<Vec<SearchHit>> {
         // Cooperative cancellation: the daemon's outer timeout can't abort this
-        // blocking task, so we self-abort at the points where a timed-out search
-        // would otherwise take/hold the SHARED connection and starve other work.
-        let deadline = Instant::now() + SEARCH_DEADLINE;
+        // blocking task, so at the deadline we shed the EXPENSIVE work (rerank) but
+        // still return the candidates we already have — the deadline may only ever
+        // reduce work, never zero a result that matched (see the bail vs. degrade
+        // note below). `deadline` is passed in so it's injectable in tests.
 
         let qvec = self
             .embedder
             .embed(&[query.to_string()])?
             .pop()
             .unwrap_or_default();
+        let qvec_len = qvec.len();
         let qblob = vec_to_blob(&qvec);
         // Embed the query in the CODE vector space too — but only when the code
         // lane is ACTIVE (embedder attached + identity matches the stamp), so a
@@ -745,20 +848,31 @@ impl SqliteVecStore {
         let scope = filepath.map(|p| p.to_string());
 
         // filepath -> (representative chunk, summed RRF score)
-        let mut by_file: HashMap<String, (String, f64)> = HashMap::new();
+        let mut by_file: HashMap<String, super::rank::FileAcc> = HashMap::new();
+        // Per-stage candidate counters for L1→L7 search-pipeline observability:
+        // when a search returns empty we want to see EXACTLY which stage zeroed it
+        // (embed / vec / code / fts / rerank / phase-2 revalidation). See RCA
+        // 2026-06-04-semfs-codex-clean-seed-timeout-poor-local-search-recall.
+        let (mut vec_n, mut code_n, mut fts_n) = (0usize, 0usize, 0usize);
         // filepath -> the representative chunk's row id, captured at retrieval.
         // Used in phase 2 to detect a concurrent same-path reindex (which assigns
         // new ids), so we never return a snippet/score from pre-rewrite content.
         let mut rep_chunk: HashMap<String, i64> = HashMap::new();
 
-        // Cancellation point: if embedding already blew the deadline (e.g. a slow
-        // cloud embed that ran up to the HTTP timeout), bail BEFORE taking the
-        // shared connection — a search the client already abandoned must not now
-        // block other search/index work on the daemon's only connection.
+        // Deadline degradation (NOT a bail): if the query-embed already blew the
+        // deadline under CPU starvation, we still hold a usable query vector, and
+        // retrieval (vec/code/fts KNN) is cheap bounded SQLite — far short of the
+        // multi-second rerank the deadline really guards against. Proceeding and
+        // returning best-effort RRF hits is strictly better than failing CLOSED to
+        // empty: an agent that sees "0 results" for a query that DOES match
+        // abandons semantic search entirely. The expensive rerank below is the
+        // stage actually skipped past the deadline — mirroring its own degrade
+        // path. (RCA 2026-06-04-…-search-deadline-fails-closed-to-empty.)
         if Instant::now() >= deadline {
-            anyhow::bail!(
-                "sqlite search exceeded its {}s deadline before acquiring the connection; \
-                 aborting so it can't block other work",
+            tracing::warn!(
+                "sqlite search exceeded its {}s deadline during query-embed; \
+                 returning best-effort RRF hits (rerank will be skipped) rather \
+                 than failing closed to empty",
                 SEARCH_DEADLINE.as_secs()
             );
         }
@@ -781,7 +895,8 @@ impl SqliteVecStore {
             for (rank, row) in rows.enumerate() {
                 let (id, fp, text) = row?;
                 rep_chunk.entry(fp.clone()).or_insert(id);
-                super::rank::rrf_bump(&mut by_file, fp, text, rank);
+                super::rank::rrf_bump(&mut by_file, fp, text, rank, super::rank::Lane::Text);
+                vec_n += 1;
             }
         }
 
@@ -805,7 +920,8 @@ impl SqliteVecStore {
             for (rank, row) in rows.enumerate() {
                 let (id, fp, text) = row?;
                 rep_chunk.entry(fp.clone()).or_insert(id);
-                super::rank::rrf_bump(&mut by_file, fp, text, rank);
+                super::rank::rrf_bump(&mut by_file, fp, text, rank, super::rank::Lane::Code);
+                code_n += 1;
             }
         }
 
@@ -825,7 +941,8 @@ impl SqliteVecStore {
                     for (rank, row) in rows.enumerate() {
                         if let Ok((id, fp, text)) = row {
                             rep_chunk.entry(fp.clone()).or_insert(id);
-                            super::rank::rrf_bump(&mut by_file, fp, text, rank);
+                            super::rank::rrf_bump(&mut by_file, fp, text, rank, super::rank::Lane::Fts);
+                            fts_n += 1;
                         }
                     }
                 }
@@ -834,6 +951,25 @@ impl SqliteVecStore {
         drop(conn);
 
         let mut hits = super::rank::to_hits(by_file, filepath);
+        let hits_after_rrf = hits.len();
+        let mut reranked = false;
+
+        // SEMFS_DEBUG_RANKING: dump the FULL RRF-sorted candidate pool (pre-truncate).
+        // RRF is document-aggregated (by_file), so this IS the "whole document"
+        // ranking — lets us see a target file's RRF rank and whether it falls
+        // outside the rerank window (RERANK_CANDIDATES). See
+        // tickets/local-ranking-precision-vs-supermemory.
+        if std::env::var("SEMFS_DEBUG_RANKING").is_ok() {
+            for (i, h) in hits.iter().enumerate() {
+                tracing::info!(
+                    stage = "RRF",
+                    rank = i,
+                    score = h.similarity,
+                    fp = h.filepath.as_deref().unwrap_or(""),
+                    "RANKDUMP"
+                );
+            }
+        }
 
         // L5 rerank: replace RRF scores with cross-encoder scores, then re-sort.
         // Cancellation point: the reranker is synchronous (cloud = blocking HTTP).
@@ -852,7 +988,27 @@ impl SqliteVecStore {
                     SEARCH_DEADLINE.as_secs()
                 );
             } else {
+                // Bound rerank CPU: only the top RRF candidates are reranked; the
+                // tail keeps its RRF rank below them. Caps the cross-encoder cost
+                // so one search can't peg the box.
+                hits.truncate(RERANK_CANDIDATES);
                 super::rank::apply_reranker(&mut hits, reranker.as_ref(), query)?;
+                reranked = true;
+            }
+        }
+
+        // SEMFS_DEBUG_RANKING: dump the post-rerank order (chunk-level cross-encoder
+        // scores) to compare against the RRF/document order above — the whole-doc
+        // vs chunk experiment.
+        if reranked && std::env::var("SEMFS_DEBUG_RANKING").is_ok() {
+            for (i, h) in hits.iter().enumerate().take(RERANK_CANDIDATES) {
+                tracing::info!(
+                    stage = "RERANK",
+                    rank = i,
+                    score = h.similarity,
+                    fp = h.filepath.as_deref().unwrap_or(""),
+                    "RANKDUMP"
+                );
             }
         }
 
@@ -922,7 +1078,62 @@ impl SqliteVecStore {
                 }
             }
         }
+        // L1→L7 pipeline observability: one line shows where a search zeroed out.
+        // qvec_len=0 → query embed failed; vec_n+code_n+fts_n=0 → retrieval found
+        // nothing (recall gap); rrf_files>0 but final_hits=0 → phase-2 revalidation
+        // dropped them. See RCA 2026-06-04-...poor-local-search-recall.
+        let final_hits = hits.len();
+        tracing::info!(
+            query,
+            qvec_len,
+            vec_n,
+            code_n,
+            fts_n,
+            rrf_files = hits_after_rrf,
+            reranked,
+            final_hits,
+            scope = scope.as_deref().unwrap_or(""),
+            "search pipeline counts (L1 retrieve → RRF → L5 rerank → phase-2)"
+        );
+        if final_hits == 0 {
+            tracing::warn!(
+                query,
+                qvec_len,
+                vec_n,
+                code_n,
+                fts_n,
+                rrf_files = hits_after_rrf,
+                "search returned ZERO hits — see per-stage counts to locate the drop"
+            );
+        }
         super::rank::sort_desc(&mut hits);
+
+        // Knob B: cap to the returned top-N (Supermemory parity) BEFORE attaching
+        // documents, so we reconstruct text for ~N files, not the whole pool.
+        hits.truncate(result_limit());
+
+        // Knob B: attach the WHOLE document per returned hit. We ranked on the
+        // matched chunk; the agent now receives the full document (like Supermemory)
+        // so it doesn't keep re-searching for context. For Office/PDF the file on
+        // the mount is raw binary — the text exists ONLY in `chunks` — so we stitch
+        // it from `chunks ORDER BY ord` and put it in `memory`, the SAME field the
+        // cloud path fills, so grep renders local + cloud identically.
+        if !hits.is_empty() {
+            let conn = self.db.conn.lock();
+            let prepared = conn.prepare("SELECT text FROM chunks WHERE filepath = ?1 ORDER BY ord");
+            if let Ok(mut stmt) = prepared {
+                for h in hits.iter_mut() {
+                    let Some(fp) = h.filepath.clone() else { continue };
+                    if let Ok(rows) = stmt.query_map([&fp], |r| r.get::<_, String>(0)) {
+                        let parts: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+                        if !parts.is_empty() {
+                            h.memory = Some(stitch_chunks(&parts));
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(hits)
     }
 }
@@ -958,11 +1169,143 @@ fn vec_to_blob(v: &[f32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::embed::HashEmbedder;
+    use crate::embed::StubEmbedder;
 
     fn store() -> SqliteVecStore {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).unwrap()
+        SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap()
+    }
+
+    /// Knob B whole-doc reconstruction. Consecutive chunks overlap verbatim, so
+    /// stitching must DROP the shared span (no duplication) yet reproduce the
+    /// document, and must NEVER split a multibyte char at the byte cap.
+    #[test]
+    fn stitch_chunks_dedups_overlap_and_reconstructs() {
+        // "the quick brown fox jumps over" split into two overlapping windows
+        // sharing "brown fox jumps".
+        let parts = vec![
+            "the quick brown fox jumps".to_string(),
+            "brown fox jumps over the lazy dog".to_string(),
+        ];
+        assert_eq!(
+            stitch_chunks(&parts),
+            "the quick brown fox jumps over the lazy dog"
+        );
+        // No overlap → plain concatenation (no content invented/dropped).
+        let disjoint = vec!["alpha".to_string(), "beta".to_string()];
+        assert_eq!(stitch_chunks(&disjoint), "alphabeta");
+        // Single chunk → itself.
+        assert_eq!(stitch_chunks(&["solo".to_string()]), "solo");
+    }
+
+    /// The cap must land on a UTF-8 boundary — the corpus is Chinese (3-byte
+    /// chars) — or `&s[..cut]` panics. Drive a chunk past DOC_RETURN_CAP.
+    #[test]
+    fn stitch_chunks_caps_on_char_boundary() {
+        let big = "中".repeat(DOC_RETURN_CAP); // 3 bytes each, far over the cap
+        let out = stitch_chunks(&[big]);
+        assert!(out.len() <= DOC_RETURN_CAP);
+        assert!(out.is_char_boundary(out.len())); // valid slice, no mid-char cut
+        assert!(out.chars().all(|c| c == '中'));
+    }
+
+    /// Regression (RCA 2026-06-03-extract-uncapped-utf8-text-path): a large UTF-8
+    /// text/code file (e.g. a minified node_modules bundle) takes the `Ok(text)`
+    /// branch in flush() and is handed whole to `index()`. `index()` must cap
+    /// content before chunking so chunk count / embed work is bounded per file —
+    /// regardless of source — or one file stalls the whole import.
+    #[test]
+    fn index_caps_oversized_content_before_chunking() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        let fp = "/x/node_modules/docx/dist/index.umd.cjs";
+        let huge = "alpha beta gamma delta ".repeat(160_000); // ~3.7 MiB UTF-8
+        assert!(huge.len() > 3 * 1024 * 1024);
+
+        store.index(1, fp, &huge).unwrap();
+
+        let stored: i64 = db
+            .conn
+            .lock()
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(text)), 0) FROM chunks WHERE filepath = ?1",
+                [fp],
+                |r| r.get(0),
+            )
+            .unwrap();
+        // Capped to ~1 MiB head (overlap inflates a little); far under the 3.7 MiB
+        // input. Uncapped, this would store ≳ the full size and grind the embedder.
+        assert!(
+            (stored as usize) <= 2 * 1024 * 1024,
+            "content not capped before indexing: stored {stored} bytes"
+        );
+        assert!(stored > 0, "nothing indexed");
+    }
+
+    /// Regression (ticket search-deadline-fails-closed-to-empty): when the
+    /// cooperative deadline is already blown (CPU starvation simulated by a
+    /// past deadline), the search must DEGRADE to best-effort RRF hits, never
+    /// fail closed to empty — an agent that sees "0 results" for a query that
+    /// matches abandons semantic search.
+    #[test]
+    fn search_past_deadline_degrades_to_hits_not_empty() {
+        use std::time::{Duration, Instant};
+        let s = store();
+        s.index(1, "/a.md", "alpha credential login verification flow")
+            .unwrap();
+        s.index(2, "/b.md", "unrelated gardening content").unwrap();
+
+        // Deadline already in the past → the pre-connection point trips.
+        let past = Instant::now() - Duration::from_secs(1);
+        let hits = s
+            .search_blocking("credential login", None, past)
+            .expect("past-deadline search must not error");
+        assert!(
+            !hits.is_empty(),
+            "past-deadline search must return best-effort hits, not fail closed to empty"
+        );
+        assert!(hits.iter().any(|h| h.filepath.as_deref() == Some("/a.md")));
+    }
+
+    /// Fix #2: the L5 rerank only sees the top `RERANK_CANDIDATES` RRF hits, so a
+    /// single search can't drive an unbounded cross-encoder pass.
+    #[tokio::test]
+    async fn rerank_candidate_count_is_capped() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        #[derive(Debug)]
+        struct CountingReranker {
+            seen: AtomicUsize,
+        }
+        impl Reranker for CountingReranker {
+            fn rerank(&self, _q: &str, docs: &[String]) -> anyhow::Result<Vec<f32>> {
+                self.seen.store(docs.len(), Ordering::SeqCst);
+                Ok(vec![1.0; docs.len()])
+            }
+        }
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let counter = Arc::new(CountingReranker {
+            seen: AtomicUsize::new(0),
+        });
+        let store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384)))
+            .unwrap()
+            .with_reranker(counter.clone() as Arc<dyn Reranker>);
+        // 60 files (> RERANK_CANDIDATES) all matching the query term.
+        for i in 0..60u64 {
+            store
+                .index(i + 1, &format!("/f{i}.md"), "shared keyword alpha beta gamma")
+                .unwrap();
+        }
+
+        let hits = store.search("shared keyword", None).await.unwrap();
+        let seen = counter.seen.load(Ordering::SeqCst);
+        assert!(
+            seen <= RERANK_CANDIDATES,
+            "reranker saw {seen} docs; cap is {RERANK_CANDIDATES}"
+        );
+        assert!(hits.len() <= RERANK_CANDIDATES);
+        assert!(!hits.is_empty());
     }
 
     #[tokio::test]
@@ -1013,13 +1356,13 @@ mod tests {
     /// Code/text routing: a code-like path indexes into the code lane, prose into
     /// the text lane. Uses distinct widths (text=384, code=256) so the routing is
     /// proven by construction — a mis-routed code file would try to insert a
-    /// 256-d vector into the 384-d `vchunks` table and fail. Offline (HashEmbedder).
+    /// 256-d vector into the 384-d `vchunks` table and fail. Offline (StubEmbedder).
     #[tokio::test]
     async fn code_files_route_to_code_lane() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let mut store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         store
-            .enable_code_indexing(Arc::new(HashEmbedder::new(256)))
+            .enable_code_indexing(Arc::new(StubEmbedder::new(256)))
             .unwrap();
 
         // .rs → code lane (256-d); .md → text lane (384-d). Both must succeed.
@@ -1081,14 +1424,14 @@ mod tests {
     #[tokio::test]
     async fn code_model_swap_disables_code_lane_nondestructively() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         w.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-A:256".into() }))
             .unwrap();
         w.index(2, "/src/a.rs", "fn a() {}").unwrap();
         drop(w);
 
         // Reopen with the SAME width (256) but a DIFFERENT code model → must bail.
-        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         let res =
             w2.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-B:256".into() }));
         assert!(res.is_err(), "same-width code-model swap must be refused");
@@ -1108,7 +1451,7 @@ mod tests {
     #[tokio::test]
     async fn writer_refuses_index_with_chunks_but_no_text_stamp() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+        SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384)))
             .unwrap()
             .index(2, "/a.md", "hello")
             .unwrap();
@@ -1117,7 +1460,7 @@ mod tests {
             .lock()
             .execute("DELETE FROM fs_config WHERE key='text_embed_model'", [])
             .unwrap();
-        let res = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384)));
+        let res = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384)));
         assert!(res.is_err(), "must refuse a populated index with no text stamp");
     }
 
@@ -1126,8 +1469,8 @@ mod tests {
     #[tokio::test]
     async fn writer_refuses_code_lane_with_rows_but_no_code_stamp() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         w.index(2, "/a.rs", "fn a() {}").unwrap(); // populates vchunks_code
         drop(w);
         db.conn
@@ -1135,8 +1478,8 @@ mod tests {
             .execute("DELETE FROM fs_config WHERE key='code_embed_model'", [])
             .unwrap();
         // new() succeeds (text stamp intact); enable_code_indexing must refuse.
-        let mut w2 = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).unwrap();
-        let res = w2.enable_code_indexing(Arc::new(HashEmbedder::new(256)));
+        let mut w2 = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap();
+        let res = w2.enable_code_indexing(Arc::new(StubEmbedder::new(256)));
         assert!(res.is_err(), "must refuse a populated code lane with no code stamp");
     }
 
@@ -1148,12 +1491,12 @@ mod tests {
     async fn code_file_skipped_when_lane_advertised_but_no_code_embedder() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         // Writer 1 establishes the code lane (stamp), no files yet.
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         drop(w);
 
         // Writer 2: fail-open — code lane advertised but NO code embedder attached.
-        let w2 = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let w2 = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         w2.index(2, "/src/x.rs", "fn x() {}").unwrap(); // code path → must be skipped
         w2.index(3, "/docs/y.md", "hello world").unwrap(); // text path → indexed
 
@@ -1174,13 +1517,13 @@ mod tests {
     #[tokio::test]
     async fn writer_refuses_stamped_cache_with_missing_vectors() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+        SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384)))
             .unwrap()
             .index(2, "/a.md", "hello")
             .unwrap(); // chunks + vchunks populated, stamp present
         // Corrupt: drop vchunks (vectors gone) but keep chunks + the stamp.
         db.conn.lock().execute_batch("DROP TABLE vchunks;").unwrap();
-        let res = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384)));
+        let res = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384)));
         assert!(res.is_err(), "stamped cache with chunks but missing vchunks must be refused");
     }
 
@@ -1190,7 +1533,7 @@ mod tests {
     #[tokio::test]
     async fn writer_refuses_corrupt_text_embed_dims() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+        SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384)))
             .unwrap()
             .index(2, "/a.md", "hello")
             .unwrap();
@@ -1198,7 +1541,7 @@ mod tests {
             .lock()
             .execute("UPDATE fs_config SET value='256' WHERE key='text_embed_dims'", [])
             .unwrap();
-        let res = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)));
+        let res = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384)));
         assert!(res.is_err(), "corrupt text_embed_dims must be refused");
         // The vectors must NOT have been dropped (writer refused before mutating).
         let n: i64 = db
@@ -1214,16 +1557,16 @@ mod tests {
     #[tokio::test]
     async fn writer_refuses_corrupt_code_embed_dims() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         w.index(2, "/a.rs", "fn a() {}").unwrap();
         drop(w);
         db.conn
             .lock()
             .execute("UPDATE fs_config SET value='128' WHERE key='code_embed_dims'", [])
             .unwrap();
-        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        let res = w2.enable_code_indexing(Arc::new(HashEmbedder::new(256)));
+        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        let res = w2.enable_code_indexing(Arc::new(StubEmbedder::new(256)));
         assert!(res.is_err(), "corrupt code_embed_dims must be refused");
         let n: i64 = db
             .conn
@@ -1238,7 +1581,7 @@ mod tests {
     #[tokio::test]
     async fn writer_refuses_missing_text_embed_dims() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+        SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384)))
             .unwrap()
             .index(2, "/a.md", "hello")
             .unwrap();
@@ -1247,7 +1590,7 @@ mod tests {
             .execute("DELETE FROM fs_config WHERE key='text_embed_dims'", [])
             .unwrap();
         assert!(
-            SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).is_err(),
+            SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).is_err(),
             "stamped cache with missing text_embed_dims must be refused"
         );
     }
@@ -1257,8 +1600,8 @@ mod tests {
     #[tokio::test]
     async fn writer_refuses_missing_code_embed_dims() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         w.index(2, "/a.rs", "fn a() {}").unwrap();
         drop(w);
         db.conn
@@ -1266,7 +1609,7 @@ mod tests {
             .execute("DELETE FROM fs_config WHERE key='code_embed_dims'", [])
             .unwrap();
         assert!(
-            SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).is_err(),
+            SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).is_err(),
             "stamped code lane with missing code_embed_dims must be refused"
         );
         // vchunks_code preserved — refused before any destructive recreate.
@@ -1284,8 +1627,8 @@ mod tests {
     #[tokio::test]
     async fn search_errors_when_active_code_lane_fails_at_query_time() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        store.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        store.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         store.index(2, "/src/a.rs", "fn a() {}").unwrap();
         store.index(3, "/docs/b.md", "prose").unwrap();
         assert!(store.is_searchable(), "healthy dual cache is searchable");
@@ -1301,8 +1644,8 @@ mod tests {
     #[tokio::test]
     async fn lane_crossing_rename_drops_entry() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        store.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        store.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         store.index(2, "/notes/readme.md", "documentation about parsing tokens").unwrap();
 
         // Cross-lane (.md text → .rs code): drop, not relabel.
@@ -1344,7 +1687,7 @@ mod tests {
     async fn lane_crossing_rename_drops_even_when_code_lane_inert() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         // Writer 1: code lane with model A; index a .rs file into the code lane.
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         w.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-A:256".into() }))
             .unwrap();
         w.index(2, "/src/lib.rs", "fn f() {}").unwrap();
@@ -1352,7 +1695,7 @@ mod tests {
 
         // Writer 2: mismatched code model → enable fails open (code_embedder stays
         // None), but vchunks_code + the .rs vectors persist.
-        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         let _ = w2.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-B:256".into() }));
 
         // .rs → .md: persisted lane is code, new path is text → must DROP.
@@ -1375,21 +1718,21 @@ mod tests {
     #[tokio::test]
     async fn code_only_cache_unsearchable_when_code_lane_inactive() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         w.index(2, "/src/only.rs", "fn only() {}").unwrap(); // code lane only
         drop(w);
 
         // Reader with NO code embedder → code lane inactive, all content stranded.
-        let inert = SqliteVecStore::open_existing(db.clone(), Arc::new(HashEmbedder::new(384)));
+        let inert = SqliteVecStore::open_existing(db.clone(), Arc::new(StubEmbedder::new(384)));
         assert!(
             !inert.is_searchable(),
             "code-only cache must fall back when the code lane can't be searched"
         );
 
         // Reader WITH the matching code embedder → code lane active → searchable.
-        let active = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)))
-            .with_code_embedder(Arc::new(HashEmbedder::new(256)));
+        let active = SqliteVecStore::open_existing(db, Arc::new(StubEmbedder::new(384)))
+            .with_code_embedder(Arc::new(StubEmbedder::new(256)));
         assert!(active.is_searchable(), "active code lane → searchable");
     }
 
@@ -1400,23 +1743,23 @@ mod tests {
     #[tokio::test]
     async fn mixed_cache_with_populated_inactive_code_lane_falls_back() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         w.index(2, "/docs/readme.md", "prose content about the project").unwrap(); // text lane
         w.index(3, "/src/lib.rs", "fn lib() {}").unwrap(); // code lane (has rows)
         drop(w);
 
         // Reader with NO code embedder → code lane inactive but populated → must
         // fall back to cloud rather than silently serve text-only results.
-        let inert = SqliteVecStore::open_existing(db.clone(), Arc::new(HashEmbedder::new(384)));
+        let inert = SqliteVecStore::open_existing(db.clone(), Arc::new(StubEmbedder::new(384)));
         assert!(
             !inert.is_searchable(),
             "populated inactive code lane must force cloud fallback even on a mixed cache"
         );
 
         // With the matching code embedder → code lane active → searchable.
-        let active = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)))
-            .with_code_embedder(Arc::new(HashEmbedder::new(256)));
+        let active = SqliteVecStore::open_existing(db, Arc::new(StubEmbedder::new(384)))
+            .with_code_embedder(Arc::new(StubEmbedder::new(256)));
         assert!(active.is_searchable(), "active code lane → searchable");
     }
 
@@ -1426,8 +1769,8 @@ mod tests {
     #[tokio::test]
     async fn active_but_broken_code_lane_falls_back() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let mut w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(HashEmbedder::new(256))).unwrap();
+        let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
         w.index(2, "/src/a.rs", "fn a() {}").unwrap(); // code lane only
         drop(w);
 
@@ -1436,8 +1779,8 @@ mod tests {
 
         // Reader WITH the matching code embedder → code lane "active", but the
         // vec0 table is gone → the readiness probe errors → not searchable.
-        let reader = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)))
-            .with_code_embedder(Arc::new(HashEmbedder::new(256)));
+        let reader = SqliteVecStore::open_existing(db, Arc::new(StubEmbedder::new(384)))
+            .with_code_embedder(Arc::new(StubEmbedder::new(256)));
         assert!(
             !reader.is_searchable(),
             "broken active code lane must fall back, not serve degraded results"
@@ -1451,11 +1794,11 @@ mod tests {
     #[test]
     fn text_only_index_searchable_with_code_embedder_attached() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let w = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         w.index(2, "/a.md", "hello world").unwrap();
         // No code stamp was written. Reader attaches a code embedder anyway.
-        let reader = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)))
-            .with_code_embedder(Arc::new(HashEmbedder::new(256)));
+        let reader = SqliteVecStore::open_existing(db, Arc::new(StubEmbedder::new(384)))
+            .with_code_embedder(Arc::new(StubEmbedder::new(256)));
         assert!(
             reader.is_searchable(),
             "text-only index must remain searchable with a code embedder attached"
@@ -1468,14 +1811,14 @@ mod tests {
     fn is_searchable_reflects_index_compatibility() {
         // Indexed store at 384-d → searchable.
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let s = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let s = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         s.index(2, "/a.md", "hello world").unwrap();
         assert!(s.is_searchable());
 
         // Same db reopened with a different-width embedder → NOT searchable
         // (a 256-d probe vector against a 384-d vec0 table errors).
         let mismatched =
-            SqliteVecStore::open_existing(db.clone(), Arc::new(HashEmbedder::new(256)));
+            SqliteVecStore::open_existing(db.clone(), Arc::new(StubEmbedder::new(256)));
         assert!(!mismatched.is_searchable());
 
         // Same width (384) but a DIFFERENT model identity → NOT searchable
@@ -1488,7 +1831,7 @@ mod tests {
 
         // A cache that never created vec0 tables → NOT searchable.
         let bare = Arc::new(Db::open_in_memory().unwrap());
-        let no_index = SqliteVecStore::open_existing(bare, Arc::new(HashEmbedder::new(384)));
+        let no_index = SqliteVecStore::open_existing(bare, Arc::new(StubEmbedder::new(384)));
         assert!(!no_index.is_searchable());
     }
 
@@ -1512,7 +1855,7 @@ mod tests {
                 // would. The lock is released during rerank, so this succeeds.
                 if !self.fired.swap(true, Ordering::SeqCst) {
                     let w =
-                        SqliteVecStore::open_existing(self.db.clone(), Arc::new(HashEmbedder::new(384)));
+                        SqliteVecStore::open_existing(self.db.clone(), Arc::new(StubEmbedder::new(384)));
                     w.index(2, "/a.md", "totally different replacement content zzz")
                         .unwrap();
                 }
@@ -1521,7 +1864,7 @@ mod tests {
         }
 
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let store = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384)))
+        let store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384)))
             .unwrap()
             .with_reranker(Arc::new(ReindexingReranker {
                 db: db.clone(),
@@ -1559,7 +1902,7 @@ mod tests {
     #[tokio::test]
     async fn reindex_replaces_old_chunks_not_accumulates() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let s = SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap();
+        let s = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         s.index(2, "/n.md", "alpha beta gamma").unwrap();
         s.index(2, "/n.md", "delta epsilon zeta").unwrap();
         let conn = db.conn.lock();
@@ -1582,7 +1925,7 @@ mod tests {
     async fn reindex_preserves_edges_delete_clears_them() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         store.index(2, "/notes/proj.md", "anything").unwrap();
         let add_edge = || {
             db.conn
@@ -1622,7 +1965,7 @@ mod tests {
         use crate::cache::LocalIndexer;
         let db = Arc::new(Db::open_in_memory().unwrap());
         let llm = Arc::new(crate::llm::LlmClient::openrouter("test-key".into()));
-        let store = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384)))
+        let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384)))
             .unwrap()
             .with_graph_extractor(llm);
         let q = store.graph_queue().expect("graph queue present with extractor");
@@ -1632,7 +1975,7 @@ mod tests {
         // A store WITHOUT an extractor has no queue and enqueues nothing.
         let plain = SqliteVecStore::new(
             Arc::new(Db::open_in_memory().unwrap()),
-            Arc::new(HashEmbedder::new(384)),
+            Arc::new(StubEmbedder::new(384)),
         )
         .unwrap();
         assert!(plain.graph_queue().is_none());
@@ -1644,7 +1987,7 @@ mod tests {
     async fn rename_relabels_index_and_drops_overwritten_destination() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         store.index(2, "/old.md", "alpha beta gamma").unwrap();
         store.index(3, "/dest.md", "delta epsilon zeta").unwrap();
 
@@ -1682,7 +2025,7 @@ mod tests {
     async fn comention_boost_demotes_the_unconnected_file() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         for (ino, fp) in [(2u64, "/a.md"), (3, "/b.md"), (4, "/c.md")] {
             store.index(ino, fp, "alpha beta gamma").unwrap();
         }
@@ -1712,7 +2055,7 @@ mod tests {
     async fn salience_breaks_ties_toward_more_accessed_file() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         store.index(2, "/a.md", "alpha beta gamma delta").unwrap();
         store.index(3, "/b.md", "alpha beta gamma delta").unwrap();
         {
@@ -1742,7 +2085,7 @@ mod tests {
 
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         let fs = CacheFs::new(db).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
 
         // Create + write + flush exactly as the mount layer would.
@@ -1768,6 +2111,159 @@ mod tests {
             after.is_empty(),
             "unlink must remove the file's chunks from the index, got {after:?}"
         );
+    }
+
+    /// L1 parse on flush: a binary `.docx` (invalid UTF-8) is extracted
+    /// in-process and its text becomes searchable through the real store — the
+    /// core of `tickets/local-document-extractors`.
+    #[tokio::test]
+    async fn flush_extracts_and_indexes_binary_docx() {
+        use crate::cache::{CacheFs, LocalIndexer, ROOT_INO};
+        use crate::vfs::FileSystem;
+
+        const DOCX: &[u8] = include_bytes!("../../tests/fixtures/chanpin/sample.docx");
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store =
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
+        let fs = CacheFs::new(db).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
+
+        let (_attr, handle) = fs.create_file(ROOT_INO, "report.docx", 0o644, 0, 0).await.unwrap();
+        handle.write(0, DOCX).await.unwrap();
+        handle.flush().await.unwrap();
+
+        // The CJK title now lives in the index — extraction happened on flush.
+        let hits = store.search("数据安全风险整改进度月度汇总报告", None).await.unwrap();
+        assert!(!hits.is_empty(), "docx text was not extracted+indexed on flush");
+        assert_eq!(hits[0].filepath.as_deref(), Some("/report.docx"));
+        // A successfully extracted file is not in the unindexed bucket.
+        assert_eq!(fs.unindexed_count(), 0);
+    }
+
+    /// A binary file with no recoverable text is recorded as unindexed (visible
+    /// in `semfs status`) — never silently dropped, never crashes the flush.
+    #[tokio::test]
+    async fn flush_records_unextractable_binary_as_unindexed() {
+        use crate::cache::{CacheFs, LocalIndexer, ROOT_INO};
+        use crate::vfs::FileSystem;
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store =
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
+        let fs = CacheFs::new(db).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
+
+        // 0xFF is never a valid UTF-8 lead byte → fails the text path, sniffs
+        // Unknown → no extractor → unindexed.
+        let (_attr, handle) = fs.create_file(ROOT_INO, "blob.bin", 0o644, 0, 0).await.unwrap();
+        handle.write(0, &[0xFF, 0xFE, 0x00, 0x01, 0x02]).await.unwrap();
+        handle.flush().await.unwrap();
+
+        assert_eq!(fs.unindexed_count(), 1, "unextractable binary must be counted");
+
+        // A later flush that yields text clears the marker.
+        handle.write(0, b"now i am plain searchable text").await.unwrap();
+        handle.flush().await.unwrap();
+        assert_eq!(fs.unindexed_count(), 0, "successful re-flush must clear the marker");
+    }
+
+    /// Regression (Codex HIGH): a previously-indexed text file overwritten by an
+    /// unextractable binary must be DEINDEXED (no stale search hits) AND counted
+    /// as unindexed — not left searchable with stale content.
+    #[tokio::test]
+    async fn overwriting_indexed_text_with_binary_deindexes_and_counts() {
+        use crate::cache::{CacheFs, LocalIndexer, ROOT_INO};
+        use crate::vfs::FileSystem;
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store =
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
+        let fs = CacheFs::new(db).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
+
+        let (_a, h) = fs.create_file(ROOT_INO, "note.md", 0o644, 0, 0).await.unwrap();
+        h.write(0, b"alpha sentinel beta gamma delta").await.unwrap();
+        h.flush().await.unwrap();
+        assert!(!store.search("sentinel", None).await.unwrap().is_empty());
+
+        // Overwrite fully with binary (200 > 31 bytes → all-binary, invalid UTF-8).
+        h.write(0, &[0xFFu8; 200]).await.unwrap();
+        h.flush().await.unwrap();
+
+        assert!(
+            store.search("sentinel", None).await.unwrap().is_empty(),
+            "stale text must be deindexed when overwritten by an unextractable binary"
+        );
+        assert_eq!(fs.unindexed_count(), 1);
+    }
+
+    /// Regression (Codex HIGH): when extraction SUCCEEDS but indexing FAILS, the
+    /// file must be recorded as unindexed (accounted), never silently dropped.
+    #[tokio::test]
+    async fn extracted_but_index_error_is_recorded_unindexed() {
+        use crate::cache::{CacheFs, LocalIndexer, ROOT_INO};
+        use crate::vfs::FileSystem;
+
+        #[derive(Debug)]
+        struct FailingIndexer;
+        #[async_trait::async_trait]
+        impl LocalIndexer for FailingIndexer {
+            async fn index(&self, _: u64, _: &str, _: &str) -> anyhow::Result<()> {
+                anyhow::bail!("simulated index failure")
+            }
+            async fn remove(&self, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn rename(&self, _: &str, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+
+        const DOCX: &[u8] = include_bytes!("../../tests/fixtures/chanpin/sample.docx");
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let fs = CacheFs::new(db).with_indexer(Arc::new(FailingIndexer) as Arc<dyn LocalIndexer>);
+
+        let (_a, h) = fs.create_file(ROOT_INO, "r.docx", 0o644, 0, 0).await.unwrap();
+        h.write(0, DOCX).await.unwrap();
+        h.flush().await.unwrap(); // extraction OK, index() errors
+
+        assert_eq!(
+            fs.unindexed_count(),
+            1,
+            "extracted-but-unindexable file must be accounted, not dropped"
+        );
+    }
+
+    /// Regression (Codex MEDIUM): rename keeps `fs_unindexed` consistent —
+    /// overwriting one unindexed file with another drops the destination's marker
+    /// (no overcount) and the surviving source marker is relabeled atomically.
+    #[tokio::test]
+    async fn rename_overwrite_keeps_unindexed_count_consistent() {
+        use crate::cache::{CacheFs, LocalIndexer, ROOT_INO};
+        use crate::vfs::FileSystem;
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store =
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
+        let fs = CacheFs::new(db).with_indexer(store as Arc<dyn LocalIndexer>);
+
+        for name in ["a.bin", "b.bin"] {
+            let (_a, h) = fs.create_file(ROOT_INO, name, 0o644, 0, 0).await.unwrap();
+            h.write(0, &[0xFFu8; 10]).await.unwrap();
+            h.flush().await.unwrap();
+        }
+        assert_eq!(fs.unindexed_count(), 2);
+
+        // Overwrite a.bin with b.bin: destination marker cleared in-tx, source
+        // marker relabeled to the destination path.
+        fs.rename(ROOT_INO, "b.bin", ROOT_INO, "a.bin").await.unwrap();
+        assert_eq!(
+            fs.unindexed_count(),
+            1,
+            "overwrite must drop the destination's marker and keep exactly the source's"
+        );
+
+        // Unlinking the surviving path clears it → no leak.
+        fs.unlink(ROOT_INO, "a.bin").await.unwrap();
+        assert_eq!(fs.unindexed_count(), 0);
     }
 
     // Real-model offline semantic search (arctic-s embed → index → search on a
@@ -1815,7 +2311,7 @@ mod tests {
     }
 
     /// The reranker seam, exercised with a CLOUD reranker (OpenRouter/Cohere) over
-    /// a deterministic HashEmbedder index — so no local model loads here. Proves
+    /// a deterministic StubEmbedder index — so no local model loads here. Proves
     /// rerank actually runs: the final score is a reranker score (≫ the ~1/60 RRF
     /// scores), and the on-topic file ranks first. Gated on OPENROUTER_API_KEY.
     #[tokio::test]
@@ -1826,7 +2322,7 @@ mod tests {
             return;
         };
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let store = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384)))
+        let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384)))
             .unwrap()
             .with_reranker(Arc::new(CohereReranker::openrouter(key)));
 
@@ -1872,7 +2368,7 @@ mod tests {
     async fn multi_chunk_doc_retrieves_middle_chunk() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         let filler = (0..300).map(|n| format!("filler{n}")).collect::<Vec<_>>().join(" ");
         let content = format!("{filler} unicornmarker zebraquux {filler}");
         store.index(2, "/big.md", &content).unwrap();
@@ -1886,7 +2382,7 @@ mod tests {
 
         // A needle in the MIDDLE of a long, multi-chunk doc is still retrievable.
         // (Which chunk becomes the representative depends on rrf tie-breaking +
-        // HashEmbedder bucket collisions, so we assert retrieval, not the snippet.)
+        // StubEmbedder bucket collisions, so we assert retrieval, not the snippet.)
         let hits = store.search("unicornmarker", None).await.unwrap();
         assert_eq!(hits[0].filepath.as_deref(), Some("/big.md"));
     }
@@ -1898,12 +2394,12 @@ mod tests {
         let path = dir.path().join("c.db");
         {
             let db = Arc::new(Db::open(&path).unwrap());
-            let store = SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).unwrap();
+            let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap();
             store.index(2, "/p.md", "persistent alpha beta content").unwrap();
         } // store + db dropped — simulates a daemon restart
 
         let db2 = Arc::new(Db::open(&path).unwrap());
-        let store2 = SqliteVecStore::open_existing(db2, Arc::new(HashEmbedder::new(384)));
+        let store2 = SqliteVecStore::open_existing(db2, Arc::new(StubEmbedder::new(384)));
         let hits = store2.search("persistent alpha", None).await.unwrap();
         assert_eq!(hits[0].filepath.as_deref(), Some("/p.md"));
     }
@@ -1916,7 +2412,7 @@ mod tests {
         use crate::vfs::FileSystem;
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         let fs = CacheFs::new(db).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
 
         let (_, h) = fs.create_file(ROOT_INO, "doc.md", 0o644, 0, 0).await.unwrap();
@@ -1945,7 +2441,7 @@ mod tests {
         use crate::vfs::FileSystem;
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         let fs = CacheFs::new(db.clone()).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
 
         let (_, h) = fs.create_file(ROOT_INO, "blob.bin", 0o644, 0, 0).await.unwrap();
@@ -1967,14 +2463,14 @@ mod tests {
         let path = dir.path().join("c.db");
         {
             let db = Arc::new(Db::open(&path).unwrap());
-            SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).unwrap(); // create vec0 tables
+            SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap(); // create vec0 tables
         }
         let mut handles = vec![];
         for w in 0..2u64 {
             let p = path.clone();
             handles.push(std::thread::spawn(move || {
                 let db = Arc::new(Db::open(&p).unwrap());
-                let store = SqliteVecStore::open_existing(db, Arc::new(HashEmbedder::new(384)));
+                let store = SqliteVecStore::open_existing(db, Arc::new(StubEmbedder::new(384)));
                 for i in 0..10u64 {
                     store
                         .index(w * 100 + i + 2, &format!("/w{w}-{i}.md"), &format!("alpha {w} {i}"))
@@ -2000,7 +2496,7 @@ mod tests {
     async fn scale_hundreds_of_files() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
-            Arc::new(SqliteVecStore::new(db, Arc::new(HashEmbedder::new(384))).unwrap());
+            Arc::new(SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap());
         for i in 0..300u64 {
             store
                 .index(i + 2, &format!("/f{i}.md"), &format!("document {i} about topic{}", i % 7))

@@ -124,7 +124,7 @@ Two crates. All logic lives in `semfs-core`; the `semfs` binary is a thin dispat
 | `mount` | `mount/mod.rs` | FUSE (Linux) / NFSv3-over-localhost (macOS) behind one API. Only place that knows the kernel. |
 | `cache` | `cache/{fs,file,db,graph_queue,hydration}.rs` | Local SQLite store; defines `LocalIndexer`. Passive — never calls the network itself. |
 | `backend` | `backend/{mod,sqlite_vec,pgvector,cloud,chunk,rank,graph}.rs` | `SemanticIndex` trait + concrete stores; chunking (L1), ranking (L5/L6/L7), entity graph (L7). |
-| `embed` | `embed/mod.rs` | `Embedder` trait: text→vector. Local (fastembed) / cloud (OpenAI/OpenRouter) / hash (tests). |
+| `embed` | `embed/mod.rs` | `Embedder` trait: text→vector. Local (fastembed) / cloud (OpenAI/OpenRouter). A deterministic `StubEmbedder` is `#[cfg(test)]`-only — not a shipped backend. |
 | `rerank` | `rerank/mod.rs` | `Reranker` trait: cross-encoder rescoring (L5). Fail-open. |
 | `extract` | `extract/{mod,pdf,ooxml,spreadsheet,legacy_ppt,ocr}.rs` | Binary doc → searchable text (PDF/Office/images). Sniffs magic bytes, not extension. |
 | `sync` | `sync/{mod,pull,push,scan}.rs` | Background reconcile loops between cache and cloud backend. |
@@ -230,13 +230,20 @@ pluggable model interfaces with local-and-cloud implementations.
 
 ```mermaid
 flowchart LR
-    ENV["SEMFS_STORAGE_BACKEND<br/><small>cmd/resolve.rs: choose_storage()</small>"] --> D{which?}
-    D -->|default| S["SqliteVecStore::new()"]
+    ENV["SEMFS_STORAGE_BACKEND<br/><small>cmd/resolve.rs: choose_storage()</small>"] --> D{"StorageChoice::is_local()?"}
+    D -->|"sqlite (default)"| S["SqliteVecStore::new()"]
     D -->|pgvector / postgres| P["build_pg_store()<br/>(external Postgres)"]
     D -->|pglite / embedded| L["build_pglite_store()<br/>(embedded WASM PG)"]
-    S & P & L --> R["returns (Arc dyn LocalIndexer,<br/>Arc dyn SemanticIndex)<br/><small>cmd/daemon_runtime.rs:39-119</small>"]
-    R --> MK["choice persisted to .semfs marker<br/>so offline grep re-resolves without env drift"]
+    D -->|"cloud / supermemory"| C["CloudIndex — no local index,<br/>no embedder (Supermemory embeds + searches)"]
+    S & P & L --> R["build local index → (Arc dyn LocalIndexer,<br/>Arc dyn SemanticIndex)<br/><small>cmd/daemon_runtime.rs</small>"]
+    R & C --> MK["choice persisted to .semfs marker<br/>so offline grep re-resolves without env drift"]
 ```
+
+**Storage — not the embedder — is the local-vs-cloud router.** `StorageChoice::is_local()` is true for
+every backend except `Cloud`; a local backend builds an index (and needs a real embedder), while
+`cloud` builds none and routes `grep` straight to `CloudIndex`. (Historically this decision was hidden
+inside the embedder choice — a fake `hash` embedder flipped indexing off; that hack was removed. See
+`tickets/remove-hash-embedder`.)
 
 ---
 
@@ -362,8 +369,9 @@ flowchart LR
 | **L6** | File-level salience nudge: recency (14-day half-life) + log access count | `backend/rank.rs` |
 | **L7** | Entity graph: LLM extracts typed entities → `/memories/*` nodes + edges; co-mentioned files boosted. **Deferred** off the write path, drained by `run_graph_worker` | `backend/graph.rs` + `cache/graph_queue.rs` |
 
-**Fail-open ladder:** every optional stage degrades gracefully — no embedder → hash floor; no
-reranker → RRF order stands; no graph LLM → boost skipped. Search always returns *something*.
+**Fail-open ladder:** every optional stage degrades gracefully — local index build fails → SQLite
+mounts fall back to cloud search (explicit pg/pglite fail the mount instead); no reranker → RRF order
+stands; no graph LLM → boost skipped. Search always returns *something*.
 
 ### L1 chunking, in detail
 

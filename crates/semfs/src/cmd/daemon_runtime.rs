@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use tokio::sync::Notify;
 
 use super::startup::StartupReporter;
-use semfs_core::cache::{Db, CacheFs};
+use semfs_core::cache::{CacheFs, Db};
 use semfs_core::daemon;
 use semfs_core::mount::{mount_fs, MountBackend, MountOpts};
 use semfs_core::vfs::traits::FileSystem;
@@ -50,9 +50,9 @@ async fn build_local_indexer(
     match choose_storage(env) {
         StorageChoice::Pgvector => {
             let _ = (&db, org_id, ephemeral, clean); // external Postgres isolation
-                                   // is the operator's job (connection string /
-                                   // database); local cache db, per-org dir, and
-                                   // ephemeral/clean lifecycle don't apply here.
+                                                     // is the operator's job (connection string /
+                                                     // database); local cache db, per-org dir, and
+                                                     // ephemeral/clean lifecycle don't apply here.
             #[cfg(feature = "pg")]
             {
                 let store =
@@ -107,6 +107,20 @@ async fn build_local_indexer(
                 Ok(None) => {}
                 Err(e) => eprintln!("code embedder unavailable ({e}); indexing text lane only"),
             }
+            // L5: cross-encoder rerank. FAIL-OPEN like the code lane — a reranker
+            // model failure must NOT fail the mount; search falls back to RRF-only
+            // ranking (the floor). Without this the sqlite daemon returned the raw,
+            // UNRANKED RRF candidate pool (65–324 hits), so `grep` dumped the whole
+            // pool and the agent saw no token savings. pg + offline-grep already
+            // attach it via resolve.rs; this brings the sqlite daemon to parity.
+            match crate::cmd::resolve::build_reranker(env) {
+                Ok(Some(reranker)) => {
+                    store = store.with_reranker(reranker);
+                    eprintln!("L5 cross-encoder reranker enabled");
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!("reranker unavailable ({e}); RRF-only ranking"),
+            }
             // L7: attach the entity-graph extractor when an LLM is available.
             if let Some(llm) = crate::cmd::resolve::build_llm(env) {
                 store = store.with_graph_extractor(Arc::new(llm));
@@ -114,6 +128,10 @@ async fn build_local_indexer(
             }
             let store = Arc::new(store);
             Ok((store.clone(), store))
+        }
+        // Cloud builds no local index — callers gate on `storage.is_local()`.
+        StorageChoice::Cloud => {
+            unreachable!("build_local_indexer is only called for local storage backends")
         }
     }
 }
@@ -171,10 +189,30 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     // can record the db path — letting `grep` open the local index with no
     // network. `marker_path` is computed above.
 
+    // The cache home (`~/.semfs`) is a DIRECTORY; the per-mount marker is a FILE
+    // also named `.semfs`, written at the mount's parent. They collide iff you
+    // mount directly inside $HOME (parent == ~). Refuse that up front with a clear
+    // message rather than fail obscurely later on create_dir_all / marker write.
+    if marker_path == semfs_core::config::semfs_home() {
+        anyhow::bail!(
+            "refusing to mount directly inside your home directory: the per-mount \
+             marker ({}) collides with the semfs cache home. Mount in a subdirectory instead.",
+            marker_path.display()
+        );
+    }
+
     let opts = MountOpts::new(cfg.mount_path.clone(), cfg.backend).with_ownership(uid, gid);
 
     startup.report("validating_key", "validating API key")?;
-    let session = if cfg.ephemeral {
+    // A local-only mount (`--no-push --no-sync`) never talks to the Supermemory
+    // server — push/pull are off and the cache is org-independent
+    // (`~/.semfs/<tag>.db`) — so there is nothing to validate the key FOR. Skip the
+    // call entirely: no network round-trip, works offline and with no/any key.
+    // (tickets/decouple-sqlite-cache-scoping-from-supermemory.)
+    let local_only = cfg.no_push && cfg.no_sync;
+    let session = if local_only {
+        None
+    } else if cfg.ephemeral {
         semfs_core::api::ApiClient::validate_key(&cfg.api_url, &cfg.api_key)
             .await
             .ok()
@@ -182,12 +220,12 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         Some(
             semfs_core::api::ApiClient::validate_key(&cfg.api_url, &cfg.api_key)
                 .await
-                .context("validating API key (required to scope cache by org)")?,
+                .context("validating API key (required for push/sync)")?,
         )
     };
 
     // SECURITY: `org_id` comes from the server's session response and gets joined
-    // into cache paths (`cache_db_path`, and the pglite data dir) that `--clean`
+    // into the embedded-pglite data dir (via `org_scope`, below) that `--clean`
     // / ephemeral cleanup hand to `remove_dir_all`. A hostile or compromised
     // server returning an org id with path separators or `..` would escape the
     // cache subtree and delete an unintended location. Reject it at the boundary,
@@ -207,16 +245,13 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         eprintln!("using ephemeral in-memory cache (nothing persists after unmount)");
         Arc::new(Db::open_in_memory()?)
     } else {
-        let org_id = session
-            .as_ref()
-            .and_then(|s| s.org_id.as_deref())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "server did not return org id; cannot open cache. Run `semfs login` and retry."
-                )
-            })?;
-        startup.report("opening_cache", format!("opening cache for org {org_id}"))?;
-        let db_path = semfs_core::config::cache_db_path(org_id, &cfg.container_tag);
+        // Org-independent, fixed location (`~/.semfs/<tag>.db`) — no session/org
+        // needed, so this opens offline and keyless.
+        startup.report(
+            "opening_cache",
+            format!("opening cache {}", cfg.container_tag),
+        )?;
+        let db_path = semfs_core::config::cache_db_path(&cfg.container_tag);
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -269,7 +304,14 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
                 .filter(|s| !s.is_empty())
                 .collect()
         };
-        api.update_memory_paths(paths).await?;
+        // `update_memory_paths` configures CLOUD memory generation. Skip it when
+        // there's nothing to set (honors the documented `--memory-paths "" →
+        // disable`) or for a local-only mount (no cloud container to configure —
+        // calling it 404s and crashes the mount via `?`).
+        // (tickets/local-mount-residual-cloud-calls.)
+        if !local_only && !paths.is_empty() {
+            api.update_memory_paths(paths).await?;
+        }
     }
 
     // Optional local semantic index: the capability resolver decides whether a
@@ -284,33 +326,21 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     let mut search_index: Option<Arc<dyn semfs_core::backend::SemanticIndex>> = None;
     // Held for the background L7 (entity-graph) worker — see run_graph_worker.
     let mut graph_indexer: Option<Arc<dyn semfs_core::cache::LocalIndexer>> = None;
-    // Org scope for backends that persist per-org on local disk (embedded pglite),
-    // mirroring the SQLite cache layout (`cache_db_path(org_id, tag)`). Ephemeral
-    // mounts may have no validated org → a stable sentinel keeps same-tag ephemeral
-    // mounts off the persistent per-org tree.
+    // Org scope for backends that still persist per-org on local disk (embedded
+    // pglite). The SQLite cache is now org-independent (`~/.semfs/<tag>.db`), but
+    // pglite keeps its per-org data dir. A missing/skipped session (ephemeral or
+    // local-only mounts) → a stable sentinel keeps those off the persistent
+    // per-org tree.
     let org_scope = session
         .as_ref()
         .and_then(|s| s.org_id.as_deref())
         .unwrap_or("_ephemeral");
     // `resolve_env` and `storage` were computed up front (before the marker write).
     use crate::cmd::resolve::StorageChoice;
-    let explicit_backend = matches!(storage, StorageChoice::Pgvector | StorageChoice::Pglite);
-    // An explicitly-selected external/embedded backend with the `hash` floor is a
-    // contradiction (no semantic vectors). Fail closed with a clear message rather
-    // than silently mounting with no usable index — caught BEFORE the indexing
-    // gate, because `local_indexing_enabled()` is false for hash and would
-    // otherwise skip the backend entirely.
-    if let Some(name) = crate::cmd::resolve::explicit_backend_without_embedder(&resolve_env) {
-        anyhow::bail!(
-            "SEMFS_STORAGE_BACKEND={name} requires a real embedder, but \
-             SEMFS_EMBED_BACKEND=hash provides no semantic vectors; set a local or \
-             cloud embedder, or use the default SQLite backend"
-        );
-    }
-    // Build the index when a real embedder is configured OR an external/embedded
-    // backend was explicitly requested (the latter must not be skipped by the
-    // hash short-circuit — that case already errored out above).
-    let fs = if crate::cmd::resolve::local_indexing_enabled(&resolve_env) || explicit_backend {
+    // Build a local index for every storage backend EXCEPT `cloud`, which has no
+    // local index (Supermemory embeds + searches). The embedder is always real now
+    // — `hash` is gone — so there's no embedder/backend contradiction to guard.
+    let fs = if storage.is_local() {
         match build_local_indexer(
             db.clone(),
             org_scope,
@@ -348,6 +378,8 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
                         eprintln!("local index disabled: {e}");
                         Arc::new(fs_base)
                     }
+                    // Cloud never builds a local index (gated out by is_local()).
+                    StorageChoice::Cloud => unreachable!("cloud builds no local index"),
                 }
             }
         }
@@ -366,51 +398,63 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     .context("setting root ownership")?;
 
     startup.report("warming_profile", "warming profile")?;
-    fs.warm_profile().await;
+    // `warm_profile` fetches the cloud-derived user profile (`profile.md`). Skip it
+    // for a local-only mount — no cloud means an empty profile, which is correct,
+    // and avoids a residual network call. (tickets/local-mount-residual-cloud-calls.)
+    if !local_only {
+        fs.warm_profile().await;
+    }
 
-    startup.report("initial_sync", "starting initial sync")?;
-    let pull_succeeded = match semfs_core::sync::SyncEngine::initial_pull_with_progress(
-        &fs,
-        |progress| match progress {
-            semfs_core::sync::InitialPullProgress::DeletionScan(progress) => {
-                if progress.remote_seen == 1 || progress.remote_seen % 100 == 0 {
-                    let _ = startup.report_counts(
-                        "initial_sync",
-                        format!(
-                            "deletion scan saw {} remote docs (page {}/{})",
-                            progress.remote_seen, progress.page, progress.total_pages
-                        ),
-                        progress.remote_seen,
-                        progress.total_items,
-                    );
+    // A local-only mount has no cloud to pull from. Skip the initial pull entirely
+    // (no network) and treat it as "succeeded" so auto-import still runs — local
+    // dedup is reliable against the warm cache without remote reconciliation.
+    // (tickets/local-mount-residual-cloud-calls.)
+    let pull_succeeded = if local_only {
+        true
+    } else {
+        startup.report("initial_sync", "starting initial sync")?;
+        match semfs_core::sync::SyncEngine::initial_pull_with_progress(&fs, |progress| {
+            match progress {
+                semfs_core::sync::InitialPullProgress::DeletionScan(progress) => {
+                    if progress.remote_seen == 1 || progress.remote_seen % 100 == 0 {
+                        let _ = startup.report_counts(
+                            "initial_sync",
+                            format!(
+                                "deletion scan saw {} remote docs (page {}/{})",
+                                progress.remote_seen, progress.page, progress.total_pages
+                            ),
+                            progress.remote_seen,
+                            progress.total_items,
+                        );
+                    }
+                }
+                semfs_core::sync::InitialPullProgress::Pull(progress) => {
+                    if progress.reconciled == 1 || progress.reconciled % 100 == 0 {
+                        let _ = startup.report_counts(
+                            "initial_sync",
+                            format!(
+                                "reconciled {} docs (page {}/{})",
+                                progress.reconciled, progress.page, progress.total_pages
+                            ),
+                            progress.reconciled,
+                            progress.total_items,
+                        );
+                    }
                 }
             }
-            semfs_core::sync::InitialPullProgress::Pull(progress) => {
-                if progress.reconciled == 1 || progress.reconciled % 100 == 0 {
-                    let _ = startup.report_counts(
-                        "initial_sync",
-                        format!(
-                            "reconciled {} docs (page {}/{})",
-                            progress.reconciled, progress.page, progress.total_pages
-                        ),
-                        progress.reconciled,
-                        progress.total_items,
-                    );
-                }
+        })
+        .await
+        {
+            Ok((removed, reconciled)) => {
+                eprintln!(
+                    "initial sync: {reconciled} docs reconciled, {removed} stale entries removed"
+                );
+                true
             }
-        },
-    )
-    .await
-    {
-        Ok((removed, reconciled)) => {
-            eprintln!(
-                "initial sync: {reconciled} docs reconciled, {removed} stale entries removed"
-            );
-            true
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "initial sync failed; mount will continue without auto-import");
-            false
+            Err(e) => {
+                tracing::warn!(error = %e, "initial sync failed; mount will continue without auto-import");
+                false
+            }
         }
     };
 
@@ -437,7 +481,10 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
                         continue;
                     }
                 };
-                match fs.import_file_with_ownership(rel_path, &contents, uid, gid).await {
+                match fs
+                    .import_file_with_ownership(rel_path, &contents, uid, gid)
+                    .await
+                {
                     Ok(true) => imported += 1,
                     Ok(false) => skipped += 1,
                     Err(e) => {
@@ -458,13 +505,12 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         pull_enabled: !cfg.no_sync,
         push_enabled: !cfg.no_push,
     };
-    let sync_tasks = semfs_core::sync::SyncEngine::start(fs.clone(), sync_opts, shutdown_rx.clone());
+    let sync_tasks =
+        semfs_core::sync::SyncEngine::start(fs.clone(), sync_opts, shutdown_rx.clone());
 
     // Capture the L7 queue handle for IPC `Status` (lets a client/warm wait for
     // graph extraction to fully drain) BEFORE the worker spawn moves the indexer.
-    let graph_queue = graph_indexer
-        .as_ref()
-        .and_then(|i| i.graph_queue());
+    let graph_queue = graph_indexer.as_ref().and_then(|i| i.graph_queue());
 
     // L7 background entity-graph worker: drains the indexer's extraction queue
     // with bounded concurrency so the per-file blocking LLM call never sits on
@@ -547,7 +593,9 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
             // that route structurally regardless of the backend field or env.
             db_path: match storage {
                 StorageChoice::Sqlite => local_db_path.clone(),
-                StorageChoice::Pgvector | StorageChoice::Pglite => None,
+                // Non-SQLite (incl. cloud, which has no local vector index at all)
+                // carries no db_path — closing the stale-SQLite-reopen route.
+                StorageChoice::Pgvector | StorageChoice::Pglite | StorageChoice::Cloud => None,
             },
             backend: Some(storage.as_str().to_string()),
         };
@@ -641,7 +689,12 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     .await;
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), ipc_handle).await;
 
-    semfs_core::sync::SyncEngine::unmount_scan(&fs).await;
+    // The final deletion scan reconciles against REMOTE docs (a cloud pull). Skip
+    // it for a local-only mount — there is no remote to reconcile against, and it
+    // would be a residual network call. (tickets/local-mount-residual-cloud-calls.)
+    if !local_only {
+        semfs_core::sync::SyncEngine::unmount_scan(&fs).await;
+    }
 
     drop(handle);
     #[cfg(unix)]
@@ -698,8 +751,28 @@ fn collect_file_paths_recursive(
         let Ok(ft) = entry.file_type() else { continue };
         let path = entry.path();
         if ft.is_dir() {
+            // Skip vendored/dependency dirs. Their large minified bundles (e.g.
+            // node_modules/*/dist/*.cjs) are distractor noise, not workspace
+            // content, and the big ones stall the embedder — the deterministic
+            // seed hang in rcas/2026-06-03-extract-uncapped-utf8-text-path-
+            // node-modules-hang.md. See tickets/local-seed-coverage-gaps #1.
+            if matches!(
+                entry.file_name().to_str(),
+                Some("node_modules" | ".git" | "target" | "__pycache__" | ".venv")
+            ) {
+                continue;
+            }
             out.extend(collect_file_paths_recursive(&path, root));
         } else if ft.is_file() {
+            // Skip the npm lockfile: it's a sibling of the (already-skipped)
+            // node_modules tree, not workspace content, and its long dependency
+            // listing pollutes the code lane on content queries (buries answer
+            // files in RRF — rcas/2026-06-04-rrf-chunk-mass-bias-code-lane-
+            // pollution.md). Keep package.json so a generator task can still
+            // `npm install`. See tickets/exclude-node-modules-from-wb-workspace.
+            if entry.file_name().to_str() == Some("package-lock.json") {
+                continue;
+            }
             let rel = path.strip_prefix(root).unwrap_or(&path);
             let vfs_path = format!("/{}", rel.to_string_lossy());
             if semfs_core::cache::is_macos_noise_path(&vfs_path) {
@@ -709,4 +782,34 @@ fn collect_file_paths_recursive(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_file_paths_recursive;
+    use std::fs;
+
+    /// The import collector must drop the vendored `node_modules` tree and the
+    /// npm lockfile (corpus pollution) while keeping `package.json` and real
+    /// workspace content. See tickets/exclude-node-modules-from-wb-workspace.
+    #[test]
+    fn collect_skips_node_modules_and_lockfile_keeps_package_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        fs::write(root.join("report.docx"), b"deliverable").unwrap();
+        fs::write(root.join("package.json"), b"{}").unwrap();
+        fs::write(root.join("package-lock.json"), b"{}").unwrap();
+        let nm = root.join("node_modules").join("docx");
+        fs::create_dir_all(&nm).unwrap();
+        fs::write(nm.join("index.js"), b"// dep").unwrap();
+
+        let collected = collect_file_paths_recursive(root, root);
+        let vfs: Vec<&str> = collected.iter().map(|(p, _)| p.as_str()).collect();
+
+        assert!(vfs.contains(&"/report.docx"));
+        assert!(vfs.contains(&"/package.json"));
+        assert!(!vfs.iter().any(|p| p.contains("package-lock.json")));
+        assert!(!vfs.iter().any(|p| p.contains("node_modules")));
+    }
 }

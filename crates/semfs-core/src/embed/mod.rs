@@ -1,17 +1,21 @@
 //! Local embedding backends (Phase 3).
 //!
 //! The [`Embedder`] trait abstracts text → vector so the local SQLite index
-//! (Phase 4) can run offline. Impls: the dependency-free [`HashEmbedder`]
-//! (deterministic, used for tests), the fastembed-backed [`LocalEmbedder`]
-//! (real local semantic quality), and [`OpenAiEmbedder`] (cloud HTTP).
+//! (Phase 4) can run offline. Impls: the fastembed-backed [`LocalEmbedder`]
+//! (real local semantic quality) and [`OpenAiEmbedder`] (cloud HTTP). A
+//! deterministic test-only `StubEmbedder` (gated `#[cfg(test)]`) backs the store
+//! test suites without downloading a model — it is not a shipped backend.
 
 pub mod cloud;
-pub mod hash;
 pub mod local;
+/// Test-only deterministic embedder; never part of the shipped API.
+#[cfg(test)]
+pub mod stub;
 
 pub use cloud::OpenAiEmbedder;
-pub use hash::HashEmbedder;
 pub use local::LocalEmbedder;
+#[cfg(test)]
+pub(crate) use stub::StubEmbedder;
 
 /// Re-exported so callers can name registry models without a direct fastembed dep.
 pub use fastembed::EmbeddingModel;

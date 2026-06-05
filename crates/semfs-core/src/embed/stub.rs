@@ -1,34 +1,41 @@
-//! Deterministic, dependency-free embedder — the fail-open floor.
+//! `StubEmbedder` — a deterministic, dependency-free embedder used ONLY as a test
+//! double. It feature-hashes tokens into `dims` signed buckets, so it has no real
+//! semantics, but it always loads and is reproducible — exactly what the backend
+//! store tests need to exercise seed/search/rank without downloading a real model.
+//!
+//! It is gated `#[cfg(test)]` (see `embed/mod.rs`) so it never reaches the shipped
+//! crate or public API — it is not a `SEMFS_EMBED_BACKEND` option. Production code
+//! must use a real embedder (`LocalEmbedder`/`OpenAiEmbedder`); cloud storage uses
+//! none. See tickets/remove-hash-embedder.
 
 use super::Embedder;
 
-/// Hashes tokens into `dims` signed buckets and L2-normalizes. Captures lexical
-/// overlap only (no real semantics), but it always loads and is deterministic,
-/// so search keeps working when no real model is available (Finding F3 floor).
+/// Deterministic feature-hash embedder, for tests only. Hashes tokens into `dims`
+/// signed buckets and L2-normalizes — captures lexical overlap, no semantics.
 #[derive(Debug, Clone)]
-pub struct HashEmbedder {
+pub struct StubEmbedder {
     dims: usize,
 }
 
-impl HashEmbedder {
+impl StubEmbedder {
     pub fn new(dims: usize) -> Self {
         Self { dims }
     }
 }
 
-impl Default for HashEmbedder {
+impl Default for StubEmbedder {
     fn default() -> Self {
         Self::new(384)
     }
 }
 
-impl Embedder for HashEmbedder {
+impl Embedder for StubEmbedder {
     fn dimensions(&self) -> usize {
         self.dims
     }
 
     fn identity(&self) -> String {
-        format!("hash:{}", self.dims)
+        format!("stub:{}", self.dims)
     }
 
     fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
@@ -74,7 +81,7 @@ mod tests {
 
     #[test]
     fn dimensions_match_output_width() {
-        let e = HashEmbedder::new(64);
+        let e = StubEmbedder::new(64);
         let out = e.embed(&["hello world".to_string()]).unwrap();
         assert_eq!(out[0].len(), 64);
         assert_eq!(e.dimensions(), 64);
@@ -82,7 +89,7 @@ mod tests {
 
     #[test]
     fn deterministic_same_text_same_vector() {
-        let e = HashEmbedder::default();
+        let e = StubEmbedder::default();
         let a = e.embed(&["authentication and login".to_string()]).unwrap();
         let b = e.embed(&["authentication and login".to_string()]).unwrap();
         assert_eq!(a, b);
@@ -90,7 +97,7 @@ mod tests {
 
     #[test]
     fn lexical_overlap_scores_higher_than_disjoint() {
-        let e = HashEmbedder::default();
+        let e = StubEmbedder::default();
         let v = |s: &str| e.embed(&[s.to_string()]).unwrap().pop().unwrap();
         let base = v("user login and credential check");
         let overlap = v("login user credential");
