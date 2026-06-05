@@ -78,7 +78,15 @@ def make_filesys(raw_work_dir: str, standard_work_dir: str, role: str, task_dir:
 
     if standard_path.exists():
         shutil.rmtree(standard_path)
-    shutil.copytree(raw_path, standard_path)
+    # Exclude vendored node_modules from the workspace copy: it's the dataset
+    # author's build tooling (used once to generate the sample .docx), not an
+    # agent runtime dependency, and copying its thousands of tiny files is the
+    # dominant cost of prepare. package.json/package-lock.json are retained so a
+    # generator task could `npm install` to restore deps.
+    # See tickets/exclude-node-modules-from-wb-workspace.
+    shutil.copytree(
+        raw_path, standard_path, ignore=shutil.ignore_patterns("node_modules")
+    )
 
     standard_abs = standard_path.resolve()
 
