@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Case 289 — Deep Failure Analysis (semfs vs cloud)</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--fg:#e6edf3;--mut:#8b949e;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff;--ans:#3fb950;--dis:#f85149}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+.wrap{max-width:1120px;margin:0 auto;padding:28px 20px 80px}
+h1{font-size:26px;margin:0 0 4px} h2{font-size:20px;margin:34px 0 12px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+h3{font-size:16px;margin:20px 0 8px;color:var(--acc)}
+.sub{color:var(--mut);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px;margin:8px 0}
+th,td{border:1px solid var(--bd);padding:7px 9px;text-align:left;vertical-align:top}
+th{background:#1c2230;color:var(--acc);font-weight:600}
+tr:nth-child(even) td{background:#11161f}
+code{background:#1c2230;padding:1px 5px;border-radius:4px;font-size:12.5px;color:#ffa657}
+.tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:700}
+.t-ok{background:rgba(63,185,80,.15);color:var(--ok)} .t-warn{background:rgba(210,153,34,.15);color:var(--warn)} .t-bad{background:rgba(248,81,73,.15);color:var(--bad)}
+.ans{color:var(--ans);font-weight:700} .dis{color:var(--dis);font-weight:700}
+.big{font-size:30px;font-weight:800} .mut{color:var(--mut)}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;margin:10px 0}
+.step{flex:1;min-width:120px;background:#11161f;border:1px solid var(--bd);border-radius:8px;padding:10px;font-size:12.5px}
+.step .n{font-size:11px;color:var(--mut)} .step .r{font-size:18px;font-weight:800;margin-top:4px}
+.arrow{align-self:center;color:var(--mut);font-size:18px}
+.kpi{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0}
+.kpi .b{flex:1;min-width:150px;background:#11161f;border:1px solid var(--bd);border-radius:8px;padding:12px}
+.sev{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+details{margin:8px 0;background:#11161f;border:1px solid var(--bd);border-radius:8px;padding:6px 12px}
+summary{cursor:pointer;font-weight:600;color:var(--acc)}
+.note{font-size:12.5px;color:var(--mut);margin-top:4px}
+.bar{height:14px;border-radius:3px;background:var(--acc);display:inline-block;vertical-align:middle}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>Case 289 — Deep Failure Analysis</h1>
+<p class="sub">Workspace-Bench "best-selling product" · codex GPT-5.4 · semfs local vs Supermemory cloud · 2026-06-06</p>
+
+<div class="card">
+<b>One-paragraph truth.</b> The task asks codex to find a Chinese product-data file using an English query.
+Local semfs fails to surface it cleanly for <b>three compounding reasons</b> — a cross-lingual recall miss
+(English query vs 100%-Chinese content), a post-rerank ranking bug that destabilises the answer's position,
+and a whole-doc return format — so codex compensates with <b>17–19 tool calls</b> (incl. a 62 KB filesystem
+walk). Cloud does it in <b>3–4 calls</b> because it translates the query <i>and</i> returns the answer at a
+clean #1. Token gap: <b>cloud 18 K vs local best 82 K</b>.</p>
+</div>
+
+<div class="kpi">
+<div class="b"><div class="mut">plain codex</div><div class="big">143,837</div></div>
+<div class="b"><div class="mut">local best (e5, no rewrite)</div><div class="big" style="color:var(--warn)">82,653</div><div class="note">−43% · but "passes" via lucky <code>ls model_output/</code></div></div>
+<div class="b"><div class="mut">cloud (target)</div><div class="big" style="color:var(--ok)">18,144</div><div class="note">−87% · 4 calls</div></div>
+<div class="b"><div class="mut">local + rewrite</div><div class="big" style="color:var(--bad)">114,301</div><div class="note">retrieval fixed, tokens UP</div></div>
+</div>
+
+<h2>1 · The retrieval pipeline & where the answer gets diluted</h2>
+<p class="sub">Answer file = <code>best_selling_product_core_data_list.txt</code> (468 chars, 100% Chinese, 1 chunk, 2 copies).
+Tracked through every layer for the verbatim queries (RANKDUMP-measured).</p>
+
+<h3>Rank progression — English query vs translate-rewrite</h3>
+<table>
+<tr><th>Layer</th><th>What it does</th><th>Answer rank · <b>English query</b></th><th>Answer rank · <b>rewrite (EN+ZH)</b></th></tr>
+<tr><td>L0 extract/index</td><td>parse → chunk → embed</td><td colspan="2">OK (answer = 1 clean chunk). <b>29 other files FAILED</b> (see §5).</td></tr>
+<tr><td>L1 dense (vec KNN, top-80)</td><td>e5 cosine</td><td class="dis">#417 / 592 → not in pool</td><td class="ans">in pool (ZH→ZH match)</td></tr>
+<tr><td>L1 lexical (BM25/FTS5, top-80)</td><td>exact token</td><td class="dis">dead (0 EN terms in file)</td><td class="ans">matches <code>转化率</code>,<code>成交金额</code></td></tr>
+<tr><td>L1 code (top-80)</td><td>code embed</td><td colspan="2" class="mut">n/a (.txt)</td></tr>
+<tr><td>RRF fusion</td><td>Σ 1/(60+rank) per lane</td><td class="dis">absent (not in top-57)</td><td class="warn">#7 / #8 &nbsp;<span class="note">(only 2 weak lanes vote → diluted below multi-lane distractors)</span></td></tr>
+<tr><td>L5 cross-encoder rerank</td><td>jina, top-50</td><td class="dis">absent</td><td class="ans">#0 / #1 ✓ rescued (score −0.72)</td></tr>
+<tr><td>L6 salience × L7 co-mention</td><td>×factor on score</td><td class="mut">—</td><td class="bad">⚠ reorders (see §3 bug)</td></tr>
+<tr><td>FINAL returned (top-N)</td><td>sort + whole-doc</td><td class="dis">not in 50 → codex <code>ls</code> finds it</td><td class="warn">#1/#2 <i>or</i> #2/#3 — <b>unstable</b></td></tr>
+</table>
+
+<h3>Visual: the rewrite path (answer's journey)</h3>
+<div class="flow">
+<div class="step"><div class="n">L1 vec</div><div class="r ans">in</div></div><div class="arrow">→</div>
+<div class="step"><div class="n">L1 BM25</div><div class="r ans">match</div></div><div class="arrow">→</div>
+<div class="step"><div class="n">RRF</div><div class="r warn">#7</div><div class="n">diluted</div></div><div class="arrow">→</div>
+<div class="step"><div class="n">RERANK</div><div class="r ans">#1</div><div class="n">rescued</div></div><div class="arrow">→</div>
+<div class="step"><div class="n">L6/L7</div><div class="r bad">±</div><div class="n">destabilised</div></div><div class="arrow">→</div>
+<div class="step"><div class="n">FINAL</div><div class="r warn">#1–3</div><div class="n">unstable</div></div>
+</div>
+<p class="note">English query: the answer never even enters L1 — it's <span class="dis">#417</span> in pure vector and absent from BM25 — so RRF/rerank never see it. Translating the query is the only thing that gets it into the candidate pool.</p>
+
+<h2>2 · Points of failure — layer by layer (deep dive)</h2>
+<table>
+<tr><th>#</th><th>Layer</th><th>Failure</th><th>Evidence</th><th>Severity</th></tr>
+<tr><td>F1</td><td>L1 dense embed</td><td><b>Cross-lingual gap.</b> e5-small EN→ZH alignment too weak; answer #417 (EN) vs #1 (ZH).</td><td>gemma_corpus full-corpus rank</td><td><span class="sev" style="background:var(--bad)"></span>critical</td></tr>
+<tr><td>F2</td><td>L1 dense embed</td><td><b>e5 prefix missing.</b> <code>model.embed(window,None)</code> — no <code>query:</code>/<code>passage:</code> prefix that e5 was trained to require. Degrades recall (esp. cross-lingual).</td><td><code>embed/local.rs:95</code></td><td><span class="sev" style="background:var(--warn)"></span>high</td></tr>
+<tr><td>F3</td><td>L1 lexical</td><td><b>BM25 dead for EN→ZH.</b> unicode61 tokenizer = no CJK segmentation; matches only verbatim runs. EN terms match English-content files, never the ZH answer.</td><td>MATCH <code>best</code>→answer not in top-8; <code>转化率</code>→in top-8</td><td><span class="sev" style="background:var(--warn)"></span>high</td></tr>
+<tr><td>F4</td><td>RRF fusion</td><td><b>Single-lane dilution.</b> Cross-lingual answer gets ≤2 weak lane votes; multi-lane distractors out-vote it → #7/#8 even when vec says #1.</td><td>RRF dump</td><td><span class="sev" style="background:var(--warn)"></span>high</td></tr>
+<tr><td>F5</td><td>L6/L7 post-rerank</td><td><b>Multiplicative boost on NEGATIVE scores inverts.</b> rerank logits are negative (−0.72); <code>score *= 1.05</code> / <code>*= salience(0.85–1.5)</code> make the best hit <i>more</i> negative → demote it; stale hits (factor&lt;1) get promoted.</td><td><code>rank.rs:193,206</code></td><td><span class="sev" style="background:var(--bad)"></span>critical</td></tr>
+<tr><td>F6</td><td>L6 salience</td><td><b>Non-deterministic ranking.</b> <code>access_count</code> is bumped on <i>every</i> search and feeds salience → identical query returns different order across runs (answer #1 one run, #2/#3 the next).</td><td><code>sqlite_vec.rs:1094</code> + 2 probe runs differing</td><td><span class="sev" style="background:var(--bad)"></span>critical</td></tr>
+<tr><td>F7</td><td>Return format</td><td><b>Whole-doc return.</b> Returns full docs (≤64 KB ea). On a large-doc corpus this floods codex's multi-turn context; cloud returns matching chunks.</td><td>grep payload 75 KB vs cloud 10 KB</td><td><span class="sev" style="background:var(--warn)"></span>high</td></tr>
+<tr><td>F8</td><td>Agent loop</td><td><b>codex compensates with os.walk.</b> When the top hit isn't trustworthy, codex brute-walks the tree (62 KB) + runs pandas/openpyxl on candidates → 17–19 calls; context re-replays each turn.</td><td>cmd traces §4</td><td><span class="sev" style="background:var(--bad)"></span>critical</td></tr>
+<tr><td>F9</td><td>L0 extraction</td><td><b>29 files failed to embed</b> — xlsx mis-detected as <code>format=Pdf</code> → extraction fails.</td><td><code>fs_unindexed</code> table</td><td><span class="sev" style="background:var(--warn)"></span>med</td></tr>
+<tr><td>F10</td><td>L0 extraction</td><td><b>3 HTML-garbage files indexed</b> (403/login pages saved as .xlsx) incl. <code>top10_product_status_table.xlsx</code>.</td><td>chunks LIKE '%&lt;html%'</td><td><span class="sev" style="background:var(--warn)"></span>low</td></tr>
+<tr><td>F11</td><td>Grader</td><td><b>Existence-only grading masks F1–F8.</b> Any returned existing path passes — so the 82 K "win" survives despite search never finding the file (codex <code>ls</code>'d the predictable output dir).</td><td>grader code</td><td><span class="sev" style="background:var(--mut)"></span>context</td></tr>
+</table>
+
+<h2>3 · The salience/co-mention bug (F5/F6) — the "why doesn't rerank stick" answer</h2>
+<div class="card">
+<p>After L5 the answer is correctly <b>#1</b> (score <code>−0.719</code>). Then:</p>
+<pre style="background:#11161f;border:1px solid var(--bd);border-radius:8px;padding:10px;overflow:auto;font-size:12.5px">
+// rank.rs — applied AFTER rerank, on the cross-encoder score
+h.similarity *= 1.05;                      // L7 co-mention "boost"
+h.similarity *= salience(now,last,count);  // L6, salience ∈ [0.85, 1.50]
+</pre>
+<p>Cross-encoder scores are <b>negative</b>. Multiplying a negative by a factor &gt;1 makes it <b>more
+negative → ranks lower</b>. So a "boost" <i>demotes</i> the best hit, while a stale file (salience&lt;1)
+gets <i>promoted</i>. And because <code>access_count</code> is incremented on every search (F6), the factor
+drifts run-to-run — the same query yields different top-N orderings. Codex sees an untrustworthy #1 → explores.</p>
+<p class="note"><b>Fix:</b> apply L6/L7 as additive nudges, or on a sigmoid-normalised [0,1] score, or
+<i>before</i> rerank (on positive RRF scores). And don't let read-path <code>access_count</code> bumps feed
+the same-session ranking.</p>
+</div>
+
+<h2>4 · Tool-call comparison — cloud vs local</h2>
+<table>
+<tr><th>config</th><th>tokens</th><th>tool calls*</th><th>os.walk?</th><th>answer at grep #1?</th></tr>
+<tr><td class="ans">cloud (Supermemory)</td><td>18,144 / 26,595</td><td><b>3–4</b></td><td>no</td><td class="ans">yes (clean #1)</td></tr>
+<tr><td>e5, no rewrite</td><td>82,653</td><td>19</td><td>—</td><td class="dis">no (not retrieved → ls fallback)</td></tr>
+<tr><td>e5 + rewrite</td><td>114,301</td><td>19</td><td>yes</td><td class="warn">unstable (#1–3)</td></tr>
+<tr><td>e5 + rewrite + cap 6KB</td><td>129,176</td><td>17</td><td>yes (62 KB)</td><td class="warn">unstable</td></tr>
+<tr><td>e5 + rewrite + snippet</td><td>133,428</td><td>17</td><td>yes (62 KB)</td><td class="warn">unstable</td></tr>
+<tr><td>e5 + rewrite + limit 4</td><td>135,670</td><td>~17</td><td>yes</td><td class="warn">unstable</td></tr>
+</table>
+<p class="note">* "tool calls" = codex tool events (started+completed pairs ≈ 2× the shell commands). Cloud ≈ 2 commands, local ≈ 8 commands.</p>
+
+<h3>First-tool-call dataset (the runs with full traces preserved)</h3>
+<p class="note">Only the most-recent case dir keeps <code>codex_stdout.jsonl</code>; older configs keep counts only.</p>
+<table>
+<tr><th>run</th><th>#</th><th>command (truncated)</th><th>out bytes</th><th>answer in output?</th></tr>
+<tr><td rowspan="3" class="ans">CLOUD (cloud3)<br>26,595 tok</td><td>1</td><td><code>pwd && ls -la && cat profile.md</code></td><td>2,171</td><td>no</td></tr>
+<tr><td>2</td><td><code>semfs grep "best-selling product…transaction…"</code></td><td>10,741</td><td class="ans">YES (#1)</td></tr>
+<tr><td>3</td><td><code>python … write model_output/best_selling…txt</code></td><td>461</td><td>—</td></tr>
+<tr><td rowspan="8">LOCAL snippet<br>133,428 tok</td><td>1</td><td><code>pwd && ls -la && cat profile.md && semfs grep …</code></td><td>26,973</td><td>yes (mixed)</td></tr>
+<tr><td>2</td><td><code>python os.walk('.')</code> &nbsp;← brute tree enum</td><td class="dis">62,332</td><td>yes</td></tr>
+<tr><td>3</td><td><code>python pandas read … product_data</code></td><td>291</td><td>no</td></tr>
+<tr><td>4</td><td><code>python pandas read …</code></td><td>257</td><td>no</td></tr>
+<tr><td>5</td><td><code>file desktop/…/top10_product_status…</code></td><td>387</td><td>no</td></tr>
+<tr><td>6</td><td><code>sed -n 1,220p …top10…</code></td><td>321</td><td>no</td></tr>
+<tr><td>7</td><td><code>sed -n 1,220p …best_selling…</code></td><td>468</td><td>no</td></tr>
+<tr><td>8</td><td><code>cp …best_selling… model_output/</code></td><td>469</td><td>no</td></tr>
+</table>
+<p class="note"><b>The tell:</b> cloud's call #2 returns the answer at #1 (10 KB) → codex writes & stops. Local's
+call #1 returns the answer mixed with a 27 KB blob, codex doesn't trust it → call #2 is a 62 KB
+<code>os.walk</code> + 6 inspection calls. Same task, same model — the difference is whether grep's #1 is
+trustworthy. A machine-readable copy of this dataset is in <code>RESULTS.md</code> / can be exported to JSON on request.</p>
+
+<h2>5 · Did any docs fail to embed? (coverage audit)</h2>
+<div class="kpi">
+<div class="b"><div class="mut">files indexed (≥1 chunk)</div><div class="big">595</div></div>
+<div class="b"><div class="mut">files FAILED (<code>fs_unindexed</code>)</div><div class="big" style="color:var(--bad)">29</div></div>
+<div class="b"><div class="mut">HTML-garbage indexed</div><div class="big" style="color:var(--warn)">3</div></div>
+<div class="b"><div class="mut">images OCR'd</div><div class="big" style="color:var(--ok)">9</div></div>
+</div>
+<table>
+<tr><th>failure class</th><th>count</th><th>examples</th></tr>
+<tr><td><b>xlsx mis-detected as <code>format=Pdf</code></b> → extraction fails</td><td>~22</td><td><code>annual_results_core_data_summary.xlsx</code>, <code>defect_escape_rate_analysis_report_2025q1.xlsx</code></td></tr>
+<tr><td>PDF extraction fail</td><td>~5</td><td><code>core_metrics_monthly_report_2025m03.pdf</code>, URL-encoded-ZH-name PDF</td></tr>
+<tr><td>jpg / Unknown format</td><td>2</td><td><code>1577.jpg</code>, a release-plan xlsx (Unknown)</td></tr>
+</table>
+<p class="note">The answer file embedded fine. But <code>annual_results_core_data_summary.xlsx</code> (a plausibly
+relevant file) is among the failures. OCR <i>did</i> run (jpgs hold brand text: "adidas", "INDIA JUST DO
+IT") — so OPENROUTER_API_KEY was present at seed time. The "273 chunks containing 403" alarm was a false
+positive (legit financial figures like −403.2), not 403 errors.</p>
+
+<h2>6 · How to give LOCAL a cloud-style overview (profile.md)</h2>
+<div class="card">
+<p><b>Why it matters.</b> The mount hint tells codex: "read <code>profile.md</code> for an overview." But
+<code>profile.md</code> is fed by Supermemory's <code>/v4/profile</code> memory API — and it's <b>empty for
+both cloud and local here</b> (this container has no extracted memories). So that wasn't the cloud/local
+differentiator — but a <i>populated</i> local profile is still the cleanest way to kill the 62 KB os.walk:
+give codex the tree up front so it never enumerates it.</p>
+<h3>Design (proposed, no cloud dependency)</h3>
+<ol style="font-size:13.5px">
+<li><b>Structural section (deterministic, from the cache):</b> directory tree (depth ≤3) with per-dir file
+counts + extensions, generated from <code>fs_inode</code>/<code>chunks</code>. This is exactly what the
+os.walk produces — pre-compute it so codex doesn't.</li>
+<li><b>Content section (cheap LLM, one-time at index):</b> 1-line topic summary per top-level dir from a
+sample of chunk texts (gpt-4.1-nano) — mirrors Supermemory's "memories" but offline. Links to the
+<code>summary-augmented-table-retrieval</code> idea.</li>
+<li><b>Wire-up:</b> <code>ProfileFile::warm()</code> falls back to <code>format_local_profile(db)</code> when
+<code>/v4/profile</code> is empty/unavailable (local mounts). No new flag.</li>
+</ol>
+<p class="note">Expected effect: removes F8's 62 KB os.walk and the inspection calls → fewer tool calls →
+lower tokens, independent of retrieval quality.</p>
+</div>
+
+<h2>7 · Sparse embeddings (replace BM25)?</h2>
+<p>Probed, <b>not built</b>. BGE-M3 sparse (FlagEmbedding) ranked the answer <code>.txt</code> at <b>#8–11</b>
+(pure sparse), dashboard #1 — not a clear win, and it needs a whole new index lane + re-seed. Given today's
+findings (BM25 already matches the verbatim ZH terms after rewrite; the binding constraints are F5/F6/F8,
+not lexical recall), a learned-sparse lane is <b>lower priority</b> than fixing the ranking bug and the
+agent-overview. Revisit only if cross-lingual recall (F1) becomes the bottleneck after F5/F6 are fixed.</p>
+
+<h2>8 · Prioritised fixes (by expected token impact)</h2>
+<table>
+<tr><th>P</th><th>fix</th><th>addresses</th><th>effort</th><th>why</th></tr>
+<tr><td>P0</td><td>Fix L6/L7 to not invert on negative scores + stabilise (don't feed read-path access_count)</td><td>F5,F6</td><td>low</td><td>makes rerank's #1 actually #1 & deterministic → codex trusts it → fewer calls</td></tr>
+<tr><td>P0</td><td>Populate local <code>profile.md</code> (tree + topic summary)</td><td>F8</td><td>med</td><td>removes the 62 KB os.walk + inspections</td></tr>
+<tr><td>P1</td><td>Keep <code>SEMFS_REWRITE</code> on (shipped)</td><td>F1,F3</td><td>done</td><td>gets the answer into the pool at all (correctness)</td></tr>
+<tr><td>P1</td><td>Add e5 <code>query:</code>/<code>passage:</code> prefixes</td><td>F2</td><td>low</td><td>lifts dense recall, may reduce reliance on rewrite</td></tr>
+<tr><td>P2</td><td>Fix xlsx→Pdf mis-detection in extractor</td><td>F9</td><td>med</td><td>+22 files indexed (incl. relevant ones)</td></tr>
+<tr><td>P2</td><td><code>SEMFS_RETURN_MODE=snippet</code> (shipped) — pair with P0</td><td>F7</td><td>done</td><td>compact returns, but only helps once #1 is trustworthy</td></tr>
+</table>
+
+<p class="note" style="margin-top:24px">Sources: RANKDUMP probes on <code>chanpin-e5-nosum</code>; cloud3 / snip codex traces;
+<code>fs_unindexed</code>, <code>ffts</code>, <code>chunks</code> queries. Companion docs:
+<code>rcas/2026-06-06-cross-lingual-recall-miss-case289.md</code>, <code>tickets/embedder-config-search/{RESULTS.md,CONFIGS.md}</code>.</p>
+
+</div></body></html>

@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>semfs Retrieval Investigation — Workspace-Bench case 289</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#30363d;
+    --txt:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --accentdim:#1f6feb;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --open:#a371f7; --ruled:#6e7681;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.55;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 22px 80px}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:38px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border);letter-spacing:-.01em}
+  h3{font-size:15px;margin:20px 0 8px;color:var(--accent)}
+  .sub{color:var(--dim);font-size:14px;margin:0 0 8px}
+  code,.mono{font-family:var(--mono);font-size:13px}
+  .headline{background:linear-gradient(135deg,#11202e,#161b22);border:1px solid var(--accentdim);
+    border-radius:12px;padding:18px 20px;margin:18px 0 8px}
+  .headline b{color:var(--accent)}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;
+    text-transform:uppercase;letter-spacing:.04em;vertical-align:middle}
+  .s-fixed{background:rgba(63,185,80,.15);color:var(--ok);border:1px solid rgba(63,185,80,.4)}
+  .s-confirmed{background:rgba(210,153,34,.15);color:var(--warn);border:1px solid rgba(210,153,34,.4)}
+  .s-open{background:rgba(163,113,247,.15);color:var(--open);border:1px solid rgba(163,113,247,.4)}
+  .s-ruled{background:rgba(110,118,129,.18);color:#adb6c0;border:1px solid rgba(110,118,129,.5)}
+  /* query panel */
+  .qpanel{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+  @media(max-width:760px){.qpanel{grid-template-columns:1fr}}
+  .qcard{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .qcard.cloud{border-color:rgba(63,185,80,.45)}
+  .qcard.local{border-color:rgba(248,81,73,.45)}
+  .qcard h3{margin-top:0}
+  .q{display:flex;align-items:flex-start;gap:8px;background:var(--panel2);border:1px solid var(--border);
+    border-radius:7px;padding:8px 10px;margin:7px 0;font-family:var(--mono);font-size:12.5px;word-break:break-word}
+  .q .num{color:var(--dim);flex:0 0 auto}
+  .q .txt{flex:1}
+  .copy{flex:0 0 auto;cursor:pointer;background:none;border:1px solid var(--border);color:var(--dim);
+    border-radius:5px;font-size:11px;padding:1px 7px}
+  .copy:hover{color:var(--accent);border-color:var(--accent)}
+  .rk{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:4px;margin-left:6px}
+  .rk.hit{background:rgba(63,185,80,.18);color:var(--ok)}
+  .rk.miss{background:rgba(248,81,73,.18);color:var(--bad)}
+  /* tables */
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+  tr:hover td{background:rgba(88,166,255,.05)}
+  td.num,th.num{text-align:right;font-family:var(--mono)}
+  .win{color:var(--ok);font-weight:600}
+  .lose{color:var(--bad)}
+  /* filter chips */
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 16px}
+  .chip{cursor:pointer;padding:5px 12px;border-radius:20px;border:1px solid var(--border);
+    background:var(--panel);color:var(--dim);font-size:12.5px;font-weight:600;user-select:none}
+  .chip.active{background:var(--accentdim);color:#fff;border-color:var(--accentdim)}
+  /* hypothesis cards */
+  .hyp{background:var(--panel);border:1px solid var(--border);border-left-width:4px;border-radius:9px;
+    margin:10px 0;overflow:hidden;transition:.15s}
+  .hyp.fixed{border-left-color:var(--ok)} .hyp.confirmed{border-left-color:var(--warn)}
+  .hyp.open{border-left-color:var(--open)} .hyp.ruled{border-left-color:var(--ruled)}
+  .hyp.hidden{display:none}
+  .hyp .head{padding:13px 16px;cursor:pointer;display:flex;align-items:center;gap:10px}
+  .hyp .head:hover{background:var(--panel2)}
+  .hyp .id{font-family:var(--mono);font-size:12px;color:var(--dim);flex:0 0 auto}
+  .hyp .title{font-weight:600;flex:1}
+  .hyp .body{padding:0 16px;max-height:0;overflow:hidden;transition:max-height .25s ease;color:var(--dim);font-size:14px}
+  .hyp.exp .body{max-height:600px;padding:0 16px 15px}
+  .hyp .arrow{color:var(--dim);transition:.2s} .hyp.exp .arrow{transform:rotate(90deg)}
+  .ev{background:var(--panel2);border-radius:7px;padding:9px 12px;margin:8px 0;border:1px solid var(--border)}
+  .ev .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);font-weight:600}
+  /* pipeline */
+  .pipe{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:6px 0 16px;margin:8px 0}
+  .stage{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--border);
+    border-radius:9px;padding:12px;margin-right:24px;position:relative;cursor:pointer}
+  .stage:last-child{margin-right:0}
+  .stage:after{content:'▶';position:absolute;right:-19px;top:50%;transform:translateY(-50%);color:var(--dim)}
+  .stage:last-child:after{content:''}
+  .stage:hover{border-color:var(--accent)}
+  .stage.fail{border-color:rgba(248,81,73,.5)}
+  .stage .sn{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+  .stage .st{font-weight:600;font-size:14px;margin:3px 0}
+  .stage .badge{display:inline-block;font-family:var(--mono);font-size:10px;background:rgba(248,81,73,.16);
+    color:var(--bad);border-radius:4px;padding:1px 5px;margin:2px 2px 0 0}
+  .stage.ok-stage .badge{background:rgba(63,185,80,.16);color:var(--ok)}
+  #stageDetail{background:var(--panel);border:1px solid var(--accent);border-radius:9px;padding:14px 16px;margin-top:6px;display:none}
+  ul{margin:6px 0;padding-left:20px} li{margin:3px 0}
+  .foot{color:var(--ruled);font-size:12px;margin-top:40px;border-top:1px solid var(--border);padding-top:14px}
+  .key{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin:4px 0 0}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>semfs Retrieval Investigation</h1>
+  <p class="sub">Workspace-Bench <b>case 289</b> ("best-selling product") · codex GPT-5.4 · branch <code>feat/backend-agnostic-store</code> · updated 2026-06-05</p>
+
+  <div class="headline">
+    The agent answer (<code>best_selling_product_core_data_list.txt</code>) is retrieved at <b>#1 in cloud</b> but
+    <b>never enters the top-10 locally</b>. We proved the bottleneck is <b>cross-lingual retrieval recall</b>
+    (English query ↔ Chinese content) — <b>not</b> the reranker, <b>not</b> the storage backend, and <b>not</b> the
+    timeout (that was a separate, now-fixed issue). The exact cloud query <b>misses locally</b>; a Chinese query hits <b>#1</b>.
+  </div>
+
+  <!-- ============ VERBATIM QUERIES ============ -->
+  <h2>① Verbatim queries — test against THESE word-for-word</h2>
+  <p class="sub">The exact <code>semfs grep</code> strings codex issued. Cloud and local phrasings differ — both must be tested.</p>
+  <div class="qpanel">
+    <div class="qcard cloud">
+      <h3>☁️ CLOUD run query <span class="pill s-fixed">answer #1 in cloud</span></h3>
+      <div class="q"><span class="num">1</span><span class="txt">best-selling product data file top10 product title transaction amount conversion rate</span><button class="copy">copy</button><span class="rk miss">local: MISS</span></div>
+      <p class="sub" style="margin:8px 0 0">1 search → whole-doc return → answer #1 → wrote file. 2 tool calls, 18,144 tokens.</p>
+    </div>
+    <div class="qcard local">
+      <h3>💻 LOCAL run queries <span class="pill s-confirmed">answer MISS locally</span></h3>
+      <div class="q"><span class="num">1</span><span class="txt">best-selling product data file title transaction amount conversion rate</span><button class="copy">copy</button><span class="rk miss">MISS</span></div>
+      <div class="q"><span class="num">2</span><span class="txt">best-selling product data file</span><button class="copy">copy</button><span class="rk miss">.txt MISS / dash #4</span></div>
+      <div class="q"><span class="num">3</span><span class="txt">top10 product title transaction amount conversion rate</span><button class="copy">copy</button><span class="rk miss">MISS</span></div>
+      <div class="q"><span class="num">4</span><span class="txt">best selling product</span><button class="copy">copy</button><span class="rk miss">.txt MISS / dash #10</span></div>
+    </div>
+  </div>
+  <h3>Cross-lingual probes (same local seed) — the proof</h3>
+  <div class="qcard">
+    <div class="q"><span class="num">EN</span><span class="txt">best-selling product data file title transaction amount conversion rate</span><button class="copy">copy</button><span class="rk miss">MISS</span></div>
+    <div class="q"><span class="num">EN+ZH</span><span class="txt">best selling products 热销商品 成交金额 转化率 店铺</span><button class="copy">copy</button><span class="rk hit">#1</span></div>
+    <div class="q"><span class="num">ZH</span><span class="txt">热销商品 核心数据 成交金额 转化率</span><button class="copy">copy</button><span class="rk hit">#1</span></div>
+    <div class="q"><span class="num">EN+rewrite</span><span class="txt">best-selling product data file title transaction amount conversion rate &nbsp;(--rewrite)</span><button class="copy">copy</button><span class="rk miss">MISS</span></div>
+  </div>
+
+  <!-- ============ HYPOTHESIS TRACKER ============ -->
+  <h2>② Issue / hypothesis tracker</h2>
+  <div class="filters">
+    <span class="chip active" data-f="all">All</span>
+    <span class="chip" data-f="fixed">✅ Fixed</span>
+    <span class="chip" data-f="confirmed">⚠️ Confirmed cause</span>
+    <span class="chip" data-f="open">🔵 Open</span>
+    <span class="chip" data-f="ruled">⊘ Ruled out</span>
+  </div>
+  <div id="hyps"></div>
+
+  <!-- ============ PIPELINE ============ -->
+  <h2>③ Retrieval pipeline — where the answer dies (click a stage)</h2>
+  <p class="sub">A document must survive every stage. It's lost at <b>Stage A/B (query embed + recall)</b> — long before the reranker.</p>
+  <div class="pipe" id="pipe"></div>
+  <div id="stageDetail"></div>
+
+  <!-- ============ TESTS ============ -->
+  <h2>④ Tests performed &amp; results</h2>
+
+  <h3>4-way run comparison (case 289)</h3>
+  <table>
+    <tr><th>Config</th><th class="num">Tokens</th><th class="num">Tool events</th><th class="num">grep</th><th>Timeouts</th><th>Answer rank</th><th class="num">Agent dur</th></tr>
+    <tr><td>plain codex</td><td class="num">143,837</td><td class="num">—</td><td class="num">0</td><td>0</td><td>FS-explore</td><td class="num">47.5s</td></tr>
+    <tr><td>local sqlite, <b>25s</b> (orig)</td><td class="num">145,696</td><td class="num">24</td><td class="num">3</td><td class="lose">2 timed out</td><td class="lose">MISS</td><td class="num">92.4s</td></tr>
+    <tr><td>local sqlite, <b>50s</b> (H1 fix)</td><td class="num win">82,653</td><td class="num">19</td><td class="num">2</td><td class="win">0</td><td class="lose">MISS</td><td class="num">78.2s</td></tr>
+    <tr><td>☁️ <b>cloud</b> (Supermemory)</td><td class="num win">18,144</td><td class="num win">4</td><td class="num">1</td><td class="win">0</td><td class="win">#1</td><td class="num">168.4s</td></tr>
+  </table>
+  <p class="sub">All runs <code>cache_read=0</code> (prompt caching off everywhere). Cloud's higher duration = slow cloud-container mount, not search (~2s).</p>
+
+  <h3>Exact-query rank test — verbatim codex queries vs LOCAL retrieval</h3>
+  <table>
+    <tr><th>Source</th><th>Query (verbatim)</th><th>answer .txt</th><th>dashboard .xlsx</th></tr>
+    <tr><td>☁️ CLOUD</td><td class="mono">…file top10 product title transaction amount conversion rate</td><td class="lose">MISS</td><td class="lose">MISS</td></tr>
+    <tr><td>LOCAL #1</td><td class="mono">…file title transaction amount conversion rate</td><td class="lose">MISS</td><td class="lose">MISS</td></tr>
+    <tr><td>LOCAL #2</td><td class="mono">best-selling product data file</td><td class="lose">MISS</td><td class="win">#4</td></tr>
+    <tr><td>LOCAL #3</td><td class="mono">top10 product title transaction…</td><td class="lose">MISS</td><td class="lose">MISS</td></tr>
+    <tr><td>LOCAL #4</td><td class="mono">best selling product</td><td class="lose">MISS</td><td>#10</td></tr>
+  </table>
+  <p class="sub"><b>Same cloud query → #1 in cloud, MISS in local</b> ⇒ embedder/retrieval, not phrasing. <b>Shorter query retrieves dashboard; longer loses it</b> ⇒ query dilution.</p>
+
+  <h3>Reranker A/B (local seed, English query) — rerank can't fix recall</h3>
+  <table>
+    <tr><th>Reranker</th><th>Answer rank</th><th>Note</th></tr>
+    <tr><td>local jina-v2 (default)</td><td class="lose">MISS</td><td>—</td></tr>
+    <tr><td>cohere/rerank-v3.5</td><td class="lose">MISS</td><td>via OpenRouter</td></tr>
+    <tr><td>cohere/rerank-4-pro</td><td class="lose">MISS</td><td>scored answer <b>0.93</b> in isolation, but never sees it in-pipeline</td></tr>
+  </table>
+  <p class="sub">Reranker only reorders the candidate pool; the answer isn't <i>in</i> the pool. <code>SEMFS_RERANK_MODEL</code> override shipped (any Cohere-schema model, incl. ZeroEntropy later).</p>
+
+  <!-- ============ REWRITE ============ -->
+  <h2>⑤ Query rewrite — what exists today</h2>
+  <div class="qcard">
+    <ul>
+      <li><b>Opt-in only</b> via <code>semfs grep --rewrite</code>. <b>OFF in every benchmark run</b> — codex never passed it, so no rewrite occurred.</li>
+      <li><b>Model:</b> OpenRouter <code>openai/gpt-4.1-nano</code>, temperature 0.0, one-shot. Fail-open to the original query on error.</li>
+      <li><b>Prompt:</b> <i>"Expand abbreviations, add closely-related terms and synonyms, keep it one concise line."</i></li>
+      <li><b class="lose">Does NOT translate</b> — expands in the same language. That's why <code>--rewrite</code> still MISSED (more English ≠ Chinese content).</li>
+      <li><b>Fix idea:</b> a translate-into-corpus-language rewrite (or append target-language terms) — the cheapest path to recover cross-lingual recall, no re-index needed.</li>
+    </ul>
+  </div>
+
+  <!-- ============ NEXT ============ -->
+  <h2>⑥ Next levers (ranked by impact for case 289)</h2>
+  <table>
+    <tr><th>Lever</th><th>Addresses</th><th>Cost</th><th>Status</th></tr>
+    <tr><td>e5 <code>query:</code>/<code>passage:</code> prefix fix</td><td>cross-lingual + general recall (all queries)</td><td>med (re-index)</td><td><span class="pill s-open">open</span></td></tr>
+    <tr><td>Translating <code>--rewrite</code> (or ZH-term append)</td><td>cross-lingual recall</td><td>low</td><td><span class="pill s-open">open</span></td></tr>
+    <tr><td>Stronger multilingual embedder</td><td>EN↔ZH alignment (match cloud)</td><td>med</td><td><span class="pill s-open">open</span></td></tr>
+    <tr><td>Re-hydrate 403-corrupted xlsx</td><td>data correctness (3 files)</td><td>low</td><td><span class="pill s-open">open</span></td></tr>
+    <tr><td>Raise / smarter index cap (2MB dashboard)</td><td>partial-doc recall</td><td>low</td><td><span class="pill s-open">open</span></td></tr>
+    <tr><td>Read-path isolation (throughput)</td><td>removes need for 50s padding</td><td>med</td><td><span class="pill s-open">ticket</span></td></tr>
+  </table>
+
+  <div class="foot">
+    Artifacts: <code>tickets/explore-agent-search-behavior/artifacts/*.agent.json</code> ·
+    RCA: <code>rcas/2026-06-05-agent-search-token-blowup-turn-multiplication.md</code> ·
+    Env: <code>benchmarks/workspace_bench/cloud_env_state.md</code> ·
+    Throughput ticket: <code>tickets/search-throughput-readpath-isolation/</code>
+    <div class="key">
+      <span><span class="pill s-fixed">fixed</span> verified &amp; shipped</span>
+      <span><span class="pill s-confirmed">confirmed</span> proven root cause</span>
+      <span><span class="pill s-open">open</span> hypothesis / todo</span>
+      <span><span class="pill s-ruled">ruled out</span> tested, not the cause</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const HYPS=[
+ {id:'H1',cls:'fixed',st:'s-fixed',badge:'FIXED',title:'Daemon search timeout (25s) → brute-force cascade',
+  body:`<p>First 2 <code>semfs grep</code> calls timed out at the daemon's 25s IPC bound → empty cloud fallback → agent abandoned search and brute-forced the FS (51KB os.walk replayed every turn).</p>
+  <div class="ev"><span class="lbl">Fix shipped</span><br>SEARCH_TIMEOUT 25s→50s + client give-up 30s→60s. E2E: <b>0 timeouts, tokens 145,696→82,653 (−43%)</b>.</div>
+  <div class="ev"><span class="lbl">Root mechanism</span><br>Single <code>Mutex&lt;Connection&gt;</code> serializes search reads behind the post-mount indexer's write lock. 50s is a stopgap; real fix = dedicated read connection (throughput ticket).</div>`},
+ {id:'X1',cls:'open',st:'s-open',badge:'OPEN',title:'Throughput: single Mutex<Connection> lock contention',
+  body:`<p>Search reads queue behind indexer writes through one mutexed sqlite connection (WAL is on but nullified by the app-level mutex). 50s timeout just widens the wait window.</p>
+  <div class="ev"><span class="lbl">Fix</span><br>Give search a dedicated read-only WAL connection. Tracked in <code>tickets/search-throughput-readpath-isolation/</code>.</div>`},
+ {id:'R1',cls:'confirmed',st:'s-confirmed',badge:'ROOT CAUSE',title:'Cross-lingual retrieval recall (EN query ↔ ZH content)',
+  body:`<p>The dominant local↔cloud gap. The answer is a 1-chunk Chinese product list; English queries don't retrieve it into the candidate pool.</p>
+  <div class="ev"><span class="lbl">Proof</span><br>EN query → <b>MISS</b>. EN+ZH or pure ZH → <b>#1</b>. Same exact cloud query → #1 in cloud, MISS in local ⇒ it's the embedder, not phrasing.</div>`},
+ {id:'F4',cls:'open',st:'s-open',badge:'HYPOTHESIS',title:'e5 query:/passage: prefix gap (likely high-impact)',
+  body:`<p><code>multilingual-e5</code> is trained to need <code>"query: "</code> on queries and <code>"passage: "</code> on documents. <code>LocalEmbedder::embed()</code> sends raw text with no prefix, and the <code>Embedder</code> trait has a single <code>embed()</code> with no query/passage flag — it <i>cannot</i> distinguish them.</p>
+  <div class="ev"><span class="lbl">Impact</span><br>Affects EVERY query, cross-lingual worst. Fix needs: query/passage-aware API + re-index docs with <code>passage:</code> + prefix queries with <code>query:</code>. Not yet A/B'd.</div>`},
+ {id:'F1',cls:'confirmed',st:'s-confirmed',badge:'CONFIRMED',title:'Query dilution — long keyword-stuffed queries retrieve worse',
+  body:`<p>A dense embedding of many keywords = a diffuse centroid near nothing.</p>
+  <div class="ev"><span class="lbl">Proof</span><br>"best-selling product data file" → dashboard <b>#4</b>; add "top10 product title transaction amount conversion rate" → <b>MISS</b>. More words hurt.</div>`},
+ {id:'RW',cls:'confirmed',st:'s-confirmed',badge:'CONFIRMED',title:'--rewrite does not translate (and is off by default)',
+  body:`<p>gpt-4.1-nano expands synonyms in-language; never used in benchmark runs (opt-in).</p>
+  <div class="ev"><span class="lbl">Proof</span><br>EN query + <code>--rewrite</code> → still <b>MISS</b>. A translating rewrite would be the cheapest recall fix.</div>`},
+ {id:'D1',cls:'confirmed',st:'s-confirmed',badge:'CONFIRMED',title:'403-HTML corruption — 3 xlsx stored as error pages (local only)',
+  body:`<p><code>top10_product_status_table.xlsx</code>, <code>apparel_product_shooting_sheet.xlsx</code>, <code>problem_product_tracking.xlsx</code> are indexed as <code>&lt;html&gt;…403 Forbidden…openresty&lt;/html&gt;</code> in the local seed.</p>
+  <div class="ev"><span class="lbl">Cause</span><br>Expired/forbidden presigned R2 URLs at local-seed build time. <b>Cloud has clean extracted tables.</b> Wasted ~4 agent calls chasing the corrupt file.</div>`},
+ {id:'D2',cls:'confirmed',st:'s-confirmed',badge:'CONFIRMED',title:'Index cap truncates the 2MB answer dashboard',
+  body:`<p><code>6-product-sales-analysis-dashboard.xlsx</code> is 2MB, capped to 1MB at index time ("content exceeds index cap; indexing head only") → tail not searchable → weaker representation.</p>`},
+ {id:'C1',cls:'open',st:'s-open',badge:'SUSPECTED',title:'RRF chunk-mass bias + KNN k-cutoff',
+  body:`<p>RRF rewards files with many matching chunks; the 1-chunk answer is crowded out. And vec-KNN keeps only top-k (logs: vec_n=80) — if the answer ranks > k it's cut before fusion.</p>
+  <div class="ev"><span class="lbl">Related</span><br><code>tickets/rrf-chunk-mass-and-lane-fusion/</code>. A hard recall ceiling no downstream stage can recover.</div>`},
+ {id:'RR',cls:'ruled',st:'s-ruled',badge:'RULED OUT',title:'Reranker quality (cohere / ZeroEntropy) — not the case-289 cause',
+  body:`<p>Tested local jina, cohere/rerank-v3.5, cohere/rerank-4-pro → all MISS. rerank-4-pro scored the answer 0.93 in isolation but never sees it (not in pool).</p>
+  <div class="ev"><span class="lbl">Conclusion</span><br>Rerank is downstream of the real failure (recall). Still useful for cases where retrieval is fine but order is off — override shipped.</div>`},
+ {id:'PG',cls:'ruled',st:'s-ruled',badge:'RULED OUT',title:'pgvector / Postgres backend — does not change rank',
+  body:`<p>RRF fusion (<code>backend/rank.rs</code>) + reranker (<code>rerank/</code>) are shared, backend-agnostic. sqlite-vec and pgvector feed the same embedder into the same fusion+rerank → same ranking. Storage choice, not a quality lever.</p>`},
+];
+
+const SHORT={fixed:'fixed',confirmed:'confirmed',open:'open',ruled:'ruled'};
+const hypBox=document.getElementById('hyps');
+HYPS.forEach(h=>{
+  const d=document.createElement('div');
+  d.className='hyp '+h.cls; d.dataset.cls=h.cls;
+  d.innerHTML=`<div class="head"><span class="arrow">▶</span><span class="id">${h.id}</span>
+    <span class="title">${h.title}</span><span class="pill s-${h.cls}">${h.badge}</span></div>
+    <div class="body">${h.body}</div>`;
+  d.querySelector('.head').onclick=()=>d.classList.toggle('exp');
+  hypBox.appendChild(d);
+});
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));
+  c.classList.add('active');
+  const f=c.dataset.f;
+  document.querySelectorAll('.hyp').forEach(h=>{
+    h.classList.toggle('hidden', f!=='all' && h.dataset.cls!==f);
+  });
+});
+
+// copy buttons
+document.querySelectorAll('.copy').forEach(b=>b.onclick=()=>{
+  const t=b.parentElement.querySelector('.txt').innerText.replace(/\s+\(--rewrite\)/,'');
+  navigator.clipboard.writeText(t.trim()); const o=b.innerText; b.innerText='✓'; setTimeout(()=>b.innerText=o,900);
+});
+
+// pipeline
+const STAGES=[
+ {sn:'Stage A',st:'Query → vector',fail:1,badges:['F1 dilution','F2 cross-lingual','F3 rewrite','F4 e5 prefix'],
+  detail:`<b>Where it dies first.</b> The English query embeds to a vector far from the Chinese answer chunk; long keyword strings dilute it further. e5 prefixes (query:/passage:) are not applied. <br><b>Evidence:</b> EN→MISS, ZH→#1; short query→#4, long→MISS.`},
+ {sn:'Stage B',st:'Document vectors (index-time)',fail:1,badges:['F6 1-chunk','F7 index cap','F8 403 data'],
+  detail:`Recall ceiling is set when documents are embedded. The answer is one small chunk; the dashboard is truncated at 1MB; 3 xlsx are 403-HTML garbage vectors.`},
+ {sn:'Stage C',st:'Lexical lane (FTS)',fail:1,badges:['F9 no EN↔ZH','F10 CJK tokenize'],
+  detail:`BM25/FTS contributes nothing cross-lingual (EN tokens ≠ ZH tokens), so the whole burden falls on the failing vector lane.`},
+ {sn:'Stage D',st:'RRF fusion + KNN k',fail:1,badges:['F11 k-cutoff','F12 chunk-mass'],
+  detail:`vec-KNN keeps top-k (≈80). If the answer ranks > k it's cut before fusion. RRF favors multi-chunk files, crowding out the 1-chunk answer. Hard recall wall.`},
+ {sn:'Stage E',st:'Rerank → top-10',fail:0,badges:['F13 reorder only ✓'],
+  detail:`NOT a failure point. The reranker only reorders the pool — it cannot recover a candidate that was never retrieved. cohere/rerank-4-pro confirmed no help.`},
+];
+const pipe=document.getElementById('pipe'), sd=document.getElementById('stageDetail');
+STAGES.forEach(s=>{
+  const e=document.createElement('div');
+  e.className='stage'+(s.fail?' fail':' ok-stage');
+  e.innerHTML=`<div class="sn">${s.sn}</div><div class="st">${s.st}</div>`+
+    s.badges.map(b=>`<span class="badge">${b}</span>`).join('');
+  e.onclick=()=>{sd.style.display='block';sd.innerHTML=`<b>${s.sn} — ${s.st}</b><br>${s.detail}`;
+    document.querySelectorAll('.stage').forEach(x=>x.style.outline='');e.style.outline='2px solid var(--accent)';};
+  pipe.appendChild(e);
+});
+</script>
+</body>
+</html>
