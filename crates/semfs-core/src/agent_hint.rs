@@ -86,22 +86,34 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
     let begin = begin_marker(tag);
     let end = end_marker(tag);
     let path_str = mount_path.display();
+    // KG-on: name the knowledge graph as the orientation artifact. KG-off
+    // (SEMFS_KG=off): the original grep-only contract — used as the A/B baseline.
+    let kg_line = if crate::cache::graph_file::kg_enabled() {
+        format!(
+            "It maintains a whole-workspace KNOWLEDGE GRAPH and answers semantic search.\n\
+             \n\
+             - To ORIENT (what is this workspace about / how is it organized), read the\n\
+             \u{0020} knowledge graph: `cat {path_str}/KNOWLEDGE_GRAPH.md` — topic clusters\n\
+             \u{0020} (communities) with key entities, suggested questions, and the dir map.\n\
+             \u{0020} It updates automatically as files are added or removed.\n\
+             - To FIND content, use semantic search instead of grep/rg/find/os.walk:\n"
+        )
+    } else {
+        "It answers semantic search over its contents.\n\
+         \n\
+         - To FIND content, use semantic search instead of grep/rg/find/os.walk:\n"
+            .to_string()
+    };
     format!(
         "{begin}\n\
          <!-- managed by `semfs mount`; auto-removed on `semfs unmount` -->\n\
          The directory `{path_str}/` is a dynamic semantic index (Supermemory mount).\n\
-         It maintains a whole-workspace KNOWLEDGE GRAPH and answers semantic search.\n\
-         \n\
-         - To ORIENT (what is this workspace about / how is it organized), read the\n\
-         \u{0020} knowledge graph: `cat {path_str}/KNOWLEDGE_GRAPH.md` — it lists the\n\
-         \u{0020} topic clusters (communities) with their key entities and the dir map.\n\
-         \u{0020} It updates automatically as files are added or removed.\n\
-         - To FIND content, use semantic search instead of grep/rg/find:\n\
+         {kg_line}\
          \n\
          \u{0020}   semfs grep \"<natural language query>\" {path_str}/\n\
          \n\
          \u{0020} It returns ranked, semantically relevant excerpts via a vector index.\n\
-         Read the knowledge graph to orient, or grep directly to find — both work.\n\
+         \u{0020} The excerpt IS the content — trust it; do not re-open or crawl to verify.\n\
          Files outside this directory behave normally — this rule is scoped to that path.\n\
          {end}\n"
     )

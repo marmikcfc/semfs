@@ -512,14 +512,19 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         let gw_shutdown = shutdown_rx.clone();
         // L6: when entity extraction settles after add/remove, recompute the KG
         // and refresh `/KNOWLEDGE_GRAPH.md` (debounced inside the worker).
-        let kg_fs = fs.clone();
-        let kg_refresh: Arc<dyn Fn() + Send + Sync + 'static> = Arc::new(move || {
-            if let Err(e) = kg_fs.refresh_knowledge_graph() {
-                tracing::warn!("dynamic knowledge-graph refresh failed (non-fatal): {e}");
-            }
-        });
+        let kg_refresh: Option<Arc<dyn Fn() + Send + Sync + 'static>> =
+            if semfs_core::cache::graph_file::kg_enabled() {
+                let kg_fs = fs.clone();
+                Some(Arc::new(move || {
+                    if let Err(e) = kg_fs.refresh_knowledge_graph() {
+                        tracing::warn!("dynamic knowledge-graph refresh failed (non-fatal): {e}");
+                    }
+                }))
+            } else {
+                None
+            };
         tokio::spawn(async move {
-            semfs_core::cache::run_graph_worker(idx, gw_shutdown, Some(kg_refresh)).await;
+            semfs_core::cache::run_graph_worker(idx, gw_shutdown, kg_refresh).await;
         });
     }
 
@@ -530,8 +535,11 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     // warm cache's entity edges so `ls` shows it and `cat` serves it immediately.
     // Fail-soft: a graph error never blocks the mount. On a fresh seed the graph
     // is sparse → a structural map now, refreshed by the L7 worker as edges land.
-    if let Err(e) = fs.refresh_knowledge_graph() {
-        tracing::warn!("knowledge-graph build failed (non-fatal): {e}");
+    // Gated by `SEMFS_KG` (default on) so the KG can be A/B'd against no-KG.
+    if semfs_core::cache::graph_file::kg_enabled() {
+        if let Err(e) = fs.refresh_knowledge_graph() {
+            tracing::warn!("knowledge-graph build failed (non-fatal): {e}");
+        }
     }
 
     // Auto-install grep wrapper on first mount.

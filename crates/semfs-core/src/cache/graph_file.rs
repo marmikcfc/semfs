@@ -18,6 +18,18 @@ const FILES_PER_TOPIC: usize = 4;
 const HUB_PCTL: f64 = 0.99;
 const RESOLUTION: f64 = 1.0;
 
+/// KG feature switch. `SEMFS_KG=off|0|false|no` disables the knowledge graph
+/// (no `KNOWLEDGE_GRAPH.md` materialized, no KG mention in the agent contract).
+/// Default ON. Lets the KG be A/B'd against the no-KG baseline.
+pub fn kg_enabled() -> bool {
+    !matches!(
+        std::env::var("SEMFS_KG")
+            .ok()
+            .map(|s| s.trim().to_ascii_lowercase()),
+        Some(ref v) if v == "off" || v == "0" || v == "false" || v == "no"
+    )
+}
+
 /// Build the full `KNOWLEDGE_GRAPH.md` body from the graph tables.
 pub fn build_digest(conn: &Connection) -> rusqlite::Result<String> {
     // 1. edges → file list + entity interning + per-file entity sets
