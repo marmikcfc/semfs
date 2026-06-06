@@ -291,6 +291,38 @@ print(json.dumps(summary, indent=2))
 PY
 }
 
+# Archive per-case command traces into the (persistent) per-run telemetry dir.
+# The case output dir (OUTPUT_ROOT/<prefix>*/<case>/raw/) is OVERWRITTEN by every
+# subsequent run, so without this the codex_stdout.jsonl / agent.json command
+# traces are lost — making cross-run comparison (e.g. cloud vs local tool calls)
+# impossible. Copies are cheap and keyed by RUN_STAMP, so every run is preserved.
+archive_traces() {
+  local telemetry_dir="$1" target="$2"
+  local prefix=""
+  case "${target}" in
+    codex)            prefix="Codex--" ;;
+    semfs-codex)      prefix="SEMFSCodex--" ;;
+    claudecode)       prefix="ClaudeCode--" ;;
+    semfs-claudecode) prefix="SEMFSClaudeCode--" ;;
+  esac
+  [[ -n "${prefix}" ]] || return 0
+  local arch="${telemetry_dir}/traces"
+  mkdir -p "${arch}"
+  while IFS= read -r aj; do
+    [[ -n "${aj}" ]] || continue
+    local casedir label
+    casedir="$(dirname "${aj}")"
+    label="$(basename "$(dirname "${casedir}")")__$(basename "${casedir}")"
+    mkdir -p "${arch}/${label}"
+    cp -f "${aj}" "${arch}/${label}/agent.json" 2>/dev/null || true
+    local f
+    for f in codex_stdout.jsonl chat_adapter_log.jsonl codex_invocation.json last_message.txt; do
+      [[ -f "${casedir}/raw/${f}" ]] && cp -f "${casedir}/raw/${f}" "${arch}/${label}/${f}" 2>/dev/null || true
+    done
+  done < <(find "${OUTPUT_ROOT}/${prefix}"*/ -name agent.json 2>/dev/null)
+  log "archived traces → ${arch}"
+}
+
 main() {
   if [[ $# -ne 1 ]]; then
     usage
@@ -384,6 +416,7 @@ payload = {
 path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
   narrative_workspace "${telemetry_dir}" "${narrative_prefix}"
+  archive_traces "${telemetry_dir}" "$1"
 
   log "run complete"
   emit_summary "${telemetry_dir}" "${narrative_prefix}" "${timing_json}"

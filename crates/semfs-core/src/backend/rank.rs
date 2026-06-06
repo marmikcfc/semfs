@@ -190,7 +190,12 @@ pub fn apply_comention_boost(hits: &mut [SearchHit], entities: impl Fn(&str) -> 
                         .iter()
                         .any(|o| o != fp && ents.get(o).is_some_and(|e| !e.is_disjoint(mine)));
                 if shares {
-                    h.similarity *= 1.05;
+                    // Sign-correct nudge: rerank scores are cross-encoder LOGITS that
+                    // can be NEGATIVE. A plain `*= 1.05` on a negative score makes it
+                    // MORE negative → demotes the hit (inverts the intended boost). So
+                    // divide when negative: a boost always raises rank, both signs.
+                    let f = 1.05f64;
+                    h.similarity *= if h.similarity >= 0.0 { f } else { 1.0 / f };
                 }
             }
         }
@@ -203,7 +208,11 @@ pub fn apply_salience(hits: &mut [SearchHit], now_ms: i64, stats: impl Fn(&str) 
     for h in hits.iter_mut() {
         if let Some(fp) = &h.filepath {
             let (last, count) = stats(fp);
-            h.similarity *= salience(now_ms, last, count);
+            // Sign-correct: salience is a multiplicative nudge in [0.85,1.5], but
+            // rerank scores can be NEGATIVE — `*= f` would then invert (high salience
+            // demotes). Divide when negative so higher salience always raises rank.
+            let f = salience(now_ms, last, count);
+            h.similarity *= if h.similarity >= 0.0 { f } else { 1.0 / f };
         }
     }
 }

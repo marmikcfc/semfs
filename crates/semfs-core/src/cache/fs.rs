@@ -82,9 +82,34 @@ impl CacheFs {
         self.pull_documents(path).await
     }
 
-    pub async fn warm_profile(&self) {
+    /// Warm `profile.md`. `fetch_cloud` controls the cloud `/v4/profile` fetch
+    /// (skip it for local-only mounts — no cloud). EITHER way, if the resulting
+    /// profile is empty we synthesize a local overview from the index, so a
+    /// local-only mount (the common case) still gets a populated profile.md
+    /// instead of a bare header.
+    pub async fn warm_profile(&self, fetch_cloud: bool) {
         if let Some(pf) = &self.profile_file {
-            pf.warm().await;
+            if fetch_cloud {
+                pf.warm().await;
+            }
+            // Local-only mounts (and containers with no cloud memories) get an empty
+            // cloud profile. Substitute a locally-generated overview from the index so
+            // an agent reading profile.md gets the directory map + a search-first hint
+            // — instead of walking the tree (`os.walk`) or cat-ing files to explore.
+            if !pf.is_substantive() {
+                let paths: Vec<String> = {
+                    let conn = self.db.conn.lock();
+                    conn.prepare("SELECT DISTINCT filepath FROM chunks")
+                        .and_then(|mut stmt| {
+                            stmt.query_map([], |r| r.get::<_, String>(0))
+                                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                        })
+                        .unwrap_or_default()
+                };
+                if !paths.is_empty() {
+                    pf.set_content(super::profile::build_local_profile(&paths).into_bytes());
+                }
+            }
         }
     }
 

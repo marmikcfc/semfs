@@ -68,6 +68,38 @@ fn result_limit() -> usize {
         .unwrap_or(RESULT_LIMIT)
 }
 
+/// `SEMFS_DOC_RETURN_CAP` override → per-document byte ceiling on whole-doc text
+/// attached per hit (falls back to `DOC_RETURN_CAP`). Lowering it cuts the grep
+/// payload an agent re-replays in context — a token lever with no re-seed.
+fn doc_return_cap() -> usize {
+    std::env::var("SEMFS_DOC_RETURN_CAP")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DOC_RETURN_CAP)
+}
+
+/// `SEMFS_RETURN_MODE=snippet` (or `chunk`) → return ONLY the matched chunk(s)
+/// per hit instead of the whole document. Cloud-style compact returns: on a
+/// corpus of LARGE docs the whole-doc payload floods the agent's multi-turn
+/// context (the dominant token sink), so returning just the reranker's matched
+/// chunk (already computed, on the hit) cuts payload by ~doc/chunk. The full
+/// file is always still on the mount if the agent needs more context.
+fn snippet_return_mode() -> bool {
+    std::env::var("SEMFS_RETURN_MODE")
+        .map(|v| matches!(v.as_str(), "snippet" | "chunk"))
+        .unwrap_or(false)
+}
+
+/// A post-rerank ranking stage (`SEMFS_SALIENCE` / `SEMFS_COMENTION`) is ENABLED
+/// unless its env var is explicitly set to an off value. Lets us A/B the L6/L7
+/// boosts off for deterministic, pure-rerank ordering.
+fn rank_stage_enabled(var: &str) -> bool {
+    !std::env::var(var)
+        .map(|v| matches!(v.as_str(), "0" | "off" | "false" | "no"))
+        .unwrap_or(false)
+}
+
 /// Largest index `<= max` that is a UTF-8 char boundary, so `&s[..n]` stays
 /// valid. Critical for the Chinese corpus (3-byte chars) — a mid-char cut panics.
 fn floor_char_boundary(s: &str, max: usize) -> usize {
@@ -108,11 +140,11 @@ fn stitch_chunks(parts: &[String]) -> String {
             k -= 1;
         }
         out.push_str(&part[overlap..]);
-        if out.len() >= DOC_RETURN_CAP {
+        if out.len() >= doc_return_cap() {
             break;
         }
     }
-    out.truncate(floor_char_boundary(&out, DOC_RETURN_CAP));
+    out.truncate(floor_char_boundary(&out, doc_return_cap()));
     out
 }
 
@@ -1049,25 +1081,34 @@ impl SqliteVecStore {
                 }
             }
 
-            super::rank::apply_comention_boost(&mut hits, |fp| {
-                conn.prepare("SELECT to_path FROM edges WHERE from_path = ?1")
-                    .and_then(|mut stmt| {
-                        stmt.query_map([fp], |r| r.get::<_, String>(0)).map(|rows| {
-                            rows.filter_map(|r| r.ok())
-                                .collect::<std::collections::HashSet<String>>()
+            // L7 co-mention + L6 salience are post-rerank multiplicative nudges. Both
+            // are now sign-correct (see rank.rs), but they remain STATEFUL (salience
+            // reads access_count, bumped every search → run-to-run drift). Kill-switches
+            // `SEMFS_COMENTION=off` / `SEMFS_SALIENCE=off` disable them for deterministic,
+            // pure-rerank ordering (A/B the ranking-trust hypothesis).
+            if rank_stage_enabled("SEMFS_COMENTION") {
+                super::rank::apply_comention_boost(&mut hits, |fp| {
+                    conn.prepare("SELECT to_path FROM edges WHERE from_path = ?1")
+                        .and_then(|mut stmt| {
+                            stmt.query_map([fp], |r| r.get::<_, String>(0)).map(|rows| {
+                                rows.filter_map(|r| r.ok())
+                                    .collect::<std::collections::HashSet<String>>()
+                            })
                         })
-                    })
-                    .unwrap_or_default()
-            });
-            super::rank::apply_salience(&mut hits, now, |fp| {
-                conn.query_row(
-                    "SELECT MAX(last_accessed_at), COALESCE(SUM(access_count), 0) \
-                     FROM chunks WHERE filepath = ?1",
-                    [fp],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .unwrap_or((None, 0))
-            });
+                        .unwrap_or_default()
+                });
+            }
+            if rank_stage_enabled("SEMFS_SALIENCE") {
+                super::rank::apply_salience(&mut hits, now, |fp| {
+                    conn.query_row(
+                        "SELECT MAX(last_accessed_at), COALESCE(SUM(access_count), 0) \
+                         FROM chunks WHERE filepath = ?1",
+                        [fp],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .unwrap_or((None, 0))
+                });
+            }
             for h in hits.iter() {
                 if let Some(fp) = &h.filepath {
                     let _ = conn.execute(
@@ -1108,6 +1149,22 @@ impl SqliteVecStore {
         }
         super::rank::sort_desc(&mut hits);
 
+        // SEMFS_DEBUG_RANKING: dump the FINAL order (post L6 salience + L7 co-mention,
+        // after the final sort) to compare against the RERANK order above — exposes
+        // any post-rerank reordering (e.g. multiplicative salience/co-mention acting
+        // on NEGATIVE cross-encoder scores).
+        if std::env::var("SEMFS_DEBUG_RANKING").is_ok() {
+            for (i, h) in hits.iter().enumerate().take(RERANK_CANDIDATES) {
+                tracing::info!(
+                    stage = "FINAL",
+                    rank = i,
+                    score = h.similarity,
+                    fp = h.filepath.as_deref().unwrap_or(""),
+                    "RANKDUMP"
+                );
+            }
+        }
+
         // Knob B: cap to the returned top-N (Supermemory parity) BEFORE attaching
         // documents, so we reconstruct text for ~N files, not the whole pool.
         hits.truncate(result_limit());
@@ -1119,15 +1176,27 @@ impl SqliteVecStore {
         // it from `chunks ORDER BY ord` and put it in `memory`, the SAME field the
         // cloud path fills, so grep renders local + cloud identically.
         if !hits.is_empty() {
-            let conn = self.db.conn.lock();
-            let prepared = conn.prepare("SELECT text FROM chunks WHERE filepath = ?1 ORDER BY ord");
-            if let Ok(mut stmt) = prepared {
+            if snippet_return_mode() {
+                // Cloud-style: return only the matched chunk(s) already on each hit
+                // (the reranker's input), capped — no whole-doc stitch.
                 for h in hits.iter_mut() {
-                    let Some(fp) = h.filepath.clone() else { continue };
-                    if let Ok(rows) = stmt.query_map([&fp], |r| r.get::<_, String>(0)) {
-                        let parts: Vec<String> = rows.filter_map(|r| r.ok()).collect();
-                        if !parts.is_empty() {
-                            h.memory = Some(stitch_chunks(&parts));
+                    if let Some(c) = h.chunk.clone() {
+                        let n = floor_char_boundary(&c, doc_return_cap());
+                        h.memory = Some(c[..n].to_string());
+                    }
+                }
+            } else {
+                let conn = self.db.conn.lock();
+                let prepared =
+                    conn.prepare("SELECT text FROM chunks WHERE filepath = ?1 ORDER BY ord");
+                if let Ok(mut stmt) = prepared {
+                    for h in hits.iter_mut() {
+                        let Some(fp) = h.filepath.clone() else { continue };
+                        if let Ok(rows) = stmt.query_map([&fp], |r| r.get::<_, String>(0)) {
+                            let parts: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+                            if !parts.is_empty() {
+                                h.memory = Some(stitch_chunks(&parts));
+                            }
                         }
                     }
                 }

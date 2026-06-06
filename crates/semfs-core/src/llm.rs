@@ -136,8 +136,13 @@ struct ChoiceMessage {
 /// abbreviations, add synonyms/related terms). Output is the rewritten query
 /// only. Callers use this **opt-in** and fail-open to the original on error.
 pub fn rewrite_query(client: &LlmClient, query: &str) -> anyhow::Result<String> {
-    let system = "You rewrite a user's search query to maximize semantic document retrieval. \
-        Expand abbreviations, add closely-related terms and synonyms, and keep it one concise line. \
+    let system = "You rewrite a user's search query to maximize semantic document retrieval over a \
+        possibly MULTILINGUAL corpus (documents may be in Chinese, English, or other languages). \
+        Expand abbreviations and add closely-related terms and synonyms. CRITICALLY: if the query \
+        is in one language but documents may be in another, also append the key search terms \
+        TRANSLATED into the other likely document language(s) — especially Chinese (e.g. \
+        'conversion rate'→'转化率', 'transaction amount'→'成交金额', 'best-selling'→'畅销'). \
+        Keep it to one concise line. \
         Output ONLY the rewritten query — no quotes, no preamble, no explanation.";
     let out = client.complete(system, query)?;
     let out = out.trim().trim_matches('"').trim().to_string();

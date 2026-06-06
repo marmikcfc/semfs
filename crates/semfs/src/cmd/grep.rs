@@ -579,8 +579,15 @@ pub async fn run(args: Args) -> Result<()> {
         Some(relative)
     });
 
-    // L4: optional LLM query rewrite (opt-in via --rewrite; fail-open to original).
-    let effective_query = if args.rewrite {
+    // L4: optional LLM query rewrite (opt-in via --rewrite, or env SEMFS_REWRITE for
+    // callers that can't pass the flag — e.g. an agent invoking plain `semfs grep`;
+    // fail-open to original). Cross-lingual corpora benefit most: the rewrite appends
+    // target-language terms so a same-language dense/lexical match becomes possible.
+    let rewrite_enabled = args.rewrite
+        || std::env::var("SEMFS_REWRITE")
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+    let effective_query = if rewrite_enabled {
         let env = super::resolve::ResolveEnv::from_env();
         match super::resolve::build_llm(&env) {
             Some(llm) => match semfs_core::llm::rewrite_query(&llm, &args.query) {
@@ -698,11 +705,12 @@ pub async fn run(args: Args) -> Result<()> {
         args.query
     );
     eprintln!("# searches by meaning across files in this container. usage:");
-    eprintln!("#   grep \"natural language query\"          search all files");
+    eprintln!("#   grep \"2-4 key terms\"                    short focused queries rank best");
     eprintln!("#   grep \"query\" path/to/dir/              search within directory");
-    eprintln!("# output: <filepath>:<line_start>-<line_end>:<chunk>");
+    eprintln!("# output: <filepath>:<line_start>-<line_end>:<chunk>  — RANKED BY RELEVANCE (top = best match)");
     eprintln!(
-        "# chunk text is verbatim from the file. extract by the line range. never read or cat whole files."
+        "# chunk text is verbatim from the file. If the top result answers your task, USE IT AND STOP — \
+         do NOT run more searches, and never read/cat whole files (the chunk above already is the file's text)."
     );
     eprintln!();
 

@@ -38,6 +38,23 @@ impl ProfileFile {
         }
     }
 
+    /// True if the warmed profile carries real content (cloud memories). When
+    /// false (local-only mounts, or a container with no extracted memories), the
+    /// caller can substitute a locally-generated overview.
+    pub fn is_substantive(&self) -> bool {
+        self.cache
+            .read()
+            .as_ref()
+            .map(|v| v.len() > 220) // header alone is ~158B; a memory adds more
+            .unwrap_or(false)
+    }
+
+    /// Overwrite the profile content (used to inject a locally-generated overview
+    /// when the cloud profile is empty).
+    pub fn set_content(&self, bytes: Vec<u8>) {
+        *self.cache.write() = Some(bytes);
+    }
+
     pub fn profile_attr(&self) -> FileAttr {
         let now = Timestamp::now();
         let size = self
@@ -97,6 +114,61 @@ impl crate::vfs::traits::File for ProfileFile {
     async fn getattr(&self) -> VfsResult<FileAttr> {
         Ok(self.profile_attr())
     }
+}
+
+/// Build a local container overview from the indexed file paths — a stand-in for
+/// the cloud `/v4/profile` memories on local-only mounts. Gives an agent the
+/// directory map + a search-first instruction up front so it doesn't enumerate
+/// the tree (`os.walk`) or cat files to discover structure.
+pub fn build_local_profile(paths: &[String]) -> String {
+    use std::collections::BTreeMap;
+    let mut dir_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut ext_counts: BTreeMap<String, usize> = BTreeMap::new();
+    for p in paths {
+        let trimmed = p.trim_start_matches('/');
+        let comps: Vec<&str> = trimmed.split('/').collect();
+        // Aggregate by top-1 and top-2 directory levels.
+        if comps.len() >= 2 {
+            *dir_counts.entry(format!("/{}", comps[0])).or_default() += 1;
+        }
+        if comps.len() >= 3 {
+            *dir_counts
+                .entry(format!("/{}/{}", comps[0], comps[1]))
+                .or_default() += 1;
+        }
+        let ext = p.rsplit('.').next().filter(|e| !e.contains('/')).unwrap_or("?");
+        if ext != p.as_str() {
+            *ext_counts.entry(ext.to_lowercase()).or_default() += 1;
+        }
+    }
+    let mut out = String::new();
+    out.push_str("# Container Overview (local semantic index)\n\n");
+    out.push_str(&format!(
+        "This mount has {} indexed files. SEARCH FIRST: run `semfs grep \"<natural language query>\"` — it \
+         returns ranked semantic excerpts across every file. The directory map and file types below are the \
+         whole container; you do NOT need to walk the tree or cat files to discover structure.\n\n",
+        paths.len()
+    ));
+    out.push_str("## Directory map (indexed file counts)\n");
+    // Sort dirs by descending count, cap the list so profile.md stays compact.
+    let mut dirs: Vec<(&String, &usize)> = dir_counts.iter().collect();
+    dirs.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    for (dir, n) in dirs.into_iter().take(40) {
+        let depth = dir.matches('/').count();
+        let indent = if depth > 1 { "  " } else { "" };
+        out.push_str(&format!("{indent}{dir}/  ({n})\n"));
+    }
+    out.push_str("\n## File types\n");
+    let mut exts: Vec<(&String, &usize)> = ext_counts.iter().collect();
+    exts.sort_by(|a, b| b.1.cmp(a.1));
+    let exts_str: Vec<String> = exts
+        .into_iter()
+        .take(15)
+        .map(|(e, n)| format!("{e}({n})"))
+        .collect();
+    out.push_str(&exts_str.join(" "));
+    out.push('\n');
+    out
 }
 
 fn format_profile(resp: &ProfileResp) -> String {
