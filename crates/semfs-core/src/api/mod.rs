@@ -425,19 +425,6 @@ impl ApiClient {
             .await
     }
 
-    /// Get the memory profile for the container tag.
-    pub async fn get_profile(&self) -> Result<ProfileResp, ApiError> {
-        let body = ProfileReq {
-            container_tag: self.container_tag.clone(),
-        };
-
-        self.post_read("/v4/profile")
-            .json(&body)
-            .send_with_retry()
-            .await?
-            .parse_json()
-            .await
-    }
 
     // -- private helpers --
 

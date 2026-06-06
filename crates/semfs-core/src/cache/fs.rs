@@ -7,10 +7,9 @@ use async_trait::async_trait;
 use lru::LruCache;
 use parking_lot::Mutex;
 
-use super::db::{Db, DENTRY_CACHE_MAX, ROOT_INO};
+use super::db::{Db, DENTRY_CACHE_MAX};
 use super::file::SqliteFile;
 use super::hydration::{HydrationKey, HydrationScheduler};
-use super::profile::{ProfileFile, PROFILE_INO, PROFILE_NAME};
 
 const DERIVED_SIBLING_SUFFIXES: &[&str] = &[
     ".image-transcription.md",
@@ -33,7 +32,6 @@ use crate::vfs::types::{DirEntry, FileAttr, FilesystemStats, SetAttr, TimeOrNow,
 pub struct CacheFs {
     db: Arc<Db>,
     api: Option<Arc<crate::api::ApiClient>>,
-    profile_file: Option<Arc<ProfileFile>>,
     dentry_cache: Mutex<LruCache<(u64, String), u64>>,
     hydration: Arc<HydrationScheduler>,
     /// Local semantic indexer, maintained on write (flush) / delete / rename.
@@ -47,7 +45,6 @@ impl CacheFs {
         Self {
             db,
             api: None,
-            profile_file: None,
             dentry_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DENTRY_CACHE_MAX).unwrap())),
             hydration: HydrationScheduler::new(),
             indexer: None,
@@ -56,11 +53,9 @@ impl CacheFs {
 
     /// Create a `CacheFs` with an API client for cloud sync.
     pub fn with_api(db: Arc<Db>, api: Arc<crate::api::ApiClient>) -> Self {
-        let profile_file = Arc::new(ProfileFile::new(api.clone()));
         Self {
             db,
             api: Some(api),
-            profile_file: Some(profile_file),
             dentry_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DENTRY_CACHE_MAX).unwrap())),
             hydration: HydrationScheduler::new(),
             indexer: None,
@@ -82,36 +77,6 @@ impl CacheFs {
         self.pull_documents(path).await
     }
 
-    /// Warm `profile.md`. `fetch_cloud` controls the cloud `/v4/profile` fetch
-    /// (skip it for local-only mounts — no cloud). EITHER way, if the resulting
-    /// profile is empty we synthesize a local overview from the index, so a
-    /// local-only mount (the common case) still gets a populated profile.md
-    /// instead of a bare header.
-    pub async fn warm_profile(&self, fetch_cloud: bool) {
-        if let Some(pf) = &self.profile_file {
-            if fetch_cloud {
-                pf.warm().await;
-            }
-            // Local-only mounts (and containers with no cloud memories) get an empty
-            // cloud profile. Substitute a locally-generated overview from the index so
-            // an agent reading profile.md gets the directory map + a search-first hint
-            // — instead of walking the tree (`os.walk`) or cat-ing files to explore.
-            if !pf.is_substantive() {
-                let paths: Vec<String> = {
-                    let conn = self.db.conn.lock();
-                    conn.prepare("SELECT DISTINCT filepath FROM chunks")
-                        .and_then(|mut stmt| {
-                            stmt.query_map([], |r| r.get::<_, String>(0))
-                                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                        })
-                        .unwrap_or_default()
-                };
-                if !paths.is_empty() {
-                    pf.set_content(super::profile::build_local_profile(&paths).into_bytes());
-                }
-            }
-        }
-    }
 
     /// Reconstruct the full filepath for an inode by walking dentries to root.
     fn resolve_filepath(&self, ino: u64) -> Option<String> {
@@ -1061,13 +1026,6 @@ impl FileSystem for CacheFs {
     async fn lookup(&self, parent_ino: u64, name: &str) -> VfsResult<Option<FileAttr>> {
         validate_name(name)?;
 
-        // Virtual profile.md at root.
-        if parent_ino == ROOT_INO && name == PROFILE_NAME {
-            if let Some(pf) = &self.profile_file {
-                return Ok(Some(pf.profile_attr()));
-            }
-        }
-
         // All DB work in a sync block — conn must be dropped before any .await.
         let result = {
             let conn = self.db.conn.lock();
@@ -1146,11 +1104,6 @@ impl FileSystem for CacheFs {
     }
 
     async fn getattr(&self, ino: u64) -> VfsResult<Option<FileAttr>> {
-        if ino == PROFILE_INO {
-            if let Some(pf) = &self.profile_file {
-                return Ok(Some(pf.profile_attr()));
-            }
-        }
         let conn = self.db.conn.lock();
         let attr = conn
             .query_row(
@@ -1205,7 +1158,7 @@ impl FileSystem for CacheFs {
 
     async fn readdir(&self, ino: u64) -> VfsResult<Option<Vec<String>>> {
         // All DB work in a sync block so conn/stmt are dropped before any .await.
-        let mut names = {
+        let names = {
             let conn = self.db.conn.lock();
 
             let mode: Option<i64> = conn
@@ -1234,9 +1187,6 @@ impl FileSystem for CacheFs {
         }; // conn + stmt dropped here
 
         if !names.is_empty() || self.api.is_none() {
-            if ino == ROOT_INO && self.api.is_some() && !names.contains(&PROFILE_NAME.to_string()) {
-                names.push(PROFILE_NAME.to_string());
-            }
             return Ok(Some(names));
         }
 
@@ -1248,11 +1198,7 @@ impl FileSystem for CacheFs {
             };
             self.hydration.enqueue(HydrationKey::Prefix(prefix));
         }
-        let mut names: Vec<String> = Vec::new();
-        if ino == ROOT_INO && self.api.is_some() && !names.contains(&PROFILE_NAME.to_string()) {
-            names.push(PROFILE_NAME.to_string());
-        }
-        Ok(Some(names))
+        Ok(Some(Vec::new()))
     }
 
     async fn readdir_plus(&self, ino: u64) -> VfsResult<Option<Vec<DirEntry>>> {
@@ -1277,20 +1223,8 @@ impl FileSystem for CacheFs {
             self.query_dir_entries(&conn, ino)?
         }; // conn dropped here
 
-        let append_profile = |mut entries: Vec<DirEntry>| -> Vec<DirEntry> {
-            if ino == ROOT_INO && !entries.iter().any(|e| e.name == PROFILE_NAME) {
-                if let Some(pf) = &self.profile_file {
-                    entries.push(DirEntry {
-                        name: PROFILE_NAME.to_string(),
-                        attr: pf.profile_attr(),
-                    });
-                }
-            }
-            entries
-        };
-
         if !entries.is_empty() || self.api.is_none() {
-            return Ok(Some(append_profile(entries)));
+            return Ok(Some(entries));
         }
 
         if let Some(dir_path) = self.resolve_filepath(ino) {
@@ -1301,7 +1235,7 @@ impl FileSystem for CacheFs {
             };
             self.hydration.enqueue(HydrationKey::Prefix(prefix));
         }
-        Ok(Some(append_profile(Vec::new())))
+        Ok(Some(Vec::new()))
     }
 
     async fn mkdir(
@@ -1445,12 +1379,6 @@ impl FileSystem for CacheFs {
     }
 
     async fn open(&self, ino: u64, _flags: i32) -> VfsResult<BoxedFile> {
-        if ino == PROFILE_INO {
-            if let Some(pf) = &self.profile_file {
-                return Ok(pf.clone());
-            }
-            return Err(VfsError::NotFound);
-        }
         {
             let conn = self.db.conn.lock();
             let mode: i64 = conn
@@ -1567,10 +1495,6 @@ impl FileSystem for CacheFs {
 
     async fn unlink(&self, parent_ino: u64, name: &str) -> VfsResult<()> {
         validate_name(name)?;
-
-        if parent_ino == ROOT_INO && name == PROFILE_NAME {
-            return Err(VfsError::PermissionDenied);
-        }
 
         // Resolve filepath BEFORE deleting dentry (needed for API sync).
         let filepath_for_api = self.resolve_filepath(parent_ino).map(|p| {

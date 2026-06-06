@@ -397,14 +397,6 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     .await
     .context("setting root ownership")?;
 
-    startup.report("warming_profile", "warming profile")?;
-    // Warm `profile.md`. The cloud `/v4/profile` fetch is skipped for local-only
-    // mounts (no cloud → avoids a residual network call), but we ALWAYS run
-    // `warm_profile` so a local-only mount still synthesizes a local index overview
-    // (directory map + search-first hint) instead of leaving profile.md empty — the
-    // empty profile.md was causing agents to crawl/`os.walk` for orientation.
-    fs.warm_profile(!local_only).await;
-
     // A local-only mount has no cloud to pull from. Skip the initial pull entirely
     // (no network) and treat it as "succeeded" so auto-import still runs — local
     // dedup is reliable against the warm cache without remote reconciliation.

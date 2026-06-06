@@ -95,11 +95,8 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
          \u{0020}   semfs grep \"<natural language query>\" {path_str}/\n\
          \n\
          instead of grep, rg, find, or your built-in search tool. It returns\n\
-         semantically relevant excerpts via a vector index. For a quick high-\n\
-         level overview before searching, read `{path_str}/profile.md` — it's\n\
-         a reserved virtual file at the mount root with a summary of what\n\
-         this container holds. Files outside this directory behave normally —\n\
-         this rule is scoped to that path only.\n\
+         semantically relevant excerpts via a vector index. Files outside this\n\
+         directory behave normally — this rule is scoped to that path only.\n\
          {end}\n"
     )
 }
