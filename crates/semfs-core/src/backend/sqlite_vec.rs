@@ -988,7 +988,74 @@ impl SqliteVecStore {
                 }
             }
         }
+
+        // Path-token lane: rank files whose PATH matches the query's content
+        // tokens. Agents query terms that name the file ("best-selling product
+        // data" → best_selling_product_core_data_list.txt); content-only ranking
+        // can bury it, so grep misses and the agent crawls. This lane votes the
+        // clearly-named file into the pool so grep returns it #1. Disable with
+        // SEMFS_PATH_LANE=off. (case-289 token lever; tickets/ls-kg-semantic-readdir.)
+        if !matches!(std::env::var("SEMFS_PATH_LANE").ok().as_deref(), Some("off")) {
+            let toks: Vec<String> = query
+                .to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|t| t.chars().count() >= 3)
+                .map(|t| t.to_string())
+                .collect();
+            if !toks.is_empty() {
+                // first chunk per file = representative text + id for rerank input
+                if let Ok(mut stmt) = conn.prepare(
+                    "SELECT c.id, c.filepath, c.text FROM chunks c \
+                     JOIN (SELECT filepath, MIN(id) mid FROM chunks GROUP BY filepath) g \
+                       ON c.id = g.mid \
+                     WHERE (?1 IS NULL OR instr(c.filepath, ?1) = 1)",
+                ) {
+                    if let Ok(rows) = stmt.query_map(rusqlite::params![scope], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                    }) {
+                        let mut scored: Vec<(usize, i64, String, String)> = Vec::new();
+                        for row in rows.flatten() {
+                            let (id, fp, text) = row;
+                            // normalize separators so path tokens become words
+                            let norm: String = fp
+                                .to_lowercase()
+                                .chars()
+                                .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+                                .collect();
+                            let hits = toks
+                                .iter()
+                                .filter(|t| norm.split(' ').any(|w| w == t.as_str()))
+                                .count();
+                            // require ≥2 matching path tokens so generic words
+                            // ("data", "report") alone don't pull in noise
+                            if hits >= 2 {
+                                scored.push((hits, id, fp, text));
+                            }
+                        }
+                        // most path-token matches first → best path-lane rank
+                        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.cmp(&b.2)));
+                        for (rank, (_hits, id, fp, text)) in
+                            scored.into_iter().take(SEARCH_POOL).enumerate()
+                        {
+                            rep_chunk.entry(fp.clone()).or_insert(id);
+                            super::rank::rrf_bump(
+                                &mut by_file,
+                                fp,
+                                text,
+                                rank,
+                                super::rank::Lane::Path,
+                            );
+                        }
+                    }
+                }
+            }
+        }
         drop(conn);
+
+        // The KG digest is an orientation artifact, not corpus content — never
+        // return it as a search hit (it would otherwise self-match queries about
+        // the workspace and waste a result slot).
+        by_file.remove("/KNOWLEDGE_GRAPH.md");
 
         let mut hits = super::rank::to_hits(by_file, filepath);
         let hits_after_rrf = hits.len();

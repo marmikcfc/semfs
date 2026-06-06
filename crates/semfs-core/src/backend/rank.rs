@@ -14,7 +14,7 @@ use crate::rerank::Reranker;
 pub const RRF_K: f64 = 60.0;
 /// Number of retrieval lanes (text vector / code vector / keyword FTS). Sizes the
 /// per-lane best-rank array in `FileAcc`.
-const N_LANES: usize = 3;
+const N_LANES: usize = 4;
 
 /// The retrieval lane a chunk came from. RRF fuses one vote PER LANE (a file's
 /// best chunk in that lane), so fusion must know which lane each bump belongs to.
@@ -26,6 +26,12 @@ pub enum Lane {
     Code = 1,
     /// Keyword BM25 / Postgres FTS.
     Fts = 2,
+    /// Filename/path-token match. Agents query terms that match the *path*
+    /// (e.g. "best-selling product data" → `best_selling_product_core_data_list.txt`);
+    /// content-only ranking misses this. A path-token lane surfaces the file the
+    /// user is clearly naming, so grep returns it #1 and the agent stops there
+    /// instead of crawling. (tickets/ls-kg-semantic-readdir; case-289 token lever.)
+    Path = 3,
 }
 /// Salience recency half-life (days).
 const SALIENCE_HALF_LIFE_DAYS: f64 = 14.0;
