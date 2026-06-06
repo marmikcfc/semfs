@@ -835,6 +835,23 @@ impl CacheFs {
         self.db.count_unindexed()
     }
 
+    /// Recompute the workspace knowledge graph (Louvain→Leiden communities +
+    /// god-nodes over the file↔entity graph) and (re)materialize the root
+    /// virtual file `/KNOWLEDGE_GRAPH.md`. It is a *derived* fs node — local
+    /// only, never pushed or indexed — so `ls` lists it and `cat` serves it, but
+    /// it doesn't contaminate the cloud container or search results. Fail-soft:
+    /// a graph error never blocks the mount. Cheap (O(edges)) so it can run at
+    /// mount and on debounced graph change. See `cache/graph_file.rs`.
+    pub fn refresh_knowledge_graph(&self) -> VfsResult<()> {
+        let digest = {
+            let conn = self.db.conn.lock();
+            super::graph_file::build_digest(&conn)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?
+        };
+        self.create_derived_sibling("/KNOWLEDGE_GRAPH.md", &digest)?;
+        Ok(())
+    }
+
     /// Snapshot of the push_queue row for a given filepath (for tests /
     /// diagnostics only).
     pub fn push_queue_inspect(&self, filepath: &str) -> Option<PushQueueSnapshot> {

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Worked example: how the semantic FS saves tokens on case 289</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --posix:#f0883e; --sem:#d2a8ff; --good:#3fb950; --bad:#f85149; --acc:#56d4dd; --god:#f0c674;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 18px 80px}
+  h1{font-size:23px;margin:0 0 4px}
+  h2{font-size:17px;margin:24px 0 8px;border-bottom:1px solid var(--line);padding-bottom:5px}
+  .sub{color:var(--mut);margin:0 0 12px;max-width:900px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font:12px/1.4 ui-monospace,Menlo,monospace}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:11.5px/1.5 ui-monospace,Menlo,monospace;overflow:auto;margin:6px 0}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:820px){.cols{grid-template-columns:1fr}}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .box h3{margin:0 0 6px;font-size:13.5px}
+  .tagline{font-size:11px;color:var(--mut)}
+  .artifact{border-left:3px solid var(--sem);padding-left:10px;margin:8px 0}
+  .artifact b{color:var(--sem)}
+
+  /* query runner */
+  .qbtns{display:flex;flex-direction:column;gap:6px}
+  .qbtn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:8px 10px;cursor:pointer;font:12px/1.3 ui-monospace,Menlo,monospace;text-align:left}
+  .qbtn:hover{border-color:var(--acc)} .qbtn.sel{border-color:var(--acc);background:#10243f}
+  .qbtn small{color:var(--mut);font-family:-apple-system,sans-serif}
+  .pane{border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-height:160px}
+  .pane.plain{background:#1d140c}.pane.sem{background:#150f22}
+  .pane h4{margin:0 0 6px;font-size:13px}
+  .plain h4{color:var(--posix)} .sem h4{color:var(--sem)}
+  .tok{font-weight:700;float:right}
+  .tok.p{color:var(--posix)} .tok.s{color:var(--good)}
+
+  .ledger{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin:16px 0}
+  .bar{height:24px;border-radius:6px;background:#0b0f14;border:1px solid var(--line);overflow:hidden;margin:6px 0;position:relative}
+  .bar > div{height:100%;transition:width .5s}
+  .bar span{position:absolute;right:8px;top:3px;font-size:12px;font-weight:700}
+  .note{border-left:3px solid var(--acc);padding:8px 12px;margin:12px 0;color:var(--mut);background:#0e2025;border-radius:0 8px 8px 0}
+  table{border-collapse:collapse;width:100%;font-size:12.5px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left}
+  th{background:var(--panel2);color:var(--mut);font-size:11px;text-transform:uppercase}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Worked example — case 289 ("best-selling products"): plain FS vs semantic FS, token by token</h1>
+  <p class="sub">We take the real task, build the four semantic artifacts over a (toy) version of the workspace, then run <b>Claude's actual queries</b> both ways and tally tokens. Numbers are illustrative but anchored to the observed totals (Claude ~200–600k; codex ~35k).</p>
+
+  <h2>1 · The workspace (the 2,128-file chanpin space, toy slice)</h2>
+  <pre>chanpin/
+├─ desktop/fashion_ecommerce/product_data/
+│   ├─ top10_product_status_table.xlsx        ← THE DATA (but it's HTML disguised as .xlsx)
+│   ├─ best_selling_product_core_data_list.txt ← the answer list (plain text)
+│   ├─ apparel_product_shooting_sheet.xlsx     (distractor)
+│   └─ problem_product_tracking.xlsx           (distractor)
+├─ Sales/Orders/Order_Record_Table.xlsx        (distractor)
+├─ taobao_campaigns/rule_profile/…             (distractor)
+├─ Projects/Products/Temporary_Data/02_sales_performance.json (red herring)
+└─ … ~2,120 more files …</pre>
+  <p class="tagline">The answer rows live in <code>top10_…xlsx</code>: e.g. <code>2015Spring Korean slim denim jacket (women) | transaction amount 37200 | conversion rate 2.85%</code>. Filenames are mixed EN/Chinese; the .xlsx is really HTML.</p>
+
+  <h2>2 · Build the semantic filesystem (4 artifacts, computed once at ingest)</h2>
+  <div class="cols">
+    <div class="box"><h3 style="color:var(--sem)">① Normalized content (transcription)</h3>
+      <span class="tagline">each file → clean text + structured table. The HTML-xlsx becomes a real table:</span>
+      <pre>top10_product_status_table  (normalized)
+rank | product                        | transaction amount | conversion rate
+1    | 2015Spring Korean slim denim jacket (women)      | 37200   | 2.85%
+2    | …                               | …       | …
+(10 rows, ~480 tokens — NOT 30KB of HTML)</pre>
+      <span class="tagline">⚡ kills the <code>openpyxl→HTMLParser</code> fight; the source-of-truth read is now tiny &amp; clean.</span></div>
+    <div class="box"><h3 style="color:var(--sem)">② Chunk + vector index</h3>
+      <span class="tagline">each file chunked &amp; embedded; search returns top-k <code>file:line:excerpt</code>:</span>
+      <pre>search("best selling products …")
+→ top10_…:L1-11   (0.91)  "rank|product|transaction amount|conversion rate…"
+  best_seller_list:L1-9 (0.88) "1. 2015spring…37200…2.85%"
+  (top-5, ~350 tokens, ranked by MEANING)</pre>
+      <span class="tagline">⚡ one call replaces a dozen filename-guessing <code>find</code>s.</span></div>
+    <div class="box"><h3 style="color:var(--god)">③ Community digest (★ graphify)</h3>
+      <span class="tagline">Leiden communities + god nodes → the "what is this workspace about" map:</span>
+      <pre>WORKSPACE DIGEST (profile)
+• product_data/  → best-sellers, top10, conversion  ★hub
+• Sales/Orders/  → transactions
+• taobao_campaigns/ → ad rules
+"best-seller data → desktop/.../product_data/"</pre>
+      <span class="tagline">⚡ one read orients; you query the right place first try (fixes empty profile.md).</span></div>
+    <div class="box"><h3 style="color:var(--god)">④ Typed edges (★ graphify)</h3>
+      <span class="tagline">relationships, confidence-tagged:</span>
+      <pre>top10_…  —contains→ products        [EXTRACTED]
+best_seller_list —derived-from→ top10  [INFERRED]
+product_data/ —groups→ {top10, list}  [EXTRACTED]</pre>
+      <span class="tagline">⚡ "what's related to best-sellers?" = one hop, no filename guessing.</span></div>
+  </div>
+
+  <h2>2.5 · How would graphify determine the nodes here? (node &amp; edge extraction)</h2>
+  <p class="sub"><b>A node = a meaningful "thing."</b> For <b>code</b>, the language grammar defines the things → tree-sitter AST extracts functions/classes <i>deterministically &amp; free</i>. This workspace is almost all <b>data/docs</b> — there's no grammar for "concepts," so an <b>LLM reads each file once at ingest and names the entities</b> (a bounded, cached call). Edges come from <b>structure</b> (containment, columns → <code>EXTRACTED</code>) and <b>LLM-inferred relations / shared entities</b> (<code>INFERRED</code>/<code>AMBIGUOUS</code>).</p>
+  <p class="tagline">▸ click a file to see the nodes &amp; edges it yields</p>
+  <div class="cols" style="grid-template-columns:0.9fr 1.1fr">
+    <div class="qbtns" id="fbtns"></div>
+    <div class="pane" id="fpane" style="background:var(--panel)"></div>
+  </div>
+  <div class="box" style="margin-top:12px"><h3>… then the graph assembles itself</h3>
+  <pre>            [transaction amount]      [conversion rate]          ← shared METRIC nodes
+                  \          /
+ best_seller_list ──[ best-selling products ]★god──  top10_table
+       (.txt)    \         |  community:            /  (.xlsx)
+                  \   "product sales analytics"    /
+                   \____ [ product ×10 ] _________/
+                              ┆ (weak, AMBIGUOUS)
+        [ 02_sales_performance.json ]   [ Order_Records ]   ← other community</pre>
+  <span class="tagline">Files that <b>share concept / metric / product nodes</b> get pulled together; Leiden finds that dense cluster = the community <i>"product sales analytics"</i>; its most-connected node — <b>"best-selling products"</b> — is the <b>god node</b>. A query for "best selling products" lands on the hub and returns the whole relevant cluster (top10 + list), while <code>02_sales_performance.json</code> / orders stay in a weakly-linked neighbor community (correctly lower-ranked, not a false hit).</span></div>
+  <p class="note"><b>Node/edge extraction is the part that determines everything</b> — and it's the <b>once-at-ingest</b> cost (one bounded LLM pass per file, cached + dedup'd). Get the nodes right → every later query is a cheap lookup/traversal. Too coarse → useless; too fine → noisy — which is why graphify tags edge confidence and tunes community <code>--resolution</code>.</p>
+
+  <h2>3 · Run Claude's actual queries — plain vs semantic</h2>
+  <p class="tagline">▸ click each query Claude ran</p>
+  <div class="cols" style="grid-template-columns:0.9fr 1.1fr">
+    <div class="qbtns" id="qbtns"></div>
+    <div>
+      <div class="pane plain" id="pPlain"><h4>PLAIN FS <span class="tok p" id="tPlain"></span></h4><div id="cPlain" style="color:var(--mut)">Pick a query →</div></div>
+      <div style="height:10px"></div>
+      <div class="pane sem" id="pSem"><h4>SEMANTIC FS <span class="tok s" id="tSem"></span></h4><div id="cSem" style="color:var(--mut)"></div></div>
+    </div>
+  </div>
+
+  <h2>4 · The token ledger</h2>
+  <div class="ledger">
+    <div>Plain FS — "new" content read this run:</div>
+    <div class="bar"><div id="barPlain" style="width:0;background:var(--posix)"></div><span id="lblPlain"></span></div>
+    <div>Semantic FS — "new" content read this run:</div>
+    <div class="bar"><div id="barSem" style="width:0;background:var(--good)"></div><span id="lblSem"></span></div>
+    <table id="tally"><thead><tr><th>Claude's query</th><th>Plain FS</th><th>Semantic FS</th><th>Artifact that saves it</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="note" id="replay"></div>
+</div>
+
+<script>
+const Q=[
+ {label:'ls <WS>/', desc:'orient',
+  plain:{tok:400, out:'lists 15+ top-level dirs (Sales, taobao_campaigns, Projects, Desktop…) — all equal, no signal. Repeated ~8× while drilling.'},
+  sem:{tok:350, out:'read the DIGEST → "e-commerce product data; best-sellers live in desktop/.../product_data/". Oriented in one read.'},
+  art:'③ community digest'},
+ {label:'find -name "*best*sell*" -o "*hot-selling*" -o "*top-seller*"', desc:'locate by name (×14)',
+  plain:{tok:3800, out:'guesses filenames in EN + Chinese, 14 times. MISSES top10_product_status_table.xlsx (named "top10", not "best"). Paths accumulate in context.'},
+  sem:{tok:350, out:'search("best selling products transaction amount conversion rate") → top10_…(0.91) + best_seller_list(0.88), ranked by CONTENT. One call, finds top10 despite its name.'},
+  art:'② chunk/vector index'},
+ {label:'find | xargs grep -li "hot-selling|top-seller"', desc:'content scan across all files',
+  plain:{tok:2500, out:'opens every file to literal-scan; misses synonyms; returns a noisy path list.'},
+  sem:{tok:0, out:'already answered by the search above — the excerpts carried the matching passages. No extra call.'},
+  art:'② chunk/vector index'},
+ {label:'cat top10_product_status_table.xlsx', desc:'read the data (source of truth)',
+  plain:{tok:11700, out:'30KB of raw HTML (it\'s HTML disguised as .xlsx). openpyxl → FAIL. pandas → FAIL. hand-write an HTMLParser. ~11.7k tokens of garbage + parse-fight.'},
+  sem:{tok:480, out:'read the NORMALIZED table → 10 clean rows (product | transaction amount | conversion rate). ~480 tokens, no parsing. THE biggest single saving.'},
+  art:'① normalized content'},
+ {label:'Read best_selling_…list.txt', desc:'read the answer file',
+  plain:{tok:1400, out:'plain-text file — reads fine (~1.4k). (this one isn\'t the trap.)'},
+  sem:{tok:0, out:'its rows were already in the search excerpt + normalized table. No extra read needed.'},
+  art:'② index + ① content'},
+];
+const qb=document.getElementById('qbtns');
+Q.forEach((q,i)=>{const b=document.createElement('button');b.className='qbtn';b.dataset.i=i;
+  b.innerHTML=`${i+1}. ${q.label}<br><small>${q.desc}</small>`;qb.appendChild(b);});
+function fmt(n){return n.toLocaleString();}
+function show(i){
+  document.querySelectorAll('.qbtn').forEach(x=>x.classList.toggle('sel',x.dataset.i==i));
+  const q=Q[i];
+  document.getElementById('tPlain').textContent=fmt(q.plain.tok)+' tok';
+  document.getElementById('cPlain').innerHTML=q.plain.out;
+  document.getElementById('tSem').textContent=fmt(q.sem.tok)+' tok';
+  document.getElementById('cSem').innerHTML=q.sem.out;
+}
+qb.addEventListener('click',e=>{const b=e.target.closest('.qbtn');if(b)show(b.dataset.i);});
+show(0);
+
+// ledger
+const sumP=Q.reduce((a,q)=>a+q.plain.tok,0), sumS=Q.reduce((a,q)=>a+q.sem.tok,0);
+const tb=document.querySelector('#tally tbody');
+Q.forEach(q=>{const tr=document.createElement('tr');
+  tr.innerHTML=`<td><code>${q.label.slice(0,38)}</code></td><td class="n" style="color:var(--posix)">${fmt(q.plain.tok)}</td><td class="n" style="color:var(--good)">${fmt(q.sem.tok)}</td><td>${q.art}</td>`;tb.appendChild(tr);});
+const tr=document.createElement('tr');tr.style.fontWeight='700';
+tr.innerHTML=`<td>TOTAL "new" content</td><td class="n" style="color:var(--posix)">${fmt(sumP)}</td><td class="n" style="color:var(--good)">${fmt(sumS)}</td><td>${(sumP/sumS).toFixed(0)}× less</td>`;tb.appendChild(tr);
+document.getElementById('barPlain').style.width='100%';document.getElementById('lblPlain').textContent=fmt(sumP)+' tok';
+document.getElementById('barSem').style.width=(sumS/sumP*100)+'%';document.getElementById('lblSem').textContent=fmt(sumS)+' tok';
+
+// ---- file → nodes/edges explorer (section 2.5) ----
+const FILES=[
+ {name:'top10_product_status_table.xlsx', path:'LLM (table; HTML→normalized first)',
+  nodes:['📄 Doc: "Top-10 Product Status Table"','💡 Concept: best-selling-products','📊 Metric: transaction amount (transaction amount)','📊 Metric: conversion rate (conversion rate)','🛍️ Entity ×10: products (e.g. "2015spring…denim jacket (women)")'],
+  edges:['Doc —has-column→ {transaction amount, conversion rate}   [EXTRACTED]','Doc —contains→ products   [EXTRACTED]','Doc —about→ best-selling-products   [INFERRED]']},
+ {name:'best_selling_product_core_data_list.txt', path:'LLM (plain text)',
+  nodes:['📄 Doc: "Best-Selling Core Data List"','💡 Concept: best-selling-products  (shared!)','🛍️ Entity: products  (shared!)','📊 Metric: transaction amount, conversion rate  (shared!)'],
+  edges:['Doc —about→ best-selling-products   [INFERRED]','Doc —derived-from→ top10_table   [INFERRED]  (shares products + metrics)']},
+ {name:'Projects/…/02_sales_performance.json', path:'local JSON parse + LLM semantics',
+  nodes:['📄 Doc: "Sales Performance"','💡 Concept: sales-performance','📊 Metric: revenue'],
+  edges:['Doc —relates-to→ top10_table   [AMBIGUOUS]  (both sales data, weak)']},
+ {name:'Sales/Orders/Order_Record_Table.xlsx', path:'LLM (table)',
+  nodes:['📄 Doc: "Order Records"','💡 Concept: transactions / orders'],
+  edges:['Doc —shares→ transaction amount concept   [INFERRED]','weak link to best-sellers   [AMBIGUOUS]']},
+ {name:'(directory) product_data/', path:'local filesystem walk — free, EXTRACTED',
+  nodes:['📁 Group node: product_data'],
+  edges:['product_data —contains→ {top10, list, apparel, problem}   [EXTRACTED]']},
+];
+const fb=document.getElementById('fbtns');
+FILES.forEach((f,i)=>{const b=document.createElement('button');b.className='qbtn';b.dataset.i=i;b.textContent=f.name;fb.appendChild(b);});
+function showF(i){document.querySelectorAll('#fbtns .qbtn').forEach(x=>x.classList.toggle('sel',x.dataset.i==i));
+  const f=FILES[i];
+  document.getElementById('fpane').innerHTML=`<h4 style="color:var(--sem)">${f.name}</h4>
+    <div class="tagline">extraction path: <b>${f.path}</b></div>
+    <div style="margin-top:8px"><b style="color:var(--sem)">nodes extracted</b><ul style="margin:4px 0">${f.nodes.map(n=>'<li>'+n+'</li>').join('')}</ul></div>
+    <div><b style="color:var(--acc)">edges</b><ul style="margin:4px 0">${f.edges.map(e=>'<li><code>'+e+'</code></li>').join('')}</ul></div>`;}
+fb.addEventListener('click',e=>{const b=e.target.closest('.qbtn');if(b)showF(b.dataset.i);});
+showF(0);
+
+document.getElementById('replay').innerHTML=
+ `<b>The multiplier — why the gap explodes to 200–600k vs ~35k:</b> in an agentic loop, every byte you read <b>replays in <code>cache_read</code> on every later turn</b>. Plain Claude added ~${fmt(sumP)} of content AND took ~31 turns → that content is re-charged ~30×. The semantic FS adds ~${fmt(sumS)} of content AND finishes in ~3–4 turns. So the real cost ≈ <i>content × turns</i>: <b>${fmt(sumP)}×30 ≈ ${fmt(sumP*30)}</b> (matches Claude's runs) vs <b>${fmt(sumS)}×4 ≈ ${fmt(sumS*4)}</b> (matches codex's 35k). Small artifacts + fewer turns compound into the ~17× gap.`;
+</script>
+</body>
+</html>

@@ -97,4 +97,5 @@ Requires repo secret `GATEWAY_REPO_TOKEN` (PAT with write access to that repo).
 - Our users are described in users.md. Always think about the users and their behaviours because they're who we're building for.
 
 ## 10. Output
-- While explaining anything always prefer html, diagrams, interactivity within html and going from eli5 to expert level in 5 steps. 
+- While explaining anything always prefer html, diagrams, interactivity within html and going from eli5 to expert level in 5 steps.
+- When explaining anything ground your explaination in current architecture what are we storing, how's the data being passed around components. A picture is louder than a 1000 words, so use UML diagrams and animation and interactivity in explaining data flows, current system etc.

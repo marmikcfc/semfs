@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>POSIX → Knowledge-Graph-native commands</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --posix:#f0883e; --kg:#d2a8ff; --good:#3fb950; --warn:#d29922; --bad:#f85149; --blue:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1120px;margin:0 auto;padding:30px 20px 80px}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 18px;max-width:880px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700}
+  .pill.have{background:#0f2a16;color:var(--good);border:1px solid var(--good)}
+  .pill.gap{background:#2a2410;color:var(--warn);border:1px solid var(--warn)}
+
+  /* framing toggle */
+  .toggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:6px 0 16px}
+  .toggle button{background:transparent;color:var(--mut);border:0;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600}
+  .toggle button.on.posix{background:var(--posix);color:#0b0f14}
+  .toggle button.on.kg{background:var(--kg);color:#0b0f14}
+
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:6px 0 24px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+  tr.row{cursor:pointer;transition:background .15s}
+  tr.row:hover{background:#11161f}
+  td.cmd{font-family:ui-monospace,Menlo,monospace;color:var(--posix);white-space:nowrap}
+  td.kg{color:var(--kg)}
+  td.prim{font-family:ui-monospace,Menlo,monospace;color:var(--blue);font-size:12px}
+  .cnt{color:var(--mut);font-size:11px}
+  /* emphasis driven by toggle */
+  body.view-posix td.kgcol, body.view-posix th.kgcol{opacity:.4}
+  body.view-kg   td.poscol,td.cmd, body.view-kg th.poscol{opacity:.45}
+  /* expandable detail */
+  tr.detail td{background:#0b0f14;border-top:0}
+  tr.detail{display:none}
+  tr.detail.open{display:table-row}
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .ba > div{border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+  .ba h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  .ba .before h4{color:var(--posix)} .ba .after h4{color:var(--kg)}
+  pre{margin:0;background:transparent;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:var(--ink)}
+  .hint{color:var(--mut);font-size:11px;margin:-2px 0 10px}
+  h2{font-size:16px;margin:26px 0 6px}
+  .principle{border:1px solid var(--kg);background:#1a1430;border-radius:12px;padding:14px 18px;margin:20px 0}
+  .principle b{color:var(--kg)}
+  .arrowmap{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+  .arrowmap span{background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;font-family:ui-monospace,Menlo,monospace}
+  .arrowmap i{color:var(--posix)} .arrowmap b{color:var(--kg)}
+</style>
+</head>
+<body class="view-kg">
+<div class="wrap">
+  <h1>Claude's exploration commands → their <span style="color:var(--kg)">knowledge-graph / AI-native</span> equivalents</h1>
+  <p class="sub">Every command Claude ran on Workspace-Bench case 289 operates on a <b>namespace + bytes</b> (no notion of meaning, entities, or relations), so it returns <b>everything, unranked</b> and makes the agent the filter — burning tokens. A KG-native filesystem takes <i>intent</i>, traverses <i>meaning/relations</i>, and returns a <b>ranked, scoped, or answered</b> result. Toggle the lens; click any row for the before/after.</p>
+
+  <div class="toggle" id="toggle">
+    <button class="posix" data-v="posix">POSIX · bytes &amp; paths</button>
+    <button class="kg on" data-v="kg">KG-native · meaning &amp; relations</button>
+  </div>
+  <div class="hint">▸ click a row to expand the concrete before → after</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="poscol">Claude's command (count)</th>
+        <th class="poscol">What it does (bytes/paths)</th>
+        <th>Real intent</th>
+        <th class="kgcol">KG / AI-native alternative</th>
+        <th class="kgcol">Primitive</th>
+        <th class="kgcol">In semfs?</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <!-- rows injected -->
+    </tbody>
+  </table>
+
+  <h2>Operations that exist <em>only</em> in the KG world (no POSIX equivalent)</h2>
+  <table>
+    <thead><tr><th>Need</th><th class="kgcol">KG-native op</th><th>Why POSIX can't express it</th><th class="kgcol">In semfs?</th></tr></thead>
+    <tbody>
+      <tr><td>"what's <i>related</i> to this product / table / campaign?"</td>
+          <td class="prim">neighbors(entity, relation)</td>
+          <td>POSIX has one fixed relation — the directory hierarchy (parent→child). No <code>mentions</code>, <code>references</code>, <code>derived-from</code> edges.</td>
+          <td><span class="pill gap">graph layer — gap</span></td></tr>
+      <tr><td>"map this workspace before I search"</td>
+          <td class="prim">summarize(container)</td>
+          <td>POSIX has no synthesis — you must <code>ls -R</code> + <code>cat</code> many files and infer.</td>
+          <td><span class="pill gap">⚠️ profile.md EMPTY for workspaces</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="principle">
+    <b>The single transformation behind every row:</b>
+    <div class="arrowmap">
+      <span><i>enumerate</i> → <b>rank</b></span>
+      <span><i>name-match</i> → <b>meaning-match</b></span>
+      <span><i>read-all</i> → <b>retrieve-relevant</b></span>
+      <span><i>parse</i> → <b>pre-normalized</b></span>
+      <span><i>hierarchy</i> → <b>graph</b></span>
+    </div>
+    <p style="margin:10px 0 0;color:var(--mut)">Each POSIX op returns an <b>unbounded, unranked</b> set and makes the agent the filter (tokens). Each KG op returns a <b>bounded, ranked, or answered</b> result because the filter lives in the index/graph. Vector search covers find-by-meaning &amp; passage retrieval; the <b>graph edges</b> are what power ranked <code>ls</code>/<code>neighbors</code> and relation traversal — the part that would have killed Claude's 8 <code>ls</code> + 10 <code>find</code> calls.</p>
+  </div>
+</div>
+
+<script>
+const ROWS = [
+  {
+    cmd:"ls &lt;dir&gt;", cnt:"×8", does:"enumerate children, unranked",
+    intent:"orient — what matters here?",
+    kg:"ranked, summarized listing: children ordered by task-relevance, each with a 1-line gist",
+    prim:"neighbors(node) ⊕ rank(task) ⊕ summarize()",
+    have:"gap", haveTxt:"graph layer — gap",
+    before:"$ ls &lt;WS&gt;/\nSales/  flagship_store_operations/  taobao_campaigns/\ndesktop/  ... (200+ equal names, no signal)",
+    after:"neighbors(root, rank=\"best selling products\")\n→ desktop/.../product_data/   (0.91, \"top-seller tables\")\n  flagship_store_operations/   (0.40)\n  ... 3 more, scored"
+  },
+  {
+    cmd:"find -name \"*best*\" | grep -i hot-selling", cnt:"×10", does:"match filenames to keywords",
+    intent:"find the file *about* best-sellers",
+    kg:"semantic entity resolution: describe the thing, get the node(s) by meaning — filename/language-independent",
+    prim:"resolve(query) → entities",
+    have:"have", haveTxt:"✅ semfs grep",
+    before:"$ find &lt;WS&gt;/ -name \"*best*sell*\" -o -name \"*hot-selling*\" ...\n(repeated 10× with different name guesses — most return nothing)",
+    after:"resolve(\"best selling products\")\n→ top10_product_status_table  (entity: ProductRanking)\n  best_selling_product_core_data_list\n(matched by meaning, not filename)"
+  },
+  {
+    cmd:"find | xargs grep \"hot-selling|top-seller\"", cnt:"×1", does:"open EVERY file, literal scan",
+    intent:"which content discusses X?",
+    kg:"hybrid retrieval → ranked passages with provenance (file + line range)",
+    prim:"search(query) → [(chunk,file,lines,score)]",
+    have:"have", haveTxt:"✅ semfs grep",
+    before:"$ find &lt;WS&gt;/ -type f | xargs grep -li \"hot-selling|top-seller|sales volume\"\n(reads all 2,128 files into the scan — huge)",
+    after:"search(\"best selling products\")\n→ top10...: L12-15 \"transaction amount 37200 conversion rate 2.85%\"\n  core_data: L3-9 \"...\"   (top-k only)"
+  },
+  {
+    cmd:"cat / Read / openpyxl", cnt:"×9", does:"read & parse the WHOLE file",
+    intent:"extract the rows / answer I need",
+    kg:"scoped read or QA over the node — return the relevant chunk, or answer a question against it",
+    prim:"read_chunk(node, query) / ask(node, q)",
+    have:"have", haveTxt:"✅ grep excerpts",
+    before:"$ python3 -c \"openpyxl.load_workbook('top10.xlsx')\"\n→ FAILS (file is HTML disguised as .xlsx)\n$ cat top10.xlsx   → 30KB of raw HTML table",
+    after:"ask(top10, \"top sellers + conversion rate\")\n→ 5 rows: name | transaction amount | conversion rate\n(reads the chunk, not the file; format already normalized)"
+  },
+  {
+    cmd:"file &lt;f&gt; + HTMLParser", cnt:"×2+", does:"sniff bytes, hand-parse format",
+    intent:"is this readable? normalize it",
+    kg:"format-abstracted typed content — ingested & normalized at write time",
+    prim:"node.content (typed: table/doc/image)",
+    have:"have", haveTxt:"✅ transcription",
+    before:"$ file top10.xlsx → \"HTML document\"\n$ python3 ... class TableParser(HTMLParser): ...\n(hand-writing a parser to recover the table)",
+    after:"node.content  →  already a normalized table\n(format detection & parsing don't exist as steps)"
+  },
+  {
+    cmd:"(the whole list→guess→read→fail loop)", cnt:"31 calls", does:"manual search under uncertainty",
+    intent:"find and answer the task",
+    kg:"one retrieve-then-synthesize query",
+    prim:"ask(corpus, task) → ranked nodes + answer",
+    have:"gap", haveTxt:"partial (no synth)",
+    before:"31 tool calls · ~617,625 tokens\nls→find→find→openpyxl(fail)→file→HTMLParser→find→...",
+    after:"ask(corpus, \"best selling products + metrics\")\n→ 3 ranked nodes + the answer rows\n(= codex's 3-command, 35,763-token trace)"
+  }
+];
+
+const tb = document.getElementById('rows');
+ROWS.forEach((r,i)=>{
+  const tr = document.createElement('tr'); tr.className='row'; tr.dataset.i=i;
+  tr.innerHTML = `
+    <td class="cmd poscol">${r.cmd} <span class="cnt">${r.cnt}</span></td>
+    <td class="poscol">${r.does}</td>
+    <td>${r.intent}</td>
+    <td class="kg kgcol">${r.kg}</td>
+    <td class="prim kgcol">${r.prim}</td>
+    <td class="kgcol"><span class="pill ${r.have}">${r.haveTxt}</span></td>`;
+  const det = document.createElement('tr'); det.className='detail'; det.dataset.i=i;
+  det.innerHTML = `<td colspan="6"><div class="ba">
+      <div class="before"><h4>POSIX — what Claude did</h4><pre>${r.before}</pre></div>
+      <div class="after"><h4>KG-native — what it could be</h4><pre>${r.after}</pre></div>
+    </div></td>`;
+  tb.appendChild(tr); tb.appendChild(det);
+});
+tb.addEventListener('click', e=>{
+  const tr = e.target.closest('tr.row'); if(!tr) return;
+  const det = tb.querySelector(`tr.detail[data-i="${tr.dataset.i}"]`);
+  det.classList.toggle('open');
+});
+document.getElementById('toggle').addEventListener('click', e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#toggle button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  document.body.className = 'view-'+b.dataset.v;
+});
+</script>
+</body>
+</html>

@@ -89,14 +89,20 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
     format!(
         "{begin}\n\
          <!-- managed by `semfs mount`; auto-removed on `semfs unmount` -->\n\
-         The directory `{path_str}/` is a Supermemory mount with semantic search.\n\
-         When searching inside this directory, use:\n\
+         The directory `{path_str}/` is a dynamic semantic index (Supermemory mount).\n\
+         It maintains a whole-workspace KNOWLEDGE GRAPH and answers semantic search.\n\
+         \n\
+         - To ORIENT (what is this workspace about / how is it organized), read the\n\
+         \u{0020} knowledge graph: `cat {path_str}/KNOWLEDGE_GRAPH.md` — it lists the\n\
+         \u{0020} topic clusters (communities) with their key entities and the dir map.\n\
+         \u{0020} It updates automatically as files are added or removed.\n\
+         - To FIND content, use semantic search instead of grep/rg/find:\n\
          \n\
          \u{0020}   semfs grep \"<natural language query>\" {path_str}/\n\
          \n\
-         instead of grep, rg, find, or your built-in search tool. It returns\n\
-         semantically relevant excerpts via a vector index. Files outside this\n\
-         directory behave normally — this rule is scoped to that path only.\n\
+         \u{0020} It returns ranked, semantically relevant excerpts via a vector index.\n\
+         Read the knowledge graph to orient, or grep directly to find — both work.\n\
+         Files outside this directory behave normally — this rule is scoped to that path.\n\
          {end}\n"
     )
 }

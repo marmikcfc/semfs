@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>How a virtual search path would work in semfs — ELI5 → Developer</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --agent:#58a6ff; --fuse:#7ee787; --api:#d2a8ff; --fmt:#f0883e; --bad:#f85149; --good:#3fb950; --warn:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:30px 20px 90px}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 22px}
+  code,kbd{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:13px 15px;overflow:auto;font:12px/1.5 ui-monospace,Menlo,monospace}
+  .note{border-left:3px solid var(--api);padding:6px 0 6px 14px;margin:12px 0;color:var(--mut)}
+  .myth{border:1px solid var(--warn);background:#241d10;border-radius:10px;padding:12px 16px;margin:14px 0}
+
+  .levels{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 20px;position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:20;border-bottom:1px solid var(--line)}
+  .lvlbtn{flex:1;min-width:120px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:9px 8px;cursor:pointer;text-align:center;transition:.15s}
+  .lvlbtn b{display:block;font-size:14px}.lvlbtn small{color:var(--mut);font-size:11px}
+  .lvlbtn.active{border-color:var(--api);background:var(--panel2);box-shadow:0 0 0 1px var(--api) inset}
+  .lvlbtn:hover{border-color:var(--api)}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin:0 0 18px}
+  .panel h2{margin:0 0 6px;font-size:19px}
+  .panel .age{color:var(--api);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+  .hidden{display:none}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2)}
+  .bad{color:var(--bad);font-weight:700}.good{color:var(--good);font-weight:700}
+
+  /* sequence simulator */
+  .sim{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:22px 0}
+  .sim h3{margin:0 0 10px;font-size:16px}
+  .lanes{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px}
+  .lane{border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center;font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .l-agent{color:var(--agent)}.l-fuse{color:var(--fuse)}.l-api{color:var(--api)}.l-fmt{color:var(--fmt)}
+  .steps{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+  .step{display:grid;grid-template-columns:24px 1fr;gap:10px;border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:var(--panel);opacity:.28;transition:.3s}
+  .step.on{opacity:1;box-shadow:0 0 0 2px currentColor inset}
+  .step .n{font-weight:700;text-align:center}
+  .step .body{font-size:13px}
+  .step .where{font-size:11px;color:var(--mut);font-family:ui-monospace,Menlo,monospace;margin-top:2px}
+  .s-agent{color:var(--agent)}.s-fuse{color:var(--fuse)}.s-api{color:var(--api)}.s-fmt{color:var(--fmt)}
+  .step .body, .step .where{color:var(--ink)} .step.on .where{color:var(--mut)}
+  .ctrls{display:flex;gap:8px;margin-top:6px}
+  .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px}
+  .btn:hover{border-color:var(--api)}
+  .btn.primary{border-color:var(--api);background:#1d1430}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+  .cmp > div{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--panel)}
+  .cmp b{font-size:22px;display:block}
+  .cmp small{color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>How a <span style="color:var(--api)">virtual search path</span> would work in semfs</h1>
+  <p class="sub">Mechanism only — grounded in the real code: <code>mount/fuse.rs</code> (FUSE handlers), <code>cache/profile.rs</code> (the existing virtual-file template), <code>backend/{mod,cloud}.rs</code> + <code>api/mod.rs</code> (the search call). Pick a level, then step through the simulator.</p>
+
+  <div class="myth">
+    🧭 <b>Does it traverse a graph? No.</b> semfs makes <b>one</b> <code>POST /v4/search</code> and gets back an already-ranked list. It does not walk, recurse, or expand nodes. Any graph/hybrid retrieval is <b>server-side inside Supermemory</b> — invisible to semfs. The FUSE read handler does <i>one</i> <code>search()</code> call and formats the answer. (Brute-force crawl = <code>O(files)</code> reads; virtual search = <code>O(1)</code> call + read top-k.)
+  </div>
+
+  <div class="levels" id="levels">
+    <button class="lvlbtn active" data-l="1"><b>🧸 ELI5</b><small>age 5</small></button>
+    <button class="lvlbtn" data-l="2"><b>🎮 Teen</b><small>age 15</small></button>
+    <button class="lvlbtn" data-l="3"><b>🎓 College</b><small>CS</small></button>
+    <button class="lvlbtn" data-l="4"><b>👩‍💻 Developer</b><small>impl</small></button>
+  </div>
+
+  <!-- L1 -->
+  <div class="panel" data-level="1">
+    <span class="age">Level 1 · ELI5</span>
+    <h2>A magic question-folder</h2>
+    <p>You make a special folder called <b>"ask"</b>. To ask a question, you don't dig through every drawer — you just <b>open a sticky-note named after your question</b>, like <code>ask/where-are-the-best-toys</code>.</p>
+    <p>The moment you open that note, a <b>helper elf</b> 🧝 reads your question, runs to the smart card-catalog (one trip, not searching every shelf), and <b>writes the 3 best answers onto the note</b> before you finish opening it. You read the note → it lists the 3 right drawers → you open just those.</p>
+    <p class="note">💡 The folder isn't real storage — it's a <b>doorbell for the elf</b>. Opening a note = ringing it. The elf does <b>one</b> quick lookup, not a treasure hunt.</p>
+  </div>
+
+  <!-- L2 -->
+  <div class="panel hidden" data-level="2">
+    <span class="age">Level 2 · Teen</span>
+    <h2>A "file" that's really a question</h2>
+    <p>Normally opening a file gives you bytes that were already on disk. Here, the file <b>doesn't exist on disk</b> — it's <b>computed when you read it</b>. The filename <i>is</i> the query:</p>
+    <pre>cat  .semfs/search/best-selling-products</pre>
+    <p>When you <code>cat</code> that, semfs notices the name lives under the special <code>search/</code> folder, takes <code>"best selling products"</code> as a question, asks Supermemory's search once, and hands back a ranked list of real files:</p>
+    <pre>best_selling_product_core_data_list.xlsx   (score 0.91)
+top10_product_status_table.xlsx            (score 0.87)
+problem_product_tracking.xlsx              (score 0.74)</pre>
+    <p>Then you open those 3 real files normally. You never read the other 2,000 files.</p>
+    <p class="note">💡 semfs already does this for <b>one</b> name — <code>profile.md</code> (an overview that's generated when you read it). A search path is the <b>same trick</b>, but the name carries a query.</p>
+  </div>
+
+  <!-- L3 -->
+  <div class="panel hidden" data-level="3">
+    <span class="age">Level 3 · College (CS)</span>
+    <h2>Synthetic inodes + computed reads</h2>
+    <p>A FUSE filesystem answers kernel callbacks. To resolve <code>cat .semfs/search/&lt;q&gt;</code>, the kernel calls, in order: <code>lookup(".semfs")</code> → <code>lookup("search")</code> → <code>lookup("&lt;q&gt;")</code> → <code>open</code> → <code>read</code>. The trick is to make those reserved names resolve to <b>synthetic inodes</b> that exist only in memory — never in the SQLite <code>fs_inode</code> table.</p>
+    <p>semfs already ships exactly this for <code>profile.md</code> (<code>cache/profile.rs</code>):</p>
+    <pre>pub const PROFILE_INO:  u64 = u64::MAX - 1;   // reserved, never collides
+pub const PROFILE_NAME: &str = "profile.md";
+// lookup() special-cases the name → returns PROFILE_INO
+// read()   on PROFILE_INO → api.get_profile() → format → bytes (cached in RwLock)</pre>
+    <p>A search path reserves a small range of inodes the same way, e.g. <code>SEARCH_DIR_INO = u64::MAX - 100</code>, and per-query result files get inodes minted on lookup. The <b>only</b> handler that does real work is <code>read()</code>: decode the query from the path, call the semantic backend <b>once</b>, format the ranked hits as text, return them.</p>
+    <p>The backend call already exists — it's what <code>semfs grep</code> uses today (<code>cmd/grep.rs:303</code>):</p>
+    <pre>// backend/mod.rs:23   trait SemanticIndex { async fn search(query, filepath) -> hits }
+// backend/cloud.rs:34  CloudIndex::search → api.search(query, filepath)
+// api/mod.rs:407       POST /v4/search  { q, containerTag, filepath? }  → ranked hits</pre>
+    <p class="note">💡 Nothing new in retrieval — we're just adding a <b>second front door</b> (a path) to the same <code>search()</code> that the grep CLI already calls. That's why it's small.</p>
+  </div>
+
+  <!-- L4 -->
+  <div class="panel hidden" data-level="4">
+    <span class="age">Level 4 · Developer (implementation)</span>
+    <h2>Exactly what to add, and the contract</h2>
+
+    <p><b>Namespace.</b> Reserve <code>.semfs/</code> at the mount root (mirror <code>PROFILE_NAME</code>). Under it, <code>search/&lt;query&gt;</code> where the query is percent- or <code>+</code>-encoded (filename rules: ≤255 bytes, no <code>/</code>). Optional scoping: <code>search/&lt;dir&gt;/&lt;query&gt;</code> maps to the <code>filepath</code> arg that <code>api.search(query, filepath)</code> already accepts.</p>
+
+    <p><b>Handlers to touch (<code>crates/semfs-core/src/mount/fuse.rs</code>):</b></p>
+    <table>
+      <tr><th>Handler (line)</th><th>Reserved-path behavior</th></tr>
+      <tr><td><code>lookup</code> (188)</td><td>root+<code>.semfs</code> → <code>SEMFS_DIR_INO</code>; <code>.semfs</code>+<code>search</code> → <code>SEARCH_DIR_INO</code>; <code>search</code>+<code>&lt;q&gt;</code> → mint a per-query file ino (hash(q) into a reserved high range), stash <code>ino→query</code> in an in-mem map</td></tr>
+      <tr><td><code>getattr</code> (210)</td><td>reserved inos → synthetic <code>FileAttr</code> (<code>S_IFREG</code>, mode 0444). Report <code>size=0</code> or a cached length (see lazy note)</td></tr>
+      <tr><td><code>readdir</code> (318)</td><td><code>search/</code> → empty (or last-N queries). <b>Do not</b> enumerate all queries — there are infinitely many</td></tr>
+      <tr><td><code>read</code> (425)</td><td>reserved file ino → look up its query → <code>backend.search(q, scope)</code> → format → slice <code>[offset..offset+size]</code></td></tr>
+    </table>
+
+    <p><b>A <code>SearchResults</code> type, mirroring <code>ProfileFile</code>:</b></p>
+    <pre>struct SearchResults {
+    backend: Arc&lt;dyn SemanticIndex&gt;,
+    cache: RwLock&lt;HashMap&lt;String, (Vec&lt;u8&gt;, Instant)&gt;&gt;,  // query → (bytes, fetched_at)
+}
+async fn render(&self, q: &str, scope: Option&lt;&str&gt;) -> Vec&lt;u8&gt; {
+    if let Some((b, t)) = self.cache.read().get(q) {
+        if t.elapsed() &lt; TTL { return b.clone(); }      // avoid re-billing search_v4
+    }
+    let hits = self.backend.search(q, scope).await?;     // ONE call — no traversal
+    let body = hits.iter()
+        .map(|h| format!("{}\t{:.3}\t{}", h.path, h.score, h.snippet))
+        .collect::&lt;Vec&lt;_&gt;&gt;().join("\n").into_bytes();
+    self.cache.write().insert(q.into(), (body.clone(), Instant::now()));
+    body
+}</pre>
+
+    <p><b>The full read, end to end:</b></p>
+    <pre>agent: Read(".semfs/search/best+selling+products")
+ └─ kernel → FUSE lookup(.semfs)→DIR_INO, lookup(search)→DIR_INO,
+             lookup("best+selling+products")→file ino F  (decode+store query)
+ └─ kernel → FUSE read(F, off, n)
+       └─ SearchResults.render("best selling products", None)
+            └─ CloudIndex::search → POST /v4/search {q, containerTag}
+            └─ ranked hits [{path, score, snippet}]  ← ONE round trip
+       └─ return bytes[off..off+n]
+ ← agent gets ranked shortlist → then Read()s the top file paths (normal cache reads)</pre>
+
+    <p><b>Contract / gotchas (important):</b></p>
+    <ul>
+      <li><b>Non-idempotent reads.</b> Two reads of the same path can differ (index moved) — so make it a <b>read-only file</b> (one atomic <code>read</code>), not a synthetic directory you traverse. Cache by <code>(query, container_version)</code> with a TTL so re-reads don't re-bill <code>search_v4</code>.</li>
+      <li><b>Lazy size.</b> Stat-before-read means <code>getattr</code> happens first; either return <code>size=0</code> and let clients read until EOF, or pre-compute on <code>lookup</code> (one search) and cache. Pre-compute is friendlier to <code>cat</code>.</li>
+      <li><b>Discovery still needs a hint.</b> The path is self-describing in <code>ls</code> only if you list it; agents won't guess <code>.semfs/search/&lt;q&gt;</code>. The workdir hint (or MCP description) must say it exists — same requirement as <code>semfs grep</code> today.</li>
+      <li><b>Encoding.</b> CJK queries (hot-selling/best-selling) and spaces must survive the filename round-trip → percent-encode; reject control chars; cap length.</li>
+      <li><b>No graph walk.</b> <code>render()</code> calls <code>search()</code> exactly once. Re-ranking, hybrid lexical+vector, any graph expansion all happen behind <code>/v4/search</code> server-side. semfs stays O(1)+format.</li>
+    </ul>
+    <p class="note">💡 Net diff: ~one new file (<code>cache/search.rs</code>, ~mirrors <code>profile.rs</code>) + ~4 match-arms in <code>fuse.rs</code>. Retrieval code is untouched — you reuse the same <code>SemanticIndex::search</code> the grep CLI already calls.</p>
+  </div>
+
+  <!-- ====== SEQUENCE SIMULATOR ====== -->
+  <div class="sim">
+    <h3>🕹️ Step through one <code>Read(".semfs/search/best+selling+products")</code></h3>
+    <div class="lanes">
+      <div class="lane l-agent">Agent</div><div class="lane l-fuse">FUSE handler</div>
+      <div class="lane l-api">Supermemory</div><div class="lane l-fmt">format + cache</div>
+    </div>
+    <div class="steps" id="steps">
+      <div class="step s-agent"><div class="n">1</div><div><div class="body">Agent calls native <code>Read(".semfs/search/best+selling+products")</code></div><div class="where">claude tool → open()/read() syscalls</div></div></div>
+      <div class="step s-fuse"><div class="n">2</div><div><div class="body"><code>lookup</code> walks <code>.semfs → search → &lt;query&gt;</code>, minting <b>synthetic inodes</b> (none in SQLite)</div><div class="where">mount/fuse.rs:188 · reserved ino range</div></div></div>
+      <div class="step s-fuse"><div class="n">3</div><div><div class="body"><code>read(ino)</code> fires; semfs decodes the query <code>"best selling products"</code> from the path</div><div class="where">mount/fuse.rs:425 · ino→query map</div></div></div>
+      <div class="step s-fmt"><div class="n">4</div><div><div class="body">cache check: is this query cached &amp; fresh (TTL)? If yes → return bytes, <b>skip the API</b></div><div class="where">SearchResults RwLock&lt;HashMap&gt;</div></div></div>
+      <div class="step s-api"><div class="n">5</div><div><div class="body"><b>ONE</b> <code>backend.search(q)</code> → <code>POST /v4/search {q, containerTag}</code> → ranked hits (<b>no traversal</b>)</div><div class="where">backend/cloud.rs:34 → api/mod.rs:407</div></div></div>
+      <div class="step s-fmt"><div class="n">6</div><div><div class="body">format hits as <code>path⇥score⇥snippet</code>, cache, return the requested byte slice</div><div class="where">mirrors cache/profile.rs::format</div></div></div>
+      <div class="step s-agent"><div class="n">7</div><div><div class="body">Agent reads the shortlist → <code>Read()</code>s only the top file paths (normal cache reads)</div><div class="where">~3 reads instead of ~2,000</div></div></div>
+    </div>
+    <div class="ctrls">
+      <button class="btn primary" id="play">▶ Play</button>
+      <button class="btn" id="next">Step ▸</button>
+      <button class="btn" id="reset">Reset</button>
+    </div>
+    <div class="cmp">
+      <div><small>brute-force crawl (what Claude did)</small><b class="bad">~57 tool calls</b><small>readdir+read over the tree → grows context</small></div>
+      <div><small>virtual search path</small><b class="good">1 search + ~3 reads</b><small>O(1) call + read top-k</small></div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('levels').addEventListener('click',e=>{
+  const b=e.target.closest('.lvlbtn'); if(!b) return;
+  document.querySelectorAll('.lvlbtn').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  const L=b.dataset.l;
+  document.querySelectorAll('[data-level]').forEach(p=>p.classList.toggle('hidden',p.dataset.level!==L));
+  window.scrollTo({top:0,behavior:'smooth'});
+});
+const steps=[...document.querySelectorAll('#steps .step')];
+let i=-1, timer=null;
+function show(n){ steps.forEach((s,k)=>s.classList.toggle('on',k<=n)); i=n; }
+function reset(){ clearInterval(timer); timer=null; steps.forEach(s=>s.classList.remove('on')); i=-1; }
+document.getElementById('next').onclick=()=>{ if(i<steps.length-1) show(i+1); };
+document.getElementById('reset').onclick=reset;
+document.getElementById('play').onclick=()=>{
+  reset();
+  timer=setInterval(()=>{ if(i>=steps.length-1){clearInterval(timer);timer=null;return;} show(i+1); }, 750);
+};
+</script>
+</body>
+</html>

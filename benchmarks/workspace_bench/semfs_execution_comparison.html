@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>4-way execution comparison + which semantic alternatives make sense</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --discover:#58a6ff; --read:#f0883e; --detect:#8b949e; --manage:#7ee787; --semantic:#d2a8ff; --orient:#56d4dd; --env:#f778ba;
+    --yes:#3fb950; --maybe:#d29922; --no:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1200px;margin:0 auto;padding:28px 18px 80px}
+  h1{font-size:23px;margin:0 0 4px}
+  h2{font-size:18px;margin:26px 0 10px;border-bottom:1px solid var(--line);padding-bottom:5px}
+  .sub{color:var(--mut);margin:0 0 14px;max-width:900px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  .legend{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0;font-size:12.5px}
+  .legend span{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:3px 8px;border-radius:6px;border:1px solid transparent}
+  .legend span.dim{opacity:.35}
+  .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .hint{color:var(--mut);font-size:12px;margin:4px 0 12px}
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media(max-width:780px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card.win{border-color:var(--semantic)}
+  .card h3{margin:0 0 2px;font-size:15px}
+  .card .meta{color:var(--mut);font-size:12px;margin-bottom:10px}
+  .card .meta b{color:var(--ink)}
+  .seq{list-style:none;margin:0;padding:0;font:12px/1.5 ui-monospace,Menlo,monospace}
+  .seq li{padding:4px 8px;border-radius:6px;margin-bottom:3px;border-left:3px solid var(--line);transition:.15s}
+  .seq li.dim{opacity:.18}
+  .r-discover{border-left-color:var(--discover)} .r-read{border-left-color:var(--read)}
+  .r-detect{border-left-color:var(--detect)} .r-manage{border-left-color:var(--manage)}
+  .r-semantic{border-left-color:var(--semantic);background:#1a1430} .r-orient{border-left-color:var(--orient)}
+  .r-env{border-left-color:var(--env)}
+  .tag{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);float:right}
+
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut)}
+  td.cmd{font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+  tr.vrow{cursor:pointer}
+  tr.vrow:hover{background:#11161f}
+  tr.why{display:none} tr.why.open{display:table-row}
+  tr.why td{background:#0b0f14;color:var(--mut)}
+  .v{font-weight:700;border-radius:999px;padding:2px 9px;font-size:11px;white-space:nowrap}
+  .v.yes{background:#0f2a16;color:var(--yes);border:1px solid var(--yes)}
+  .v.maybe{background:#2a2410;color:var(--maybe);border:1px solid var(--maybe)}
+  .v.no{background:#2a1416;color:var(--no);border:1px solid var(--no)}
+  .principle{border:1px solid var(--semantic);background:#1a1430;border-radius:12px;padding:14px 18px;margin:22px 0}
+  .principle b{color:var(--semantic)}
+  .toggle{background:#1f2630;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12.5px;margin:6px 0}
+  .toggle.on{border-color:var(--discover);color:var(--discover)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Codex vs Claude, with & without semfs — execution + which commands deserve a semantic alternative</h1>
+  <p class="sub">Same task (Workspace-Bench case 289: "best-selling products"). Each run's commands are color-coded by <b>role</b>. Then: which of those commands actually benefit from a semantic alternative — grounded in what the agents did.</p>
+
+  <div class="legend" id="legend">
+    <span data-r="discover"><i class="sw" style="background:var(--discover)"></i>discovery (find/ls/grep — locate)</span>
+    <span data-r="read"><i class="sw" style="background:var(--read)"></i>read / parse</span>
+    <span data-r="detect"><i class="sw" style="background:var(--detect)"></i>detect (file/stat)</span>
+    <span data-r="manage"><i class="sw" style="background:var(--manage)"></i>manage (mkdir/cp/write)</span>
+    <span data-r="orient"><i class="sw" style="background:var(--orient)"></i>orient (profile.md)</span>
+    <span data-r="semantic"><i class="sw" style="background:var(--semantic)"></i>semantic (semfs grep)</span>
+    <span data-r="env"><i class="sw" style="background:var(--env)"></i>env</span>
+  </div>
+  <button class="toggle" id="hi">★ Highlight discovery commands across all 4 runs</button>
+  <p class="hint">…the dimming shows where the wasted effort clusters — almost entirely in <b>discovery</b>.</p>
+
+  <h2>The four executions</h2>
+  <div class="grid" id="grid"></div>
+
+  <h2>Which commands' semantic alternative makes sense?</h2>
+  <p class="hint">▸ click a row for the reasoning</p>
+  <table id="verdict">
+    <thead><tr><th>Command</th><th>Role</th><th>Semantic alt?</th><th>One-line verdict</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="principle">
+    <b>The line the executions draw:</b>
+    <ul style="margin:8px 0 0;color:var(--mut)">
+      <li><b style="color:var(--discover)">Discovery under uncertainty</b> (<code>find</code>, <code>grep</code>, exploratory <code>ls</code>) → <b style="color:var(--yes)">semantic alt YES</b>. This is where the agent is guessing <i>where/which</i>; literal POSIX forces enumeration and burns tokens. Every wasted call in all four runs clusters here.</li>
+      <li><b style="color:var(--manage)">Deterministic ops</b> (<code>cp mv rm mkdir write</code>, exact <code>cat &lt;known file&gt;</code>) → <b style="color:var(--no)">keep literal</b>. The agent knows the exact target; fuzzing them adds risk and can drop data. Only the index side-effect is automatic.</li>
+      <li><b style="color:var(--read)">The format trap</b> (<code>file</code>+<code>openpyxl</code>+<code>pandas</code>+<code>HTMLParser</code>, 3 of 4 runs) → <b style="color:var(--maybe)">not a search problem</b>. Solved by <b>transcription</b> (pre-normalized text) so a <i>literal</i> <code>cat</code> works — not by a "semantic cat".</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+const RUNS=[
+ {title:"plain codex", cls:"", meta:"9 commands · 143,837 tok · semantic ❌",
+  seq:[
+   ["discover",'find . | grep -i "best|selling|product"'],
+   ["read","openpyxl load_workbook  → fail"],
+   ["read","pandas read_excel  → fail"],
+   ["read","zipfile + XML parse  (it's HTML)"],
+   ["discover",'find | grep -Ei "best.selling|top.10|hot-selling"'],
+   ["read","zipfile + XML on top10"],
+   ["detect","file top10.xlsx ; ls -l"],
+   ["read","sed -n '1,200p' top10.xlsx"],
+   ["manage","mkdir model_output && cp best_selling…txt"],
+  ]},
+ {title:"semfs-codex  ★ ideal", cls:"win", meta:"3 commands · 35,763 tok · semantic ✅",
+  seq:[
+   ["orient","pwd && ls -la && cat profile.md"],
+   ["semantic",'semfs grep "best-selling … conversion rate"  .'],
+   ["manage","mkdir model_output && cat > …txt  (answer from excerpts)"],
+  ]},
+ {title:"plain claude (run 9)", cls:"", meta:"31 commands · 206,941 tok · semantic ❌",
+  seq:[
+   ["discover","ls"],
+   ["discover",'Glob **/*best-selling* **/*hot-selling* **/*sales*'],
+   ["discover",'Grep "(best-selling|hot-selling|sales)"  ×5  (literal)'],
+   ["read","Read Weekly_Meeting/…, Projects/…json  (misfires)"],
+   ["discover",'find -name "*.xlsx|*.csv"  ×several'],
+   ["read","openpyxl  → fail"],
+   ["env","pip install openpyxl  ×2"],
+   ["read","Read top10.xlsx"],
+   ["manage","Write model_output/best_selling…txt"],
+  ]},
+ {title:"semfs-claude (run 11)", cls:"", meta:"20 commands · 599,529 tok · semantic ✅ (but anxious)",
+  seq:[
+   ["discover","ls"],
+   ["semantic","semfs grep \"<query>\"  ×7  (good NL queries)"],
+   ["read","openpyxl → pandas  → fail (HTML trap)"],
+   ["detect","file …xlsx"],
+   ["read","Read raw xlsx  (didn't trust excerpts)"],
+   ["manage","mkdir && Write …txt"],
+  ]},
+];
+const grid=document.getElementById('grid');
+RUNS.forEach(r=>{
+  const c=document.createElement('div'); c.className='card '+r.cls;
+  c.innerHTML=`<h3>${r.title}</h3><div class="meta">${r.meta}</div>`;
+  const ul=document.createElement('ul'); ul.className='seq';
+  r.seq.forEach(([role,txt])=>{
+    const li=document.createElement('li'); li.className='r-'+role; li.dataset.role=role;
+    li.innerHTML=`${txt}<span class="tag">${role}</span>`;
+    ul.appendChild(li);
+  });
+  c.appendChild(ul); grid.appendChild(c);
+});
+
+// legend toggle dimming
+document.getElementById('legend').addEventListener('click',e=>{
+  const s=e.target.closest('span'); if(!s) return;
+  s.classList.toggle('dim');
+  const r=s.dataset.r, off=s.classList.contains('dim');
+  document.querySelectorAll(`.seq li[data-role="${r}"]`).forEach(li=>li.classList.toggle('dim',off));
+});
+// highlight-discovery button: dim everything except discovery
+let hi=false;
+document.getElementById('hi').addEventListener('click',e=>{
+  hi=!hi; e.target.classList.toggle('on',hi);
+  document.querySelectorAll('.seq li').forEach(li=>li.classList.toggle('dim', hi && li.dataset.role!=='discover'));
+});
+
+const V=[
+ ["find","discovery","yes","✅ strongly — the locate-by-meaning workhorse; every agent over-used it (claude ~14×). Literal find can't express \"about X\".",
+  "Highest payoff and NOT built yet. Literal find only matches names/metadata, so agents guess filenames repeatedly. A semantic find = describe intent → ranked nodes, killing the dozen-find pattern."],
+ ["grep","discovery","yes","✅ proven — semfs grep already collapses content-scan → ranked passages.",
+  "The one semantic verb shipped today. semfs-codex used it to get the answer in 1 call; it's the win we keep trying to give Claude."],
+ ["ls (exploratory)","discovery","maybe","⚠️ partial — ranking helps when drilling, but profile.md covers orientation better.",
+  "A ranked ls needs the graph layer (not built). For 'understand the workspace', the cheaper move is reading profile.md (one digest) than ranking every ls."],
+ ["cat (binary/structured)","read","yes","✅ but as TRANSCRIPTION, not 'semantic cat' — read normalized text, not raw bytes.",
+  "The format trap (openpyxl→pandas→HTMLParser) lived here in 3/4 runs. Fix = read the .transcription.md sibling (clean extracted text); a fuzzy excerpt would drop data."],
+ ["cat (known file, full data)","read","no","❌ keep literal — a semantic excerpt would drop rows.",
+  "Case 289 needed the whole ranked table. When the agent knows the exact file and needs ALL of it, verbatim read is correct; semantic = data loss."],
+ ["file / stat","detect","no","❌ no — pure metadata, no meaning to add.",
+  "The need it serves (how do I parse this) is removed by transcription, not by making file 'semantic'. Don't build it."],
+ ["cp / mv / rm / mkdir / write","manage","no","❌ keep literal — deterministic; the agent knows the exact target.",
+  "Every run did these cleanly. A 'fuzzy rm' or 'semantic cp' is a footgun. Only the index side-effect (re-embed/forget) is automatic — not an agent-facing variant."],
+ ["pip install","env","no","❌ n/a — not file management.",""],
+];
+const vb=document.querySelector('#verdict tbody');
+V.forEach(([cmd,role,v,line,why])=>{
+  const tr=document.createElement('tr'); tr.className='vrow';
+  tr.innerHTML=`<td class="cmd">${cmd}</td><td>${role}</td><td><span class="v ${v}">${v==='yes'?'YES':v==='maybe'?'MAYBE':'NO'}</span></td><td>${line}</td>`;
+  const w=document.createElement('tr'); w.className='why';
+  w.innerHTML=`<td colspan="4">${why||'—'}</td>`;
+  vb.appendChild(tr); vb.appendChild(w);
+  tr.addEventListener('click',()=>w.classList.toggle('open'));
+});
+</script>
+</body>
+</html>

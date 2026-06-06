@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>semfs × POSIX × semantic search — ELI5 → Professor</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --posix:#58a6ff; --cache:#7ee787; --sem:#d2a8ff; --r2:#f0883e; --bad:#f85149; --good:#3fb950; --warn:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:30px 20px 90px}
+  h1{font-size:25px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 22px}
+  code,kbd{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:13px 15px;overflow:auto;font:12.5px/1.55 ui-monospace,Menlo,monospace}
+  .note{border-left:3px solid var(--sem);padding:6px 0 6px 14px;margin:12px 0;color:var(--mut)}
+
+  /* level selector */
+  .levels{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 20px;position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:20;border-bottom:1px solid var(--line)}
+  .lvlbtn{flex:1;min-width:120px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:9px 8px;cursor:pointer;text-align:center;transition:.15s}
+  .lvlbtn b{display:block;font-size:14px}
+  .lvlbtn small{color:var(--mut);font-size:11px}
+  .lvlbtn.active{border-color:var(--sem);background:var(--panel2);box-shadow:0 0 0 1px var(--sem) inset}
+  .lvlbtn:hover{border-color:var(--sem)}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin:0 0 18px}
+  .panel h2{margin:0 0 6px;font-size:19px}
+  .panel .age{color:var(--sem);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+  .hidden{display:none}
+
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2)}
+  .bad{color:var(--bad);font-weight:700}.good{color:var(--good);font-weight:700}.warn{color:var(--warn);font-weight:700}
+
+  /* ---- interactive simulator ---- */
+  .sim{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:22px 0}
+  .sim h3{margin:0 0 4px;font-size:16px}
+  .archtoggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:8px 0 14px}
+  .archtoggle button{background:transparent;color:var(--mut);border:0;padding:7px 16px;cursor:pointer;font-size:13px}
+  .archtoggle button.on{background:var(--sem);color:#0b0f14;font-weight:700}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  .act{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:8px 12px;cursor:pointer;font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+  .act:hover{border-color:var(--posix)}
+  .act.sel{border-color:var(--posix);background:#10243f}
+
+  .pipe{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:6px 0 4px}
+  .node{flex:1;min-width:120px;border:1px solid var(--line);border-radius:10px;padding:10px;margin:4px;background:var(--panel);text-align:center;opacity:.32;transition:.35s;position:relative}
+  .node.lit{opacity:1;box-shadow:0 0 0 2px currentColor inset}
+  .node .t{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+  .node .v{font-size:13px;margin-top:3px;font-family:ui-monospace,Menlo,monospace}
+  .n-posix{color:var(--posix)} .n-cache{color:var(--cache)} .n-sem{color:var(--sem)} .n-r2{color:var(--r2)} .n-bad{color:var(--bad)}
+  .arrow{align-self:center;color:var(--mut);font-size:18px;padding:0 2px}
+  .verdict{margin-top:12px;padding:11px 14px;border-radius:10px;font-size:14px;border:1px solid var(--line)}
+  .verdict.semantic{background:#1d1430;border-color:var(--sem)}
+  .verdict.crawl{background:#2a1a12;border-color:var(--r2)}
+  .verdict.blocked{background:#2a1416;border-color:var(--bad)}
+  .meter{height:10px;border-radius:6px;background:#0b0f14;border:1px solid var(--line);margin-top:8px;overflow:hidden}
+  .meter > div{height:100%;transition:width .5s}
+
+  .diagram{width:100%;height:auto;margin:10px 0}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--mut);margin:6px 0}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Can Claude Code use semfs's <span style="color:var(--sem)">semantic</span> search through normal <span style="color:var(--posix)">POSIX</span> file ops?</h1>
+  <p class="sub">Five levels — same idea, deeper each time. Pick a level, then play with the simulator below it. Grounded in the actual semfs code (FUSE handlers, <code>profile.rs</code>, <code>grep.rs</code>).</p>
+
+  <div class="levels" id="levels">
+    <button class="lvlbtn active" data-l="1"><b>🧸 ELI5</b><small>age 5</small></button>
+    <button class="lvlbtn" data-l="2"><b>🎮 Teen</b><small>age 15</small></button>
+    <button class="lvlbtn" data-l="3"><b>🎓 College</b><small>CS undergrad</small></button>
+    <button class="lvlbtn" data-l="4"><b>🔬 Post-grad</b><small>systems</small></button>
+    <button class="lvlbtn" data-l="5"><b>🧠 Professor</b><small>theory</small></button>
+  </div>
+
+  <!-- LEVEL 1 -->
+  <div class="panel" data-level="1">
+    <span class="age">Level 1 · ELI5</span>
+    <h2>The magic library with a hidden helper desk</h2>
+    <p>Imagine a <b>giant library</b> that has a copy of every book your toy box ever had. That library is <b>semfs</b> — it copied the whole workspace into one room on your computer.</p>
+    <p>You ask: <i>"Find me the books about <b>best-selling toys</b>."</i> There are two ways:</p>
+    <ul>
+      <li>🐢 <b>Walk every shelf</b> and read every title yourself. Slow, and you get tired (this uses lots of "energy" = tokens).</li>
+      <li>🧙 Ask the <b>magic helper desk</b> — it instantly points to the 3 right books.</li>
+    </ul>
+    <p><b>Robot Claude</b> walks every shelf 🐢 — because the helper desk is hidden behind a <b>secret knock</b> Claude doesn't know. Robot Codex knows the knock, so it just asks the desk 🧙 and finishes fast.</p>
+    <p class="note">💡 The fix: put the helper desk behind a <b>normal door with a sign</b> — so <i>any</i> robot can open it the same way it opens any other door.</p>
+  </div>
+
+  <!-- LEVEL 2 -->
+  <div class="panel hidden" data-level="2">
+    <span class="age">Level 2 · Teen</span>
+    <h2>Two ways to search a folder</h2>
+    <p>semfs makes a cloud memory (Supermemory) show up as <b>normal folders</b> on the computer. Inside, an AI agent can search two ways:</p>
+    <table>
+      <tr><th>Way</th><th>How</th><th>Cost</th></tr>
+      <tr><td>🐢 Brute force</td><td>open every file, Ctrl-F for the word</td><td>reads everything → expensive</td></tr>
+      <tr><td>🧙 Semantic</td><td>ask "what's about <i>best sellers</i>?" → get a ranked shortlist</td><td>reads only the top hits → cheap</td></tr>
+    </table>
+    <p>Right now the 🧙 option only works if you type a special <code>grep</code> command in the terminal. <b>Claude Code doesn't use that</b> — it has its own built-in search button that doesn't go through the terminal. So Claude is stuck on 🐢.</p>
+    <p class="note">💡 Fix idea: make a special folder like <code>.semfs/search/best-sellers</code>. When Claude <b>opens that "file,"</b> semfs secretly runs the smart search and hands back the answer. Now Claude's normal "open file" button = semantic search.</p>
+  </div>
+
+  <!-- LEVEL 3 -->
+  <div class="panel hidden" data-level="3">
+    <span class="age">Level 3 · College (CS undergrad)</span>
+    <h2>FUSE, syscalls, and two code paths</h2>
+    <p>semfs is a <b>FUSE filesystem</b>: every <code>open/read/readdir/lookup</code> syscall on the mount is handled by the semfs daemon, which serves bytes out of a local <b>SQLite cache</b> (the whole 593 MB workspace lives in a <code>fs_data</code> BLOB table).</p>
+    <p>There are <b>two independent paths</b>:</p>
+    <table>
+      <tr><th>Path</th><th>Triggered by</th><th>Hits Supermemory?</th></tr>
+      <tr><td><span class="n-posix">POSIX read path</span></td><td><code>read</code>/<code>readdir</code>/<code>lookup</code> (i.e. <code>cat</code>, <code>ls</code>, <code>find</code>, <code>Read</code>, <code>Glob</code>)</td><td><b class="bad">No</b> — literal cache bytes</td></tr>
+      <tr><td><span class="n-sem">semantic path</span></td><td><code>semfs grep "&lt;q&gt;"</code> (and a zsh <code>grep()</code> wrapper)</td><td><b class="good">Yes</b> → <code>search_v4</code></td></tr>
+    </table>
+    <p><b>Why Claude misses it:</b> Claude Code's <code>Grep</code> tool is an <b>in-process ripgrep</b>; it reads file bytes through FUSE and matches <i>inside its own process</i>. semfs never sees the query, so it can't make that search semantic. The zsh wrapper that <i>would</i> route a shell <code>grep</code> to <code>semfs grep</code> never fires, because Claude doesn't shell out to <code>grep</code>.</p>
+    <p><b>The template for the fix already exists:</b> semfs serves a <b>virtual file</b> <code>profile.md</code> (<code>profile.rs</code>) — reading it triggers <code>POST /v4/profile</code>. Mirror that for search:</p>
+    <pre>Read  /mnt/.semfs/search/best-sellers   →  FUSE read() sees reserved path
+                                        →  backend.search("best sellers")
+                                        →  returns ranked file paths + snippets</pre>
+    <p class="note">💡 Now Claude's <b>native</b> <code>Read</code>/<code>LS</code>/<code>Glob</code> reach semantic search — no shell, no special tool. Works for every agent.</p>
+  </div>
+
+  <!-- LEVEL 4 -->
+  <div class="panel hidden" data-level="4">
+    <span class="age">Level 4 · Post-grad (systems)</span>
+    <h2>Where exactly to wire it, and what breaks</h2>
+    <p>The only call site of <code>backend.search()</code> today is <code>crates/semfs/src/cmd/grep.rs:303</code> — a CLI command. The FUSE layer (<code>mount/fuse.rs</code>, 19 ops: <code>lookup, getattr, readdir, open, read, write, create, mkdir, rename, symlink, …</code>) never calls it. To make semantic reachable via POSIX we intercept a <b>reserved path prefix</b> in three handlers:</p>
+    <table>
+      <tr><th>Handler</th><th>Reserved-path behavior</th></tr>
+      <tr><td><code>lookup(parent, ".semfs")</code></td><td>synthesize a virtual dir inode (like <code>PROFILE_INO = u64::MAX-1</code>)</td></tr>
+      <tr><td><code>readdir(.semfs/search/&lt;q&gt;)</code></td><td>call <code>search(q)</code>, return hits as dirents (symlinks → real files)</td></tr>
+      <tr><td><code>read(.semfs/search/&lt;q&gt;.md)</code></td><td>call <code>search(q)</code>, format ranked paths + snippets as text (mirror <code>ProfileFile</code>)</td></tr>
+    </table>
+    <p><b>Design choices &amp; failure modes:</b></p>
+    <ul>
+      <li><b>Query encoding:</b> the query lives <i>in the path</i> (<code>search/best+selling+products.md</code>). Filesystem-name limits (255 bytes, no <code>/</code>) cap query length — fine for keyword queries.</li>
+      <li><b>Caching:</b> cache results per (query, container-version) with a short TTL; otherwise a re-read re-bills <code>search_v4</code>. <code>profile.rs</code> already caches in an <code>RwLock&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;</code>.</li>
+      <li><b>POSIX-correctness:</b> <code>readdir</code> on a query dir is <b>non-idempotent</b> (results can change) and has no stable inode set — tools that <code>stat</code> then <code>open</code> may race. A read-only <i>file</i> per query is safer than a synthetic <i>dir</i>.</li>
+      <li><b>The hint is mandatory.</b> semfs can't make Claude <i>want</i> the path. The workdir <code>CLAUDE.md</code> must say "for discovery, read <code>.semfs/search/&lt;query&gt;.md</code>." Without it, Claude crawls (observed: run 4 = 57 cache-served tool calls, 0 searches).</li>
+    </ul>
+    <p><b>Route comparison:</b></p>
+    <table>
+      <tr><th>Route</th><th>POSIX-native?</th><th>Reaches Claude tools?</th><th>Effort</th></tr>
+      <tr><td>Virtual search path</td><td class="good">✓</td><td class="good">✓ Read/LS/Glob</td><td>small Rust (mirror profile.rs)</td></tr>
+      <tr><td>MCP <code>semantic_search</code> tool</td><td class="bad">✗ new tool</td><td class="good">✓ best uptake</td><td>MCP server + harness wiring</td></tr>
+      <tr><td><code>grep()</code> wrapper in bash env</td><td class="warn">~ shell only</td><td class="warn">~ Bash-tool grep only</td><td>tiny, low coverage</td></tr>
+    </table>
+    <p><b>Why it matters (token economics):</b> Claude's totals are ~94% <code>cache_read</code> — replaying the growing context each turn. Crawling <i>grows</i> that context (every <code>find</code>/<code>Read</code> adds files), so brute force is strictly worse than a ranked shortlist. Codex −75% came from one <code>search_v4</code> + targeted reads.</p>
+  </div>
+
+  <!-- LEVEL 5 -->
+  <div class="panel hidden" data-level="5">
+    <span class="age">Level 5 · Professor (theory)</span>
+    <h2>An impedance mismatch between two namespaces</h2>
+    <p>The real subject here is a <b>layering problem</b>: semantic retrieval is <i>content-addressed and ranked</i>; a filesystem is a <i>hierarchical, stable namespace with referential transparency</i>. Bridging them forces a choice about <b>where the abstraction boundary sits</b>.</p>
+
+    <p><b>1 · Why transparent interception is impossible at the read layer.</b> Claude's <code>Grep</code> is ripgrep executing <i>above</i> the VFS boundary: it issues <code>read(fd, buf, n)</code> and performs matching in its own address space. The daemon observes a stream of byte requests with no query in scope — the search predicate never crosses the syscall interface. By the <b>end-to-end argument</b>, the function (semantic ranking) cannot be implemented in the lower layer (the FS) when the necessary information (the query intent) exists only in the upper layer (the agent). Hence semantic must be exposed <i>as data the upper layer requests</i> — i.e. as a name.</p>
+
+    <p><b>2 · Search-as-a-name is a synthetic filesystem.</b> Encoding the query in the path (<code>.semfs/search/&lt;q&gt;</code>) is the Plan 9 / <code>/proc</code> / <code>sysfs</code> idiom: computation exposed through <code>open/read</code>. It works precisely because it moves the predicate <i>into the namespace</i>, where the lower layer can see it. The cost is abandoning two filesystem invariants:</p>
+    <ul>
+      <li><b>Referential transparency</b> — <code>read(p)</code> at <code>t₀</code> and <code>t₁</code> may differ (the index moves). A path is no longer a stable name for content; it's an RPC.</li>
+      <li><b>Idempotent enumeration</b> — <code>readdir</code> of a query dir is a query, not a listing; <code>stat</code>-then-<code>open</code> can observe torn state. This is why a <i>read-only file per query</i> (single atomic materialization) is preferable to a synthetic directory (multi-syscall traversal with no consistency contract).</li>
+    </ul>
+
+    <p><b>3 · The agent–daemon boundary recurs.</b> Three candidate boundaries, each a different contract:</p>
+    <table>
+      <tr><th>Boundary</th><th>Contract</th><th>Coupling</th></tr>
+      <tr><td>Shell <code>grep</code> wrapper</td><td>lexical interception of a command name</td><td>brittle: tool must be the shell builtin; bypassed by in-process ripgrep</td></tr>
+      <tr><td>Synthetic VFS path</td><td>namespace = capability; <code>open</code> = invoke</td><td>universal but violates FS algebra (above)</td></tr>
+      <tr><td>MCP tool</td><td>typed RPC negotiated out-of-band</td><td>clean semantics, but not POSIX; requires capability discovery</td></tr>
+    </table>
+    <p>Note all three still require <b>capability discovery</b> — the agent must <i>know the affordance exists</i>. No layer can infer intent it cannot observe; the hint (or MCP <code>tools/list</code>) is the discovery channel. This is the same reason a human needs the <code>man</code> page.</p>
+
+    <p><b>4 · The deeper claim.</b> The −75% (codex) vs +8.5% (Claude) result is <i>not</i> a model-quality difference; it's a <b>property of which abstraction boundary the agent's tools happen to cross</b>. Equalizing the agents requires relocating the semantic capability to a boundary <i>all</i> agents traverse — and the only boundary every file tool traverses is <code>open/read/readdir</code>. Therefore: expose search as a synthetic, read-only, per-query file in the mount, cache it with version-keyed invalidation, and advertise it via the workdir hint. That is the minimal change that makes "semantic via POSIX" hold for an arbitrary agent.</p>
+    <p class="note">Open question for further work: a synthetic path leaks query strings into logs/argv and into the FS namespace (injection, length limits, unicode normalization of CJK queries like hot-selling/best-selling). A typed MCP channel avoids this at the cost of POSIX-nativeness — so the "right" boundary is ultimately a function of your threat model and which agents you must support.</p>
+  </div>
+
+  <!-- ============ INTERACTIVE SIMULATOR ============ -->
+  <div class="sim">
+    <h3>🕹️ Flow simulator — click an action, watch which path it takes</h3>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--posix)"></i>POSIX read path</span>
+      <span><i class="sw" style="background:var(--cache)"></i>SQLite cache</span>
+      <span><i class="sw" style="background:var(--r2)"></i>R2 (raw bytes)</span>
+      <span><i class="sw" style="background:var(--sem)"></i>semantic (search_v4)</span>
+    </div>
+    <div class="archtoggle" id="arch">
+      <button data-a="current" class="on">Current architecture</button>
+      <button data-a="proposed">+ Virtual search path</button>
+    </div>
+    <div class="actions" id="actions">
+      <button class="act" data-act="claudeGrep">Claude · Grep "best sellers"</button>
+      <button class="act" data-act="claudeFind">Claude · ls / find / Glob</button>
+      <button class="act" data-act="claudeSearch">Claude · Read .semfs/search/best-sellers</button>
+      <button class="act" data-act="codexGrep">Codex · grep (shell)</button>
+    </div>
+
+    <div class="pipe" id="pipe">
+      <div class="node n-posix" id="n_agent"><div class="t">Agent tool</div><div class="v">—</div></div>
+      <div class="arrow">→</div>
+      <div class="node n-posix" id="n_route"><div class="t">routes through</div><div class="v">—</div></div>
+      <div class="arrow">→</div>
+      <div class="node n-cache" id="n_serve"><div class="t">served by</div><div class="v">—</div></div>
+      <div class="arrow">→</div>
+      <div class="node n-sem" id="n_api"><div class="t">supermemory</div><div class="v">—</div></div>
+    </div>
+    <div class="verdict" id="verdict">Pick an action above.</div>
+    <div class="meter"><div id="meterbar" style="width:0%;background:var(--mut)"></div></div>
+    <div style="color:var(--mut);font-size:12px;margin-top:4px" id="metertxt">token cost</div>
+  </div>
+
+</div>
+
+<script>
+// ---------- level switching ----------
+document.getElementById('levels').addEventListener('click', e=>{
+  const b=e.target.closest('.lvlbtn'); if(!b) return;
+  document.querySelectorAll('.lvlbtn').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  const L=b.dataset.l;
+  document.querySelectorAll('[data-level]').forEach(p=>p.classList.toggle('hidden', p.dataset.level!==L));
+  window.scrollTo({top:0,behavior:'smooth'});
+});
+
+// ---------- simulator ----------
+let arch='current', curAct=null;
+document.getElementById('arch').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  arch=b.dataset.a;
+  document.querySelectorAll('#arch button').forEach(x=>x.classList.toggle('on',x===b));
+  if(curAct) run(curAct);
+});
+document.getElementById('actions').addEventListener('click',e=>{
+  const b=e.target.closest('.act'); if(!b) return;
+  document.querySelectorAll('.act').forEach(x=>x.classList.remove('sel'));
+  b.classList.add('sel');
+  curAct=b.dataset.act; run(curAct);
+});
+
+function scenario(act){
+  // returns {agent, route, serve, api, verdict, cls, cost, costlabel}
+  if(act==='claudeGrep') return {
+    agent:'Grep (ripgrep)', route:'FUSE read() — in-process match', serve:'SQLite cache bytes',
+    api:'none', verdict:'🐢 ripgrep matches <b>inside its own process</b>. semfs never sees the query, so it can\'t go semantic. Reads many files.',
+    cls:'crawl', cost:80, costlabel:'high — reads many files'};
+  if(act==='claudeFind') return {
+    agent:'ls / find / Glob', route:'FUSE readdir + lookup', serve:'SQLite cache (inode/dentry)',
+    api:'none', verdict:'🐢 Pure directory traversal — literal cache. No semantics possible here by design.',
+    cls:'crawl', cost:70, costlabel:'high — walks the tree'};
+  if(act==='codexGrep') return {
+    agent:'shell grep "q" /mnt', route:'zsh grep() wrapper → semfs grep', serve:'backend.search()',
+    api:'search_v4 ✅', verdict:'🧙 The shell wrapper catches a no-flag grep and reroutes it to <code>semfs grep</code> → ranked hits. This is how Codex got −75%.',
+    cls:'semantic', cost:22, costlabel:'low — ranked shortlist'};
+  if(act==='claudeSearch'){
+    if(arch==='proposed') return {
+      agent:'Read .semfs/search/best-sellers', route:'FUSE read() — reserved path', serve:'backend.search()',
+      api:'search_v4 ✅', verdict:'🧙 <b>Reserved path intercepted</b> in read(). Claude\'s <b>native Read</b> now triggers semantic search and gets ranked paths. Same win as Codex, no shell needed.',
+      cls:'semantic', cost:24, costlabel:'low — ranked shortlist'};
+    return {
+      agent:'Read .semfs/search/best-sellers', route:'FUSE lookup() → ENOENT', serve:'(path does not exist)',
+      api:'none', verdict:'🚫 In today\'s build there is <b>no such path</b> — the read fails, and Claude falls back to crawling. Flip the toggle to add the virtual path.',
+      cls:'blocked', cost:85, costlabel:'high — fails then crawls'};
+  }
+}
+
+function run(act){
+  const s=scenario(act);
+  const nodes=[['n_agent',s.agent,'n-posix'],['n_route',s.route, s.cls==='semantic'?'n-sem':'n-posix'],
+               ['n_serve',s.serve, s.cls==='semantic'?'n-sem':'n-cache'],
+               ['n_api',s.api, s.api.indexOf('search')>=0?'n-sem':'n-bad']];
+  // reset
+  document.querySelectorAll('.node').forEach(n=>n.classList.remove('lit'));
+  nodes.forEach((n,i)=>{
+    const el=document.getElementById(n[0]);
+    el.className='node '+n[2];
+    el.querySelector('.v').innerHTML=n[1];
+    setTimeout(()=>el.classList.add('lit'), 120*i);
+  });
+  const v=document.getElementById('verdict');
+  v.className='verdict '+s.cls;
+  setTimeout(()=>{ v.innerHTML=s.verdict; }, 120*4);
+  const bar=document.getElementById('meterbar');
+  const col = s.cls==='semantic' ? 'var(--good)' : (s.cls==='blocked'?'var(--bad)':'var(--r2)');
+  setTimeout(()=>{ bar.style.width=s.cost+'%'; bar.style.background=col; }, 120*4);
+  document.getElementById('metertxt').textContent='token cost: '+s.costlabel;
+}
+</script>
+</body>
+</html>

@@ -57,15 +57,45 @@ fn ocr_image_with_key(key: Option<String>, bytes: &[u8]) -> Option<String> {
         .ok()?
         .into_json()
         .ok()?;
-    let text = resp["choices"][0]["message"]["content"]
-        .as_str()?
-        .trim()
-        .to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
+    reject_non_transcription(resp["choices"][0]["message"]["content"].as_str()?)
+}
+
+/// Reject a model refusal / "no text" reply so a non-answer is never indexed as
+/// document content. When OCR fails to read a scan (corrupt or empty image) the
+/// model often replies with an apology or a "[no text]" note instead of a
+/// transcription — that is not the file's content, and indexing it pollutes
+/// retrieval (RCA 2026-06-06-pdf-ocr-fallback…). Matched case-insensitively on
+/// the reply's head. Empty ⇒ `None`.
+fn reject_non_transcription(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
     }
+    let head = t.chars().take(64).collect::<String>().to_lowercase();
+    // Phrases a transcription would never open with; an OCR refusal/no-text reply does.
+    const REFUSALS: &[&str] = &[
+        "sorry",
+        "i'm sorry",
+        "i am sorry",
+        "i can't",
+        "i cannot",
+        "i can not",
+        "i'm unable",
+        "i am unable",
+        "i'm not able",
+        "unable to transcribe",
+        "can't transcribe",
+        "cannot transcribe",
+        "the document contains no text",
+        "[the document contains no text",
+        "there is no text",
+        "contains no text",
+    ];
+    if REFUSALS.iter().any(|r| head.contains(r)) {
+        tracing::debug!(reply = %head, "OCR reply is a refusal/no-text; treating as unindexed");
+        return None;
+    }
+    Some(t.to_string())
 }
 
 const PDF_OCR_PROMPT: &str = "Transcribe ALL text in this document verbatim, in reading \
@@ -74,10 +104,13 @@ text, output nothing.";
 
 /// Extract a PDF's text via `gpt-4.1-mini`, used as the fallback when the
 /// pure-Rust text layer can't be decoded (scanned PDFs, or CJK CID fonts
-/// `pdf-extract` chokes on). OpenRouter's `file-parser` plugin with engine
-/// `native` makes the model itself process the PDF (rather than a separate OCR
-/// service). Key-gated and size-capped exactly like image OCR: no key / oversized
-/// / empty / failed ⇒ `None` (the caller accounts it as unindexed).
+/// `pdf-extract` chokes on). OpenRouter's `file-parser` plugin with the
+/// `mistral-ocr` engine rasterizes + OCRs the PDF — the `native` engine only
+/// passes a PDF's existing text layer to the model and the upstream provider
+/// returns HTTP 400 `unsupported_file` on image-only scans (RCA
+/// 2026-06-06-pdf-ocr-fallback-native-engine-rejects-scanned-pdfs), which is
+/// exactly the class this fallback exists for. Key-gated and size-capped like
+/// image OCR: no key / oversized / empty / failed ⇒ `None` (caller → unindexed).
 pub fn ocr_pdf(bytes: &[u8]) -> Option<String> {
     ocr_pdf_with_key(api_key(), bytes)
 }
@@ -100,7 +133,7 @@ fn ocr_pdf_with_key(key: Option<String>, bytes: &[u8]) -> Option<String> {
                 { "type": "file", "file": { "filename": "document.pdf", "file_data": data_url } },
             ],
         }],
-        "plugins": [{ "id": "file-parser", "pdf": { "engine": "native" } }],
+        "plugins": [{ "id": "file-parser", "pdf": { "engine": "mistral-ocr" } }],
     });
     let resp: serde_json::Value = pdf_ocr_agent()
         .post("https://openrouter.ai/api/v1/chat/completions")
@@ -110,15 +143,7 @@ fn ocr_pdf_with_key(key: Option<String>, bytes: &[u8]) -> Option<String> {
         .ok()?
         .into_json()
         .ok()?;
-    let text = resp["choices"][0]["message"]["content"]
-        .as_str()?
-        .trim()
-        .to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    reject_non_transcription(resp["choices"][0]["message"]["content"].as_str()?)
 }
 
 /// Dedicated agent with a longer read timeout than the shared one: native PDF
@@ -187,6 +212,30 @@ mod tests {
         }
         let t = ocr_pdf(PDF).expect("PDF OCR fallback should return text with a key set");
         assert!(!t.trim().is_empty(), "PDF OCR returned empty text");
+    }
+
+    #[test]
+    fn reject_non_transcription_filters_refusals_keeps_content() {
+        // Real transcriptions pass through (incl. CJK).
+        assert_eq!(
+            reject_non_transcription("普华永道2024年数据资产专题报告"),
+            Some("普华永道2024年数据资产专题报告".to_string())
+        );
+        assert_eq!(
+            reject_non_transcription("  invoice total 4200  "),
+            Some("invoice total 4200".to_string())
+        );
+        // Refusals / no-text replies are dropped (the corrupt-scan case).
+        for r in [
+            "Sorry, I can't transcribe this document.",
+            "I'm sorry, I cannot transcribe the text from this document.",
+            "I cannot directly access or read the contents of the file.",
+            "[The document contains no text.]",
+            "",
+            "   ",
+        ] {
+            assert_eq!(reject_non_transcription(r), None, "should reject: {r:?}");
+        }
     }
 
     #[test]

@@ -646,10 +646,18 @@ impl SqliteVecStore {
             // Replace this file's edges (idempotent re-derive).
             drop_file_edges(&tx, &fp)?;
             for ent in &entities {
+                let node = super::graph::entity_path(&ent.name);
                 tx.execute(
-                    "INSERT OR IGNORE INTO edges(from_path, to_path, edge_kind, created_at) \
-                     VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![fp, super::graph::entity_path(&ent.name), ent.kind, now],
+                    "INSERT OR IGNORE INTO edges(from_path, to_path, edge_kind, created_at, confidence) \
+                     VALUES (?1, ?2, ?3, ?4, 'INFERRED')",
+                    rusqlite::params![fp, node, ent.kind, now],
+                )?;
+                // Preserve the original (CJK-safe) entity name for KG god-node
+                // labels; the slug in `node` is lossy. Last writer wins on name.
+                tx.execute(
+                    "INSERT INTO graph_entity(path, name, kind) VALUES (?1, ?2, ?3) \
+                     ON CONFLICT(path) DO UPDATE SET name=excluded.name, kind=excluded.kind",
+                    rusqlite::params![node, ent.name, ent.kind],
                 )?;
             }
             tx.commit()?;

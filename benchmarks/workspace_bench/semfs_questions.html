@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>What question is each command really asking?</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --posix:#f0883e; --sem:#d2a8ff; --ex:#56d4dd; --good:#3fb950;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1140px;margin:0 auto;padding:28px 18px 80px}
+  h1{font-size:23px;margin:0 0 4px}
+  h2{font-size:18px;margin:26px 0 8px;border-bottom:1px solid var(--line);padding-bottom:5px}
+  .sub{color:var(--mut);margin:0 0 14px;max-width:920px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .hint{color:var(--mut);font-size:12px;margin:4px 0 10px}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut)}
+  td.cmd{font-family:ui-monospace,Menlo,monospace;color:var(--posix);white-space:nowrap}
+  td.litq{color:var(--ink)} td.semq{color:var(--sem)} td.how{color:var(--mut)}
+  tr.row{cursor:pointer} tr.row:hover{background:#11161f}
+  tr.ex{display:none} tr.ex.open{display:table-row}
+  tr.ex td{background:#0b0f14;border-top:0}
+  .ex b{color:var(--ex)}
+  .posix-ex{color:var(--posix)} .sem-ex{color:var(--sem)}
+  pre{margin:6px 0 0;background:transparent;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:var(--ink)}
+  .only{border:1px solid var(--sem);background:#1a1430;border-radius:12px;padding:14px 18px;margin:20px 0}
+  .only h3{margin:0 0 8px;color:var(--sem);font-size:15px}
+  .only table td{border-color:#2a2440}
+  .principle{border-left:3px solid var(--sem);padding:8px 0 8px 14px;margin:16px 0;color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>What question is each command <i>really</i> asking — and how a semantic workspace answers it</h1>
+  <p class="sub">Every file command is an agent asking a question. POSIX answers the <b style="color:var(--posix)">literal</b> question (by name, exact text, path, bytes). But the question the agent <i>actually has</i> is <b style="color:var(--sem)">semantic</b> (by meaning, relevance, relationship). On a plain filesystem the agent must decompose its real question into many literal ones — and guess. A semantic workspace lets it ask the real question directly.</p>
+  <p class="hint">▸ click a row for the case-289 ("best-selling products") example</p>
+
+  <table id="tbl">
+    <thead><tr>
+      <th>Command</th>
+      <th>The <span style="color:var(--posix)">literal</span> question it answers</th>
+      <th>The <span style="color:var(--sem)">semantic</span> question you actually have</th>
+      <th>How the semantic workspace answers it</th>
+    </tr></thead>
+    <tbody><!-- rows injected --></tbody>
+  </table>
+
+  <div class="only">
+    <h3>Questions ONLY a semantic workspace can answer (no POSIX command exists)</h3>
+    <table>
+      <tr><th>Your question</th><th>Semantic op</th><th>Why POSIX can't</th></tr>
+      <tr><td>“What is this workspace <b>about</b>?”</td><td><code>summarize(container)</code> → <code>profile.md</code> <span style="color:#d29922">(⚠️ GAP: empty today for document workspaces — it's a user-profile feature, not a workspace digest)</span></td><td>POSIX has no synthesis — you'd <code>ls -R</code> + <code>cat</code> hundreds of files and infer</td></tr>
+      <tr><td>“What's <b>related</b> to this file/product/campaign?”</td><td><code>neighbors(entity, relation)</code></td><td>POSIX has one relation only — directory containment; no <code>mentions</code>/<code>references</code>/<code>derived-from</code> edges</td></tr>
+      <tr><td>“What's the <b>answer</b> to my task across everything?”</td><td><code>ask(corpus, question)</code> → ranked nodes + synthesis</td><td>POSIX returns bytes/paths; it can't rank by meaning or compose an answer</td></tr>
+    </table>
+  </div>
+
+  <h2>To make these cheap: which data to pre-compute (efficiency)</h2>
+  <p class="hint">The semantic layer FINDS; the raw layer is the SOURCE OF TRUTH it consumes. Efficiency = pre-computing the right derived artifacts so both stay cheap. <b>★ = idea borrowed from <a href="https://github.com/safishamsi/graphify" style="color:#56d4dd">graphify</a></b>.</p>
+  <table>
+    <thead><tr><th>Need</th><th>Data artifact to pre-compute</th><th>Efficiency win</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>cheap <b>source-of-truth read</b> (full data)</td><td><b>normalized text + structured tables</b> per file (transcription)</td><td>kills the <code>openpyxl→HTMLParser</code> parse-fight; the <i>necessary</i> re-read becomes clean &amp; small — biggest single win</td><td><span style="color:#d29922">⚠️ partial (PDF yes; HTML-xlsx?)</span></td></tr>
+      <tr><td>cheap <b>discovery</b></td><td>capped top-k chunks + <code>file:line</code> pointers</td><td>fewer/tighter excerpts → less <code>cache_read</code> bloat (95% of tokens)</td><td><span style="color:#3fb950">✅ exists, needs a cap</span></td></tr>
+      <tr><td>cheap <b>orientation</b></td><td><b>workspace digest</b> — hub / community summary ★</td><td>one read replaces the <code>ls</code>/<code>find</code> crawl</td><td><span style="color:#f85149">❌ profile.md is empty</span></td></tr>
+      <tr><td>“what's <b>related</b>?”</td><td><b>typed graph edges</b>, confidence-tagged ★</td><td>no filename-guessing for related files</td><td><span style="color:#f85149">❌ not built (no edge layer)</span></td></tr>
+    </tbody>
+  </table>
+  <p class="hint">★ <b>graphify</b> builds a property graph (local tree-sitter AST for code, LLM for docs/PDF/xlsx), runs <b>Leiden community detection</b> to surface "god nodes" (a natural workspace digest), tags every edge <code>EXTRACTED/INFERRED/AMBIGUOUS</code>, and exposes <code>get_neighbors</code>/<code>shortest_path</code> via MCP. Borrow: (1) community-digest → fill the empty <code>profile.md</code>; (2) confidence-tagged edges + graph tools → the missing "related" layer.</p>
+
+  <p class="principle"><b>The shift:</b> the unit stops being a <i>command</i> and becomes a <i>question</i>. POSIX commands answer literal questions about <b>names, bytes, and metadata</b>; the agent's real questions are about <b>meaning, relevance, and relationships</b>. The semantic workspace collapses "decompose-into-many-literal-questions-and-guess" into "ask the real question once."</p>
+</div>
+
+<script>
+const ROWS=[
+ {cmd:"ls", lit:"What entries are in this directory?",
+  sem:"What here matters for my task? / What is this place about?",
+  how:"a <b>relevance-ranked</b> listing with a 1-line gist per entry (a whole-workspace digest via <code>profile.md</code> is a GAP — empty today for document workspaces)",
+  pex:"ls <WS>/ ; ls Sales/ ; ls taobao_campaigns/ …  (8× drilling, 200+ equal names)",
+  sex:'relevant_here("best-selling products")\n→ desktop/.../product_data/  (0.91)  "top-seller tables"\n  ...3 more, ranked'},
+ {cmd:"find", lit:"Which files have this NAME / type / size / date?",
+  sem:"Which files are <b>about</b> X? Where is the info on X?",
+  how:"<b>semantic search</b> — describe X in words, get files <b>ranked by meaning</b>, regardless of filename or language",
+  pex:'find -name "*best*sell*" -o "*hot-selling*" -o "*top-seller*"  … (guessing the name, 10×, misses top10_*)',
+  sex:'search("best-selling products w/ conversion rates")\n→ top10_product_status_table.xlsx  (ranked by CONTENT,\n   even though its name says "top10", not "best")'},
+ {cmd:"grep", lit:"Which lines literally contain this string?",
+  sem:"Where is X <b>discussed / explained</b>? What does the corpus say about X?",
+  how:"hybrid vector+keyword search → <b>ranked passages</b> with provenance (<code>file:lines</code>)",
+  pex:'find | xargs grep -li "hot-selling|top-seller"   (literal; misses synonyms & English; reads every file)',
+  sex:'semfs grep "best selling products" .\n→ best_seller_list:L3-9  "name | transaction amount37200 | conversion rate2.85%"\n   (the answer rows come back in the excerpt)'},
+ {cmd:"cat / read", lit:"What are the exact bytes of this file?",
+  sem:"What does this file <b>say about my question</b>? What's the answer in here?",
+  how:"<b>scoped read</b> (the relevant chunk) or <b>ask the node</b> a question → a passage/answer, not all the bytes",
+  pex:"cat top10.xlsx  → 30KB of raw HTML table (it's HTML disguised as .xlsx)",
+  sex:'ask(top10, "top sellers + conversion rate")\n→ the 10 rows, from the normalized content\n   (no openpyxl/HTMLParser fight)'},
+ {cmd:"file / stat", lit:"What type / size / mtime is this?",
+  sem:"What <b>is</b> this, conceptually? What is it about?",
+  how:"a <b>typed node</b> (table / doc / image-caption) + a 1-line gist + normalized content — parsing already done at ingest",
+  pex:'file top10.xlsx → "HTML document"  (now you must figure out how to parse it)',
+  sex:'node.type = "table:product-ranking"\nnode.gist = "Top-10 sellers w/ amounts & conversion"\n(format is irrelevant — content pre-extracted)'},
+ {cmd:"cp", lit:"Duplicate these bytes to a new path.",
+  sem:"Give me a working copy of this content.",
+  how:"copy the node and <b>re-index</b> it (embeddings/edges); the graph flags the near-duplicate",
+  pex:"cp report.xlsx report_v2.xlsx", sex:"fork(node) → new node, re-embedded, linked as duplicate-of"},
+ {cmd:"mv / rename", lit:"Change this file's path.",
+  sem:"Reorganize / recategorize this.",
+  how:"update the path while <b>preserving</b> the node's embeddings &amp; edges — a rename never changes its meaning",
+  pex:"mv a/report.xlsx b/q3_report.xlsx", sex:"relink(node, new_path)  — identity, vectors, edges all preserved"},
+ {cmd:"rm", lit:"Unlink these bytes.",
+  sem:"<b>Forget</b> this / make it stop surfacing.",
+  how:"drop the node + its vectors + its graph edges, so it no longer appears in any search",
+  pex:"rm stale_data.csv", sex:"forget(node) → removed from index + graph"},
+ {cmd:"mkdir", lit:"Create a hierarchy node (folder).",
+  sem:"Create a <b>grouping / topic</b>.",
+  how:"a semantic cluster or a <code>tag</code> — grouping by meaning, not just a physical parent",
+  pex:"mkdir 2024_reports", sex:'tag/cluster "2024 reports" — membership by meaning, not path'},
+ {cmd:"ln", lit:"Alias this path (hard/soft link).",
+  sem:"<b>Relate</b> these two things.",
+  how:"a <b>typed edge</b> in the graph (<code>references</code>, <code>derived-from</code>) — a relation, not just a 2nd name",
+  pex:"ln -s chart.png dashboard/chart.png", sex:'edge(dashboard, chart, "displays")  — a queryable relation'},
+];
+const tb=document.querySelector('#tbl tbody');
+ROWS.forEach((r,i)=>{
+  const tr=document.createElement('tr'); tr.className='row';
+  tr.innerHTML=`<td class="cmd">${r.cmd}</td><td class="litq">${r.lit}</td><td class="semq">${r.sem}</td><td class="how">${r.how}</td>`;
+  const ex=document.createElement('tr'); ex.className='ex';
+  ex.innerHTML=`<td colspan="4"><div class="ex"><b>case 289 — "best-selling products":</b>
+    <pre class="posix-ex">POSIX:  ${r.pex}</pre>
+    <pre class="sem-ex">SEMANTIC:  ${r.sex}</pre></div></td>`;
+  tb.appendChild(tr); tb.appendChild(ex);
+  tr.addEventListener('click',()=>ex.classList.toggle('open'));
+});
+</script>
+</body>
+</html>

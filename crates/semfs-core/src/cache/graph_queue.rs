@@ -78,6 +78,13 @@ impl GraphQueue {
         inner.inflight = inner.inflight.saturating_sub(1);
     }
 
+    /// True when nothing is queued or in-flight — the graph has settled. Lets the
+    /// worker debounce the KG recompute to a quiet period (L6 dynamic refresh).
+    pub fn is_settled(&self) -> bool {
+        let inner = self.inner.lock();
+        inner.queue.is_empty() && inner.inflight == 0
+    }
+
     pub fn notify(&self) -> &Notify {
         &self.notify
     }
@@ -103,12 +110,16 @@ impl GraphQueue {
 pub async fn run_graph_worker(
     indexer: Arc<dyn super::LocalIndexer>,
     mut shutdown: watch::Receiver<bool>,
+    kg_refresh: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
 ) {
     let Some(queue) = indexer.graph_queue() else {
         return;
     };
     let sem = Arc::new(Semaphore::new(L7_CONCURRENCY));
     let mut set = JoinSet::new();
+    // L6: edges changed since the last KG recompute. Set when we spawn an
+    // extraction; cleared after a debounced recompute once the queue settles.
+    let mut dirty = false;
 
     'outer: loop {
         tokio::select! {
@@ -143,6 +154,18 @@ pub async fn run_graph_worker(
                 }
                 q.complete(ino);
             });
+            dirty = true;
+        }
+
+        // L6 dynamic refresh: once the queue has fully settled after a batch of
+        // edge changes, recompute the workspace KG / KNOWLEDGE_GRAPH.md ONCE.
+        // The 500ms select tick is the debounce — bursts of writes coalesce into
+        // a single recompute rather than one per file.
+        if dirty && set.is_empty() && queue.is_settled() {
+            if let Some(refresh) = &kg_refresh {
+                refresh();
+            }
+            dirty = false;
         }
     }
 

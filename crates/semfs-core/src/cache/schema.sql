@@ -120,14 +120,26 @@ CREATE INDEX IF NOT EXISTS idx_chunks_filepath ON chunks(filepath);
 
 -- L7 entity/link graph: typed edges between files, re-derived on write and
 -- removed on delete (mutable-FS substrate — no temporal/versioning).
+-- `confidence` is categorical (EXTRACTED / INFERRED / AMBIGUOUS); today the LLM
+-- path writes INFERRED — see tickets/ls-kg-semantic-readdir/graphify_kg_architecture.md.
 CREATE TABLE IF NOT EXISTS edges (
     from_path  TEXT NOT NULL,
     to_path    TEXT NOT NULL,
     edge_kind  TEXT NOT NULL,
     created_at INTEGER NOT NULL,
+    confidence TEXT NOT NULL DEFAULT 'INFERRED',
     PRIMARY KEY (from_path, to_path, edge_kind)
 );
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_path);
+
+-- Graphify KG: recover an entity's original display name + type from its node
+-- path (`/memories/<slug>.md`). `slugify` is lossy (CJK → e-<hash>), so the raw
+-- name is stored here at extraction time for god-node labels in KNOWLEDGE_GRAPH.md.
+CREATE TABLE IF NOT EXISTS graph_entity (
+    path TEXT PRIMARY KEY,   -- = edges.to_path (the /memories/<slug>.md node)
+    name TEXT NOT NULL,      -- original entity name (CJK preserved)
+    kind TEXT NOT NULL       -- ontology type (Person/Organization/Concept/…)
+);
 
 -- BM25 keyword index over chunk text. rowid is kept equal to chunks.id so the
 -- vec0 KNN and fts5 BM25 result sets join back to the same chunk.

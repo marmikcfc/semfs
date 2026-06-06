@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>RCA — Why semfs gave codex 0 token savings</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --ink:#e6edf3; --mut:#8b949e;
+    --line:#30363d; --good:#3fb950; --bad:#f85149; --warn:#d29922; --accent:#58a6ff;
+    --purple:#bc8cff; --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#15203400,#0d1117),var(--bg);
+    color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1060px;margin:0 auto;padding:34px 22px 90px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.4px}
+  h2{font-size:20px;margin:40px 0 14px;letter-spacing:-.2px}
+  .sub{color:var(--mut);margin:0 0 26px;font-size:15px}
+  .mono{font-family:var(--mono)}
+  .tag{display:inline-block;font:600 11px/1 var(--mono);padding:5px 8px;border-radius:6px;border:1px solid var(--line);color:var(--mut);background:#0b0f14}
+  /* headline metric */
+  .metric{display:flex;gap:18px;flex-wrap:wrap;margin:18px 0 8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .metric .card{flex:1;min-width:200px}
+  .big{font:700 30px/1 var(--mono)}
+  .good{color:var(--good)} .bad{color:var(--bad)} .warn{color:var(--warn)} .acc{color:var(--accent)} .pur{color:var(--purple)}
+  .label{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:7px}
+  /* pipeline */
+  .pipe{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:14px 0}
+  .stage{flex:1;min-width:120px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;margin:4px;position:relative;text-align:center;transition:.2s}
+  .stage .n{font:600 11px/1 var(--mono);color:var(--mut)}
+  .stage .t{font-weight:600;margin:6px 0 3px}
+  .stage .v{font-family:var(--mono);font-size:13px;color:var(--good)}
+  .stage.ok{border-color:#26492f}
+  .stage.hang{border-color:var(--bad);background:#2a1414;box-shadow:0 0 0 1px var(--bad) inset,0 0 26px #f8514922}
+  .stage.hang .v{color:var(--bad)}
+  .arrow{align-self:center;color:var(--mut);font-size:18px;padding:0 2px}
+  .note{color:var(--mut);font-size:13px;margin-top:6px}
+  /* hypothesis cards */
+  .hyps{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-top:10px}
+  .hyp{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden;cursor:pointer;transition:.18s}
+  .hyp:hover{border-color:var(--accent)}
+  .hyp .hd{padding:15px 16px;display:flex;align-items:flex-start;gap:11px}
+  .hyp .num{font:700 13px/1.6 var(--mono);width:26px;height:26px;flex:none;text-align:center;border-radius:7px;background:#0b0f14;border:1px solid var(--line);color:var(--mut)}
+  .hyp .ht{font-weight:600;font-size:15px}
+  .hyp .hs{font-size:12.5px;color:var(--mut);margin-top:3px}
+  .verdict{margin-left:auto;font:700 10px/1 var(--mono);padding:6px 8px;border-radius:6px;white-space:nowrap}
+  .v-wrong{color:var(--bad);background:#2a1414;border:1px solid #5b1d1d}
+  .v-real{color:var(--good);background:#10261a;border:1px solid #1f5132}
+  .hyp .body{max-height:0;opacity:0;transition:.25s;padding:0 16px;border-top:1px solid transparent}
+  .hyp.open .body{max-height:520px;opacity:1;padding:14px 16px 17px;border-top:1px solid var(--line)}
+  .hyp.open{border-color:var(--accent)}
+  .ev{font-family:var(--mono);font-size:12.5px;background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:11px 12px;margin:9px 0;white-space:pre-wrap;color:#c9d3de;overflow-x:auto}
+  .ev .k{color:var(--accent)} .ev .g{color:var(--good)} .ev .r{color:var(--bad)} .ev .y{color:var(--warn)} .ev .m{color:var(--mut)}
+  .why{font-size:13.5px;color:var(--ink)}
+  .why b{color:var(--bad)}
+  .why.real b{color:var(--good)}
+  .hint{font-size:12px;color:var(--mut);margin-top:2px}
+  details{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:10px 0;padding:0 16px}
+  summary{cursor:pointer;padding:13px 0;font-weight:600;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸ ";color:var(--accent)}
+  details[open] summary::before{content:"▾ "}
+  details .dd{padding:0 0 14px;color:var(--ink)}
+  .fix{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
+  .fix:last-child{border-bottom:0}
+  .pill{font:700 10px/1 var(--mono);padding:5px 8px;border-radius:6px;flex:none}
+  .done{color:var(--good);background:#10261a;border:1px solid #1f5132}
+  .defer{color:var(--warn);background:#2a2310;border:1px solid #5b4d1d}
+  code{font-family:var(--mono);background:#0b0f14;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:.92em}
+  .foot{color:var(--mut);font-size:12.5px;margin-top:34px;border-top:1px solid var(--line);padding-top:14px}
+  .lead{font-size:16px;color:var(--ink);background:var(--panel2);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:14px 16px;margin:8px 0 4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <span class="tag">RCA · 2026-06-04 · Workspace-Bench case 289 · semfs+sqlite (codex)</span>
+  <h1>Why did semfs give codex <span class="bad">zero</span> token savings?</h1>
+  <p class="sub">A four-hypothesis debugging story. The search worked perfectly — the bug was hiding one layer downstream. Click any hypothesis to see the evidence that killed it.</p>
+
+  <div class="metric">
+    <div class="card"><div class="label">Plain codex</div><div class="big">143,837</div><div class="note">tokens · walks the filesystem</div></div>
+    <div class="card"><div class="label">semfs + sqlite (expected)</div><div class="big good">~35–60k</div><div class="note">tokens · search → read targeted files</div></div>
+    <div class="card" style="border-color:#5b1d1d"><div class="label">semfs + sqlite (actual)</div><div class="big bad">138,307</div><div class="note bad">≈ plain → no benefit</div></div>
+  </div>
+
+  <h2>The symptom</h2>
+  <div class="lead">The run <b class="good">passed</b>, but spent <b class="bad">as many tokens as plain codex</b>. codex issued <b>7 <span class="mono">semfs grep</span></b> searches and got <b>nothing usable</b> back, then found the answer the slow way — manual <span class="mono">ls / cat / os.walk</span>. So: is semfs search broken?</div>
+
+  <h2>The search pipeline — where everyone <i>thought</i> it broke vs. where it actually did</h2>
+  <div class="pipe">
+    <div class="stage ok"><div class="n">L1 · embed+retrieve</div><div class="t">vec / code / fts</div><div class="v">80·80·80 ✓</div></div>
+    <div class="arrow">→</div>
+    <div class="stage ok"><div class="n">RRF + L5/L6/L7</div><div class="t">fuse &amp; rank</div><div class="v">65–324 hits ✓</div></div>
+    <div class="arrow">→</div>
+    <div class="stage ok"><div class="n">daemon IPC</div><div class="t">SearchHits reply</div><div class="v">returned ✓</div></div>
+    <div class="arrow">→</div>
+    <div class="stage hang"><div class="n">grep CLI · format</div><div class="t">read file for line#</div><div class="v">⛔ HANGS</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" style="opacity:.5"><div class="n">agent</div><div class="t">sees results</div><div class="v" style="color:var(--mut)">never</div></div>
+  </div>
+  <p class="note">Every stage of the actual <b>search</b> succeeded (the daemon logged 65–324 hits). The grep then tried to read each hit's file off the FUSE mount to print a <span class="mono">:line_start-line_end:</span> — and <b class="bad">that read hung</b> on the CPU-starved daemon. The agent got 0 bytes.</p>
+
+  <h2>The four hypotheses (and how each died)</h2>
+  <p class="hint">Tap a card.</p>
+  <div class="hyps">
+
+    <div class="hyp" onclick="this.classList.toggle('open')">
+      <div class="hd"><div class="num">1</div>
+        <div><div class="ht">Poor recall — search returns empty</div><div class="hs">The local index just doesn't match these queries (FTS/CJK tokenization?).</div></div>
+        <div class="verdict v-wrong">DISPROVEN</div>
+      </div>
+      <div class="body">
+        <div class="why"><b>Test:</b> added per-stage logging to <code>search_blocking</code> and re-ran codex's exact queries.</div>
+        <div class="ev"><span class="m"># daemon: search pipeline counts</span>
+query=<span class="k">"…product title transaction amount conversion rate"</span>
+qvec_len=<span class="g">384</span>  vec_n=<span class="g">80</span>  code_n=<span class="g">80</span>  fts_n=<span class="g">80</span>
+rrf_files=<span class="g">72</span>  →  final_hits=<span class="g">72</span></div>
+        <div class="why"><b>Verdict:</b> every query returned <b style="color:var(--good)">65–324 hits</b>. Top hit was literally the answer file. Recall is <b style="color:var(--good)">fine</b>.</div>
+      </div>
+    </div>
+
+    <div class="hyp" onclick="this.classList.toggle('open')">
+      <div class="hd"><div class="num">2</div>
+        <div><div class="ht">Scope/path bug</div><div class="hs">codex passes <span class="mono">grep "q" chanpin</span>; the relative path never maps to the VFS prefix → filtered to empty.</div></div>
+        <div class="verdict v-wrong">DISPROVEN</div>
+      </div>
+      <div class="body">
+        <div class="why"><b>Test:</b> read the actual <code>scope=</code> the daemon computed for the scoped query.</div>
+        <div class="ev">query=<span class="k">"成交金额 转化率 商品标题 排行"</span>
+scope=<span class="g">"/chanpin/"</span>   vec_n=<span class="g">3790</span>   final_hits=<span class="g">324</span></div>
+        <div class="why"><b>Verdict:</b> <span class="mono">chanpin</span> resolved correctly to <span class="mono">/chanpin/</span> and returned <b style="color:var(--good)">324 hits</b>. Scope works.</div>
+      </div>
+    </div>
+
+    <div class="hyp" onclick="this.classList.toggle('open')">
+      <div class="hd"><div class="num">3</div>
+        <div><div class="ht">The 25s deadline fired</div><div class="hs">Under load the cooperative <code>SEARCH_DEADLINE</code> bails the search to empty.</div></div>
+        <div class="verdict v-wrong">DISPROVEN</div>
+      </div>
+      <div class="body">
+        <div class="why"><b>Test:</b> grep the daemon log for deadline / timeout / rerank-skip markers during the run.</div>
+        <div class="ev"><span class="m"># grep -c "deadline|timed out|skipping rerank"</span>
+<span class="r">0</span>   <span class="m"># none fired</span>
+reranked=<span class="y">false</span>  <span class="m"># …only because NO reranker is attached —</span>
+            <span class="m"># not a deadline skip</span></div>
+        <div class="why"><b>Verdict:</b> zero markers. Searches completed cleanly &amp; fast. Not the deadline.</div>
+      </div>
+    </div>
+
+    <div class="hyp" onclick="this.classList.toggle('open')">
+      <div class="hd"><div class="num">4</div>
+        <div><div class="ht">"The greps returned 0 bytes"</div><div class="hs">My own first read of the codex trace. Turned out to be a parsing mistake.</div></div>
+        <div class="verdict v-wrong">CORRECTED</div>
+      </div>
+      <div class="body">
+        <div class="why"><b>Test:</b> I'd parsed <span class="mono">item.started</span> events (no output yet). Re-parsed the <span class="mono">item.completed</span> events instead.</div>
+        <div class="ev"><span class="m"># completed command_execution events: 8</span>
+<span class="m"># …none of them are the greps</span>
+semfs grep ×7  →  status=<span class="r">in_progress</span>, <span class="r">no item.completed</span></div>
+        <div class="why real"><b>Verdict → the real clue:</b> the greps have an <span class="mono">item.started</span> but <b style="color:var(--good)">never an item.completed</b>. They didn't return empty — <b style="color:var(--good)">they never returned at all.</b> They <b style="color:var(--good)">HUNG</b>.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <h2>The real root cause</h2>
+  <div class="card" style="border-color:#5b1d1d">
+    <div class="why real" style="font-size:15px"><span class="verdict v-real">CONFIRMED</span>&nbsp; The search succeeds; the <b><span class="mono">semfs grep</span> CLI hangs after it</b>.</div>
+    <p style="margin:12px 0 6px">To format a hit as <span class="mono">&lt;file&gt;:&lt;line_start&gt;-&lt;line_end&gt;:&lt;chunk&gt;</span>, grep reads the hit's file off the FUSE mount:</p>
+    <div class="ev">cmd/grep.rs · read_local_or_sidecar →
+  std::fs::<span class="r">read_to_string</span>(mount.join(path))  <span class="m">// blocking FUSE read, NO timeout</span></div>
+    <p style="margin:6px 0">The semfs daemon serves <b>both</b> the IPC search <b>and</b> the FUSE filesystem from contended resources (one <span class="mono">Mutex&lt;Connection&gt;</span> + the <span class="pur">~350% CPU</span> load from the search itself + background L7). So a FUSE <span class="mono">read()</span> issued <i>right after</i> a heavy search <b class="bad">blocks indefinitely</b> → grep never finishes → codex sees nothing → reverts to manual exploration → plain-codex token count.</p>
+    <p class="note">Neither <code>SEARCH_DEADLINE</code> nor <code>SEARCH_TIMEOUT</code> covered this — they guard the <i>search/DB connection</i>, not the grep's <i>post-search file read</i>. (<a style="color:var(--accent)" href="#">why both exist →</a> a separate note.)</p>
+  </div>
+
+  <details>
+    <summary>The trap: a perfectly good search, sabotaged by a "nicety"</summary>
+    <div class="dd">The file read existed only to compute a <b>line range</b> for prettier output — a cosmetic nicety. The data the agent actually needs (filepath + chunk text) was already in hand from the search. So a cosmetic, un-timed-out FUSE read was allowed to hang the entire tool, on the very mount it was searching, under the very load the search created. Classic: the failure wasn't in the hard part (retrieval) — it was in the easy part nobody guards.</div>
+  </details>
+
+  <h2>The fix</h2>
+  <div class="card">
+    <div class="fix"><span class="pill done">DONE · tested</span>
+      <div><b>grep can't hang on FUSE.</b> Line-range read is now <code>read_file_timed</code> — blocking read on a throwaway thread + <code>recv_timeout</code> (2s). On timeout → abandon the thread, trip a per-invocation <b>circuit breaker</b>, and print <span class="mono">&lt;file&gt;:&lt;chunk&gt;</span> (no line range) for every remaining hit. The whole grep pays <b>at most one</b> 2s budget and <b>always returns the results</b>.</div>
+    </div>
+    <div class="fix"><span class="pill done">DONE</span>
+      <div><b><code>SEARCH_DEADLINE</code> 25s → 20s</b> (strictly under <code>SEARCH_TIMEOUT</code> 25s) so the cooperative degrade reliably wins the race against the daemon's hard timeout.</div>
+    </div>
+    <div class="fix"><span class="pill defer">DEFERRED</span>
+      <div><b>Decouple FUSE serving from search CPU.</b> Bound rerank threads + throttle background L7 so a search can't starve the FUSE <span class="mono">read()</span> path. Ticketed (<span class="mono">search-deadline-fails-closed-to-empty</span> #2, <span class="mono">parallelize-l7</span>).</div>
+    </div>
+    <p class="note" style="margin-top:12px">Tests: <span class="good">semfs 45 · semfs-core 266 green</span>, clippy clean. New: <span class="mono">read_file_timed_times_out_on_blocking_fifo</span> (a writer-less FIFO blocks the read forever → the bound fires).</p>
+  </div>
+
+  <p class="foot">
+    Investigation discipline: 3 plausible hypotheses + 1 self-inflicted parsing error, each killed with a specific piece of evidence, before the real cause emerged. The instrumented per-stage search logging is what turned "search is broken" into "search is fine, the grep hangs."<br>
+    Source: <span class="mono">rcas/2026-06-04-semfs-grep-hangs-post-search-under-load-no-token-savings.md</span>
+  </p>
+
+</div>
+
+<script>
+  // expand-all on key "a", collapse on Escape — small affordance
+  document.addEventListener('keydown',function(e){
+    if(e.key==='a'){document.querySelectorAll('.hyp').forEach(h=>h.classList.add('open'));}
+    if(e.key==='Escape'){document.querySelectorAll('.hyp').forEach(h=>h.classList.remove('open'));}
+  });
+</script>
+</body>
+</html>

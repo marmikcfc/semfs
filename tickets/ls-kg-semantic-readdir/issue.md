@@ -164,12 +164,24 @@ dodging every strawman, and attacks B2 (what the agent *gets back*) — the leve
   *content* of B/C). Prereq for the semantic (vs structural) version.
 - **K4** — Measure first-move distribution (full-P0 ×5) to quantify the walk-first vs grep-first rate the map must beat.
 
-## Approved KG architecture (2026-06-06)
-Graphify-style KG design APPROVED — see **`graphify_kg_architecture.md`**. Decisions: Rust-native
-Louvain→Leiden · categorical confidence column · **reuse `profile.md`** (one file, swap content to the KG
-digest) · MVP = communities+god-nodes, dynamic on add/remove, must beat the dir-map on tokens. DRY (reuse
-edges/extraction/worker/profile.md) · YAGNI (no viz/report/query-API/AST/per-subdir) · SOLID (pure-fn
-detection behind a trait). Implementation NOT started — phased plan P1–P5 in the architecture doc.
+## Approved KG architecture (2026-06-06, updated)
+Graphify-style KG — see **`graphify_kg_architecture.md`**. Decisions: Rust-native Louvain→Leiden ·
+categorical confidence column · **surfacing = a NEW root virtual file `KNOWLEDGE_GRAPH.md`** (profile.md was
+DELETED, commit 5fc0904) **+ an `AGENTS.md`/`CLAUDE.md` FS-contract** that names it · MVP = communities +
+god-nodes, dynamic on add/remove.
+
+**Surfacing (Marmik's 3 requirements):**
+1. `ls` lists `KNOWLEDGE_GRAPH.md` alongside the real directory entries (= "directory + KG" — the POSIX-clean
+   realization; literal readdir-injection is infeasible). The name is self-documenting so the LLM infers it
+   holds the whole-workspace KG.
+2. The LLM reads `KNOWLEDGE_GRAPH.md` to orient OR greps directly (flexible per task type).
+3. `agent_hint.rs` writes the FS-contract into `AGENTS.md`/`CLAUDE.md`: "dynamic semantic index; KG at
+   KNOWLEDGE_GRAPH.md; `semfs grep` for ranked excerpts; read the KG to orient or grep to find."
+
+**Phase delivery before payload:** Phase 0 ships the named file + contract with a SIMPLE digest and measures
+(on exploratory tasks) whether it shifts behavior; Phase 1+ swaps in the full Leiden KG only if Phase 0 pays.
+Steelman/strawman + module breakdown in the architecture doc. Implementation NOT started.
+
 
 ## Links
 - Parent investigation: `tickets/case289-retrieval-investigation/` (issue.md §6, EXPERIMENTS.md E24/E25).

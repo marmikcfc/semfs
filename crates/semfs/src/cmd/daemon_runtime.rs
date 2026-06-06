@@ -510,13 +510,29 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
     // indexer has no graph extractor attached.
     if let Some(idx) = graph_indexer {
         let gw_shutdown = shutdown_rx.clone();
+        // L6: when entity extraction settles after add/remove, recompute the KG
+        // and refresh `/KNOWLEDGE_GRAPH.md` (debounced inside the worker).
+        let kg_fs = fs.clone();
+        let kg_refresh: Arc<dyn Fn() + Send + Sync + 'static> = Arc::new(move || {
+            if let Err(e) = kg_fs.refresh_knowledge_graph() {
+                tracing::warn!("dynamic knowledge-graph refresh failed (non-fatal): {e}");
+            }
+        });
         tokio::spawn(async move {
-            semfs_core::cache::run_graph_worker(idx, gw_shutdown).await;
+            semfs_core::cache::run_graph_worker(idx, gw_shutdown, Some(kg_refresh)).await;
         });
     }
 
     startup.report("mounting_fs", "mounting filesystem")?;
     let handle = mount_fs(fs.clone(), opts).await?;
+
+    // Materialize the workspace knowledge graph (`/KNOWLEDGE_GRAPH.md`) from the
+    // warm cache's entity edges so `ls` shows it and `cat` serves it immediately.
+    // Fail-soft: a graph error never blocks the mount. On a fresh seed the graph
+    // is sparse → a structural map now, refreshed by the L7 worker as edges land.
+    if let Err(e) = fs.refresh_knowledge_graph() {
+        tracing::warn!("knowledge-graph build failed (non-fatal): {e}");
+    }
 
     // Auto-install grep wrapper on first mount.
     if let Ok(true) = super::init::ensure_grep_wrapper_present() {

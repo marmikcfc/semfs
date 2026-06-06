@@ -8,8 +8,10 @@
 //! thing that mutates sync-state fields (added in M7–M8).
 
 pub(crate) mod db;
+pub mod digest;
 mod file;
 mod fs;
+pub mod graph_file;
 pub mod graph_queue;
 pub mod hydration;
 

@@ -4,6 +4,7 @@
 
 pub(crate) mod cloud;
 pub mod chunk;
+pub mod community;
 pub mod graph;
 #[cfg(feature = "pg")]
 pub mod pgvector;

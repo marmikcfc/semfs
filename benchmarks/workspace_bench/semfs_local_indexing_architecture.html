@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>semfs local indexing — architecture, the starvation problem, and the fix</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --mount:#58a6ff; --cache:#7ee787; --embed:#d2a8ff; --cloud:#f0883e; --bad:#f85149; --good:#3fb950; --warn:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 18px 80px}
+  h1{font-size:23px;margin:0 0 4px}
+  h2{font-size:18px;margin:30px 0 8px;border-bottom:1px solid var(--line);padding-bottom:5px}
+  h3{font-size:15px;margin:18px 0 6px}
+  .sub{color:var(--mut);margin:0 0 14px;max-width:900px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;font:12px/1.5 ui-monospace,Menlo,monospace}
+  .note{border-left:3px solid var(--embed);padding:8px 12px;margin:12px 0;color:var(--mut);background:#150f22;border-radius:0 8px 8px 0}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--mut);font-size:11px;text-transform:uppercase}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  .bad{color:var(--bad);font-weight:700}.good{color:var(--good);font-weight:700}.warn{color:var(--warn);font-weight:700}
+
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0;position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:20;border-bottom:1px solid var(--line)}
+  .tab{flex:1;min-width:140px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:9px;cursor:pointer;text-align:center;font-size:13px}
+  .tab.active{border-color:var(--embed);background:var(--panel2);box-shadow:0 0 0 1px var(--embed) inset}
+  .sec{display:none}.sec.show{display:block}
+
+  /* layered arch diagram */
+  .layer{border:1px solid var(--line);border-radius:10px;padding:10px 13px;margin:7px 0;background:var(--panel)}
+  .layer .lh{font-weight:700;font-size:13px;margin-bottom:3px}
+  .l-mount{border-left:4px solid var(--mount)} .l-cache{border-left:4px solid var(--cache)}
+  .l-embed{border-left:4px solid var(--embed)} .l-cloud{border-left:4px solid var(--cloud)}
+  .layer small{color:var(--mut)}
+  .arrowdown{text-align:center;color:var(--mut);font-size:16px}
+
+  /* timeline simulator */
+  .sim{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
+  .track{margin:12px 0}
+  .track .lbl{font-size:12px;color:var(--mut);margin-bottom:3px}
+  .bar{height:26px;border-radius:6px;background:#0b0f14;border:1px solid var(--line);position:relative;overflow:hidden}
+  .bar > div{height:100%;position:absolute;top:0;transition:width .6s,left .6s}
+  .seg-mount{background:rgba(88,166,255,.25)} .seg-embed{background:var(--embed)} .seg-agent{background:rgba(126,231,80,.3)}
+  .bar .tick{position:absolute;top:0;bottom:0;width:2px;background:var(--bad)}
+  .bar .lab{position:absolute;font-size:10px;color:var(--ink);top:5px;white-space:nowrap}
+  .cov{height:22px;border-radius:6px;background:#0b0f14;border:1px solid var(--line);overflow:hidden;margin-top:4px}
+  .cov > div{height:100%;background:var(--good);transition:width .6s}
+  .ctrls{display:flex;gap:8px;margin-top:10px}
+  .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:13px}
+  .btn.on{border-color:var(--embed);background:#1d1430}
+
+  .fix{border:1px solid var(--line);border-radius:10px;padding:12px 15px;margin:10px 0;background:var(--panel)}
+  .fix h3{margin:0 0 6px}
+  .pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px}
+  .pill.semfs{background:#1d1430;color:var(--embed);border:1px solid var(--embed)}
+  .pill.bench{background:#10243f;color:var(--mount);border:1px solid var(--mount)}
+  .pill.exists{background:#0f2a16;color:var(--good);border:1px solid var(--good)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>semfs local indexing — architecture, the <span style="color:var(--bad)">starvation</span> problem, and the fix</h1>
+  <p class="sub">How the local semantic index is built today, why a real workspace ends up only ~19% searchable, and the changes that fix it. Grounded in this session's runs on the PM (chanpin) workspace, case 289.</p>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-s="arch">1 · Architecture</button>
+    <button class="tab" data-s="example">2 · Worked example</button>
+    <button class="tab" data-s="problem">3 · The problem</button>
+    <button class="tab" data-s="fix">4 · The fix</button>
+  </div>
+
+  <!-- 1 ARCHITECTURE -->
+  <div class="sec show" data-sec="arch">
+    <h2>1 · Current architecture</h2>
+    <p class="sub">semfs mounts a Supermemory <b>container</b> as a real directory. Reads are served from a local SQLite cache; a <b>local semantic index</b> is built over that cache so <code>semfs grep</code> can answer by meaning — offline.</p>
+
+    <div class="layer l-mount"><div class="lh">① MOUNT — FUSE (Linux) / NFSv3 (macOS)</div>
+      <small>19 POSIX ops (<code>lookup/read/readdir/…</code>). Literal — no meaning. <code>semfs grep</code> is the one semantic verb.</small></div>
+    <div class="arrowdown">▼ VfsOps</div>
+    <div class="layer l-cache"><div class="lh">② LOCAL CACHE — SQLite (<code>~/.cache/semfs/&lt;org&gt;/&lt;tag&gt;.db</code>)</div>
+      <small>
+        <code>fs_data</code> = verbatim file bytes (4KB chunks) — <b>SOURCE OF TRUTH</b><br>
+        <code>fs_inode</code>/<code>fs_dentry</code> = the tree · <code>fs_remote</code> = ino→doc id<br>
+        <code>chunks</code> + <code>vchunks</code>(vec0) + <code>vchunks_code</code> + <code>ffts</code>(fts5) = <b>the local semantic index</b> (derived)
+      </small></div>
+    <div class="arrowdown">▼ on import / write (flush)</div>
+    <div class="layer l-embed"><div class="lh">③ INDEXER — chunk → embed → store</div>
+      <small>
+        Dual lane by file type (<code>is_code_path</code>):<br>
+        • text → <b>arctic-embed-s</b> (384d) → <code>vchunks</code><br>
+        • code → <b>jina-v2-base-code</b> (768d) → <code>vchunks_code</code><br>
+        Embedder: <code>LocalEmbedder{ model: <b style="color:var(--bad)">Mutex&lt;TextEmbedding&gt;</b> }</code> — <b class="bad">serialized</b> (one chunk at a time)
+      </small></div>
+    <div class="arrowdown">▼ search / fallback</div>
+    <div class="layer l-cloud"><div class="lh">④ BACKEND — <code>SemanticIndex</code> trait</div>
+      <small>
+        <b>SqliteVecStore</b> (local: vec0 KNN + fts5 BM25 → RRF → rerank) — default<br>
+        <b>CloudIndex</b> (Supermemory <code>/v4/search</code>) — fallback when no local index<br>
+        Embed source is an env dial: <code>SEMFS_EMBED_BACKEND=local|openrouter|openai</code> (cloud still stores vectors in <i>this</i> sqlite)
+      </small></div>
+
+    <div class="note">Key fact for everything below: the <b>content cache</b> (<code>fs_data</code>) and the <b>semantic index</b> (<code>chunks</code>/<code>vchunks</code>) are <b>two separate things</b>. semfs imports 100% of a container's files into <code>fs_data</code> at mount, but the index is built <b>incrementally in the background after the mount is "ready."</b></div>
+  </div>
+
+  <!-- 2 WORKED EXAMPLE -->
+  <div class="sec" data-sec="example">
+    <h2>2 · Worked example — mounting the PM workspace (chanpin, 2,141 files)</h2>
+    <p class="sub">What actually happens, step by step, on <code>semfs mount workspace-bench-chanpin</code> (the startup sequence from <code>daemon_runtime.rs</code>):</p>
+    <pre>creating_mountpoint → validating_key → opening_cache → configuring_api
+   → with_indexer(SqliteVecStore + arctic-s + jina-code)     [index ATTACHED]
+   → warming_profile
+   → initial_sync   ← imports 2,141 files into fs_data; embeds them on import (SLOW, silent)
+   → mounting_fs
+   → ready          ← FUSE mount usable; agent can start
+        … background embed CONTINUES while mounted …
+   → (unmount)      ← embed STOPS here, wherever it got to</pre>
+
+    <h3>The four smoke runs we did (all case 289)</h3>
+    <table>
+      <tr><th>Run</th><th>Embed backend</th><th>Status</th><th class="n">semfs grep</th><th class="n">tokens</th></tr>
+      <tr><td>codex · local</td><td>fastembed (arctic-s/jina)</td><td class="good">passed</td><td class="n">12</td><td class="n">34,945</td></tr>
+      <tr><td>claude · local</td><td>fastembed</td><td class="good">passed</td><td class="n">34</td><td class="n">422,668</td></tr>
+      <tr><td>codex · cloud</td><td>OpenRouter + Cohere</td><td class="good">passed</td><td class="n">24</td><td class="n">174,722</td></tr>
+      <tr><td>claude · cloud</td><td>OpenRouter + Cohere</td><td class="warn">last run</td><td class="n">—</td><td class="n">—</td></tr>
+    </table>
+    <div class="note">All four <b>passed</b> and used <code>semfs grep</code> — the local backend works end-to-end for both agents, both embed sources. <b>But every run ran on a ~19% index</b> (next tab). They passed only because case 289's 3 relevant files (the <code>--memory-paths</code> xlsx) embed early. Token counts aren't a fair backend comparison yet — they're on partial indexes.</div>
+    <div class="note">Isolation proven: local index lived in <code>~/.cache/semfs/…</code>; cloud index in a separate <code>XDG_CACHE_HOME=/srv/…/cache-cloud/…</code>. Same container, two independent sqlite DBs, no collision (the embedder-identity guard never had to fire).</div>
+  </div>
+
+  <!-- 3 PROBLEM -->
+  <div class="sec" data-sec="problem">
+    <h2>3 · The problem — mount-lifecycle starvation</h2>
+    <p class="sub">The index is a slow background build, but it only lives as long as the mount. The benchmark mounts → runs the agent (minutes) → unmounts. The full embed needs <b>hours</b>. So it gets cut off — at ~19%.</p>
+
+    <div class="sim">
+      <h3>Timeline simulator — drag the toggle</h3>
+      <div class="ctrls">
+        <button class="btn on" id="bSerial">Serial embed (today)</button>
+        <button class="btn" id="bParallel">Parallel embed (fix)</button>
+        <button class="btn" id="bPrewarm">Persist + pre-warm once</button>
+      </div>
+      <div class="track"><div class="lbl">mount lifetime (agent task ≈ a few min, then unmount)</div>
+        <div class="bar"><div class="seg-mount" id="segMount" style="left:0;width:100%"></div>
+          <div class="tick" id="tickUnmount" style="left:22%"></div>
+          <div class="lab" id="labReady" style="left:8%">ready</div>
+          <div class="lab" id="labUnmount" style="left:23%;color:var(--bad)">unmount</div></div></div>
+      <div class="track"><div class="lbl">embedding progress in that window</div>
+        <div class="bar"><div class="seg-embed" id="segEmbed" style="left:0;width:19%"></div></div></div>
+      <div class="track"><div class="lbl">resulting index coverage of the PM workspace</div>
+        <div class="cov"><div id="covBar" style="width:19%"></div></div>
+        <div class="lbl" id="covTxt" style="margin-top:4px;color:var(--ink)">→ 19% embedded (417 / 2,141 files) — what we measured</div></div>
+    </div>
+
+    <table>
+      <tr><th>Layer</th><th>State after our runs</th></tr>
+      <tr><td>content cache (<code>fs_data</code>)</td><td class="good">100% — all 2,141 PM files imported</td></tr>
+      <tr><td>semantic index (<code>chunks</code>/<code>vchunks</code>)</td><td class="bad">~19.5% — only 417 files embedded</td></tr>
+    </table>
+    <div class="note"><b>Two compounding causes:</b><br>
+    (a) <b>Lifecycle coupling</b> — indexing runs only while mounted; unmount kills the rest. A 5-min agent task can't finish a multi-hour embed.<br>
+    (b) <b>Serialized embedding</b> — <code>Mutex&lt;TextEmbedding&gt;</code> embeds one chunk at a time (~1 chunk/sec on this 4-core box), so even a long mount is slow.<br>
+    Result: 4 of every 5 PM files are <b>invisible to local semantic search</b>. The agents passed only because case-relevant files embedded first. For a fair lite run across many cases, this is fatal — recall depends on which files happened to embed.</div>
+  </div>
+
+  <!-- 4 FIX -->
+  <div class="sec" data-sec="fix">
+    <h2>4 · The fix — what changes, and where</h2>
+
+    <div class="fix"><h3>① Parallelize embedding <span class="pill semfs">semfs code change</span></h3>
+      <b>Problem solved:</b> serialized embed (cause b). <br>
+      Replace the single <code>Mutex&lt;TextEmbedding&gt;</code> with a <b>worker pool sized to <code>available_parallelism()</code></b> ("based on system info"). Embed N chunks concurrently across cores. <br>
+      <b>Effect:</b> ~3.5 hr full PM embed → ~1 hr on this 4-core box (near-linear with cores; a GPU box → minutes). The benchmark can't do this — it's internal to the daemon (<code>embed/local.rs</code> + the indexer in <code>sqlite_vec.rs</code>).</div>
+
+    <div class="fix"><h3>② Persist + pre-warm once + reuse <span class="pill bench">operational (benchmark)</span></h3>
+      <b>Problem solved:</b> lifecycle starvation (cause a), without new daemon code. <br>
+      Before any agent case: <code>semfs mount</code> the container, <b>leave it idle until coverage = 100%</b>, then <code>unmount</code>. Chunks persist → every later case mounts a <b>complete</b> index instantly. <br>
+      <b>Effect:</b> embed cost = <b>O(1 per container × backend)</b>, not O(cases). With ① the one-time warm is ~1 hr; then 100 lite cases reuse it for free.</div>
+
+    <div class="fix"><h3>③ Decouple indexing from the mount (deeper) <span class="pill semfs">semfs code change</span></h3>
+      <b>Problem solved:</b> lifecycle coupling at the root (so users never hit 19% by accident). <br>
+      A standalone <code>semfs index &lt;tag&gt;</code> job (or a persistent background indexer) that embeds to completion <b>regardless of who's mounted</b>, resumable. Plus emit <code>startup.report()</code> during the embed loop so the 30s readiness watchdog stays happy. <br>
+      <b>Effect:</b> "embed once per container, reuse forever" becomes true automatically — the property the whole local-backend value rests on.</div>
+
+    <div class="fix"><h3>✗ Delete index on unmount <span class="pill exists">already exists — but NOT for the benchmark</span></h3>
+      The daemon already has an <b>ephemeral in-memory cache mode</b> (<code>daemon_runtime.rs</code>: "nothing persists after unmount"). It's a flag, not new code. <br>
+      <b>But it's the wrong choice for benchmarking:</b> deleting on unmount forces a full re-embed every mount → makes the 19% problem permanent and paid N times. Reserve it for the <b>product / sandboxed-tool</b> path (privacy, throwaway sessions), where persistence isn't wanted.</div>
+
+    <div class="note"><b>The change set, minimal:</b> one semfs change worth doing now — <b>① parallelize the embed</b> (kill the Mutex, pool sized to cores) — which speeds the <b>② persist + pre-warm-once</b> operational approach. <b>③</b> is the proper long-term decoupling. <b>Delete-on-unmount is a config, not a fix</b>, and wrong for the lite matrix.</div>
+  </div>
+</div>
+
+<script>
+document.getElementById('tabs').addEventListener('click',e=>{
+  const t=e.target.closest('.tab'); if(!t) return;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); t.classList.add('active');
+  document.querySelectorAll('.sec').forEach(s=>s.classList.toggle('show', s.dataset.sec===t.dataset.s));
+  window.scrollTo({top:0,behavior:'smooth'});
+});
+// timeline sim
+function setSim(mode){
+  ['bSerial','bParallel','bPrewarm'].forEach(id=>document.getElementById(id).classList.remove('on'));
+  const segE=document.getElementById('segEmbed'), cov=document.getElementById('covBar'), covT=document.getElementById('covTxt');
+  const tick=document.getElementById('tickUnmount'), labU=document.getElementById('labUnmount');
+  if(mode==='serial'){ document.getElementById('bSerial').classList.add('on');
+    tick.style.left='22%'; labU.style.left='23%';
+    segE.style.width='19%'; cov.style.width='19%';
+    covT.textContent='→ 19% embedded (417 / 2,141) — serial embed, cut off at unmount. WHAT WE MEASURED.'; }
+  if(mode==='parallel'){ document.getElementById('bParallel').classList.add('on');
+    tick.style.left='22%'; labU.style.left='23%';
+    segE.style.width='60%'; cov.style.width='60%';
+    covT.textContent='→ ~60% in the same mount window — parallel embed (4 cores) is ~3–4× faster. Better, but a short mount STILL does not finish a big corpus.'; }
+  if(mode==='prewarm'){ document.getElementById('bPrewarm').classList.add('on');
+    tick.style.left='100%'; labU.style.left='90%';
+    segE.style.width='100%'; cov.style.width='100%';
+    covT.textContent='→ 100%: hold the mount idle until the embed completes (once), then unmount. Every later case reuses the full index. THE FIX.'; }
+}
+document.getElementById('bSerial').onclick=()=>setSim('serial');
+document.getElementById('bParallel').onclick=()=>setSim('parallel');
+document.getElementById('bPrewarm').onclick=()=>setSim('prewarm');
+setSim('serial');
+</script>
+</body>
+</html>

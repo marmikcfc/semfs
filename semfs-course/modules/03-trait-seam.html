@@ -1,0 +1,386 @@
+<section class="module" id="module-3">
+  <div class="module-content">
+
+    <header class="module-header">
+      <span class="module-number">03</span>
+      <h1 class="module-title">The Trait Seam: One Folder, Any Storage</h1>
+      <p class="module-subtitle">semfs can store your memory in a local file, a database, or a cloud service — and the folder behaves <em>identically</em> across all three. The trick is a single idea you already use every day: the power socket.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE METAPHOR ───────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The wall socket nobody thinks about</h2>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">🔌</div>
+          <div>
+            <strong>Your charger plugs into a standard shape</strong>
+            <p>It does not care if the power comes from a coal plant, a solar farm, or a nuclear reactor.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">⚡</div>
+          <div>
+            <strong>The socket is a contract</strong>
+            <p>As long as 120V arrives through that shape, you can swap the entire power plant behind the wall.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">🧩</div>
+          <div>
+            <strong>A <span class="term" data-definition="A trait in Rust is a contract: a named set of abilities. Any type that promises to provide those abilities can be used wherever the trait is expected — exactly like any plug that fits the socket. When talking to an AI you would say put this behind a trait.">trait</span> is that socket</strong>
+            <p>In semfs code, a trait is a standard shape that many different storage engines can plug into.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">The single most useful sentence you can say to an AI</strong>
+          <p>This is called <span class="term" data-definition="Programming to an interface means your code depends on a contract (the shape) rather than on one specific implementation (the thing). Swap the thing later without rewriting everything around it.">programming to an interface</span>, not an implementation. It is THE most transferable idea in this whole course.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: THE SEAM (Snippet A + B) ───────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Where the two halves meet</h2>
+
+      <p>semfs defines <strong>what a filesystem must do</strong> separately from <strong>how any storage does it</strong>. The two halves meet at one contract — engineers call that meeting point the <span class="term" data-definition="A seam is the clean boundary between two parts of a system where you can swap one side without disturbing the other — like the socket between your charger and the power grid.">seam</span>.</p>
+
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="flow-step-num">🚪</div>
+          <p>Frontends (Mount) <strong>call</strong> the contract</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">🔌</div>
+          <p>The <span class="term" data-definition="An interface is the published list of what something can do, with no detail on how. The trait IS the interface here. Same idea, different word.">interface</span> (the socket)</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">🗄️</div>
+          <p>Backends <strong>fulfill</strong> the contract</p>
+        </div>
+      </div>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">//! The [`FileSystem`] and [`File`] traits — the core filesystem abstraction.</span></span>
+<span class="code-line"><span class="code-comment">//!</span></span>
+<span class="code-line"><span class="code-comment">//! Every backend in semfs (`MemFs` in-memory, `CacheFs` SQLite-</span></span>
+<span class="code-line"><span class="code-comment">//! backed in M5, future experiments) implements these traits. Every frontend</span></span>
+<span class="code-line"><span class="code-comment">//! (FUSE and NFS mount adapters in M3) calls into them.</span></span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">This is the <span class="term" data-definition="An abstraction hides messy detail behind a simple shape. The socket is an abstraction over the entire power grid — you see two holes, not a power plant.">abstraction</span> at the heart of semfs.</p>
+            <p class="tl">&nbsp;</p>
+            <p class="tl">Many <strong>backends</strong> — an <span class="term" data-definition="In-memory means the data lives in fast temporary memory (RAM) and vanishes when the program stops. Perfect for tests that need to run quickly and leave no trace.">in-memory</span> one for tests, a SQLite one for real use.</p>
+            <p class="tl">They all <span class="term" data-definition="An implementation (impl in Rust) is the actual code that fulfills a trait — the concrete plug that fits the socket. The trait says what; the impl says how.">implement</span> these traits.</p>
+            <p class="tl">Many frontends (the mount adapters) all call into the same shape. That shared point is the seam.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: DATA FLOW (the fork) ───────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">One call, any plant behind the wall</h2>
+
+      <p>Watch a single write descend through the contract, then fork to whichever backend happens to be plugged in. The Mount makes <strong>one</strong> call; the trait routes it; both backends handle it identically.</p>
+
+      <div class="flow-animation" data-steps='[
+        {"highlight":"flow-m3-actor-1","label":"Mount makes ONE call: create_file"},
+        {"highlight":"flow-m3-actor-2","label":"The call reaches the FileSystem trait — the socket","packet":true,"from":"m3-actor-1","to":"m3-actor-2"},
+        {"highlight":"flow-m3-actor-3","label":"If MemFs is plugged in, it stores the file in memory","packet":true,"from":"m3-actor-2","to":"m3-actor-3"},
+        {"highlight":"flow-m3-actor-4","label":"If CacheFs is plugged in, it writes the file to SQLite","packet":true,"from":"m3-actor-2","to":"m3-actor-4"},
+        {"highlight":"flow-m3-actor-1","label":"Either way the Mount gets the same answer back — it never knew which plant ran"}
+      ]'>
+        <div class="flow-actors">
+          <div class="flow-actor" id="flow-m3-actor-1">
+            <div class="flow-actor-icon">🚪</div>
+            <span>Mount adapter</span>
+          </div>
+          <div class="flow-actor" id="flow-m3-actor-2">
+            <div class="flow-actor-icon">🔌</div>
+            <span>FileSystem trait</span>
+          </div>
+          <div class="flow-actor" id="flow-m3-actor-3">
+            <div class="flow-actor-icon">⚡</div>
+            <span>MemFs (test)</span>
+          </div>
+          <div class="flow-actor" id="flow-m3-actor-4">
+            <div class="flow-actor-icon">🗄️</div>
+            <span>CacheFs (SQLite)</span>
+          </div>
+        </div>
+
+        <div class="flow-packet" id="flow-packet"></div>
+
+        <div class="flow-step-label" id="flow-label">Click "Next Step" to begin</div>
+
+        <div class="flow-controls">
+          <button class="btn flow-next-btn">Next Step</button>
+          <button class="btn flow-reset-btn">Restart</button>
+          <span class="flow-progress"></span>
+        </div>
+      </div>
+
+      <p>That <span class="term" data-definition="async (asynchronous) code can start a slow job — like a disk write — and let other work continue instead of freezing. The await keyword waits for the result only when it is actually needed.">async</span> call returns an <span class="term" data-definition="An inode is a filesystem ID number for a single file or folder. semfs uses these numbers to track every item, just like a real disk does.">inode</span> and its <span class="term" data-definition="Attributes are the facts about a file: its size, type, timestamps, permissions — everything except the contents themselves.">attributes</span>, regardless of which backend answered.</p>
+    </section>
+
+    <!-- ── SCREEN 4: LAYER TOGGLE (one shape, many impls) ───────── -->
+    <section class="screen">
+      <h2 class="screen-heading">One shape, fulfilled three ways</h2>
+
+      <p>Same method name — different machinery behind it. Flip between the contract and its two backends.</p>
+
+      <div class="layer-demo">
+        <div class="layer-tabs">
+          <button class="layer-tab active" onclick="showLayer('html')">The Contract</button>
+          <button class="layer-tab" onclick="showLayer('css')">Backend A: MemFs</button>
+          <button class="layer-tab" onclick="showLayer('js')">Backend B: CacheFs</button>
+        </div>
+        <div class="layer-viewport">
+          <div class="layer" id="layer-html" style="display:block">
+            <div class="badge-list">
+              <div class="badge-item">
+                <code class="badge-code">trait FileSystem</code>
+                <span class="badge-desc">The socket. It declares the method <code>lookup</code> but writes zero code for it — it only states that the ability must exist.</span>
+              </div>
+              <div class="badge-item">
+                <code class="badge-code">fn lookup(...)</code>
+                <span class="badge-desc">"Find a file by name inside a folder." WHAT, never HOW.</span>
+              </div>
+            </div>
+          </div>
+          <div class="layer" id="layer-css" style="display:none">
+            <div class="badge-list">
+              <div class="badge-item">
+                <code class="badge-code">MemFs</code>
+                <span class="badge-desc">In-memory backend used in tests. Fast, disposable, no disk.</span>
+              </div>
+              <div class="badge-item">
+                <code class="badge-code">fn lookup(...)</code>
+                <span class="badge-desc">Fulfills the same method by scanning a table held in RAM. Same shape, RAM machinery.</span>
+              </div>
+            </div>
+          </div>
+          <div class="layer" id="layer-js" style="display:none">
+            <div class="badge-list">
+              <div class="badge-item">
+                <code class="badge-code">CacheFs</code>
+                <span class="badge-desc">The real backend, backed by a SQLite file on disk.</span>
+              </div>
+              <div class="badge-item">
+                <code class="badge-code">fn lookup(...)</code>
+                <span class="badge-desc">Fulfills the same method by running a SQL query against the database. Same shape, disk machinery.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="layer-description" id="layer-desc">The contract names the ability. Each backend supplies its own machinery. Calling code never sees the difference.</p>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: CODE↔ENGLISH (Snippet C) ───────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Proof: an 8-line fake fools the search</h2>
+
+      <p>The search socket is a trait called <code>SemanticIndex</code>. The real cloud plugs into it — but so can a tiny <span class="term" data-definition="A fake (or mock) is a stand-in that satisfies the contract with hardcoded answers, used in tests so you do not need the real, slow, networked thing. It returns canned data instantly.">fake</span> used in tests. Search cannot tell them apart.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// The semantic-search substrate behind `grep`. Any backend that answers a semantic query.</span></span>
+<span class="code-line"><span class="code-keyword">#[async_trait]</span></span>
+<span class="code-line"><span class="code-keyword">pub trait</span> <span class="code-function">SemanticIndex</span>: Send + Sync {</span>
+<span class="code-line">    <span class="code-comment">/// Search by meaning. `filepath` optionally scopes to a prefix.</span></span>
+<span class="code-line">    <span class="code-keyword">async fn</span> <span class="code-function">search</span>(&self, query: &<span class="code-keyword">str</span>, filepath: Option&lt;&<span class="code-keyword">str</span>&gt;)</span>
+<span class="code-line">        -&gt; anyhow::Result&lt;Vec&lt;SearchHit&gt;&gt;;</span>
+<span class="code-line">}</span>
+<span class="code-line">&nbsp;</span>
+<span class="code-line">    <span class="code-keyword">struct</span> <span class="code-function">FakeIndex</span>;</span>
+<span class="code-line">&nbsp;</span>
+<span class="code-line">    <span class="code-keyword">#[async_trait]</span></span>
+<span class="code-line">    <span class="code-keyword">impl</span> SemanticIndex <span class="code-keyword">for</span> FakeIndex {</span>
+<span class="code-line">        <span class="code-keyword">async fn</span> <span class="code-function">search</span>(&self, query: &<span class="code-keyword">str</span>, _filepath: Option&lt;&<span class="code-keyword">str</span>&gt;)</span>
+<span class="code-line">            -&gt; anyhow::Result&lt;Vec&lt;SearchHit&gt;&gt; {</span>
+<span class="code-line">            Ok(vec![SearchHit {</span>
+<span class="code-line">                filepath: Some(<span class="code-string">"/notes/a.md"</span>.into()),</span>
+<span class="code-line">                memory: None,</span>
+<span class="code-line">                chunk: Some(format!(<span class="code-string">"matched: {query}"</span>)),</span>
+<span class="code-line">                similarity: <span class="code-string">0.9</span>,</span>
+<span class="code-line">            }])</span>
+<span class="code-line">        }</span>
+<span class="code-line">    }</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">This trait is the search socket. Anything that answers a meaning-based query can plug in.</p>
+            <p class="tl">It promises one ability: <code>search</code>. Give it words, get back matches.</p>
+            <p class="tl">That is the whole contract — WHAT, not HOW.</p>
+            <p class="tl">&nbsp;</p>
+            <p class="tl">Now a totally fake librarian named <code>FakeIndex</code>.</p>
+            <p class="tl">We <span class="term" data-definition="impl is Rust shorthand for implement: the block of real code that makes a type fulfill a trait. impl SemanticIndex for FakeIndex means here is how FakeIndex provides the search ability.">impl</span>ement the same socket for it.</p>
+            <p class="tl">Its <code>search</code> ignores the real world entirely...</p>
+            <p class="tl">...and just returns one canned hit: the file, a fake snippet echoing your query, and a 0.9 score.</p>
+            <p class="tl">Eight lines. <code>grep</code> calls the shape and never notices it is a puppet — which is exactly the point.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🧪</div>
+        <div class="callout-content">
+          <strong class="callout-title">Why a fake exists</strong>
+          <p>The fake lets the test suite check search logic fast and offline — no real cloud, no network. Any plug that fits the socket works.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 6: THE PAYOFF (Snippet D) ─────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The payoff: swap the plant in one spot</h2>
+
+      <p>One tiny function decides which backend <code>grep</code> uses. Adding offline search later means changing only <em>this</em> — every caller stays untouched.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// Resolve the search backend. Phase 1: always the cloud client. Phase 5 adds</span></span>
+<span class="code-line"><span class="code-comment">/// local/offline selection here.</span></span>
+<span class="code-line"><span class="code-keyword">fn</span> <span class="code-function">resolve_index</span>(api_url: &<span class="code-keyword">str</span>, key: &<span class="code-keyword">str</span>, tag: &<span class="code-keyword">str</span>) -&gt; Arc&lt;<span class="code-keyword">dyn</span> SemanticIndex&gt; {</span>
+<span class="code-line">    <span class="code-keyword">let</span> api = Arc::new(semfs_core::api::ApiClient::new(api_url, key, tag));</span>
+<span class="code-line">    Arc::new(CloudIndex::new(api))</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">A function whose job is just "pick the search backend."</p>
+            <p class="tl">&nbsp;</p>
+            <p class="tl">It returns <code><span class="term" data-definition="Arc is a shareable handle to a value that many parts of the program can hold at once. dyn means some thing fulfilling this trait, decided at runtime. Together: a shared handle to whatever backend we plugged in.">Arc&lt;dyn SemanticIndex&gt;</span></code> — a shared handle to <em>some</em> thing that fulfills the search contract.</p>
+            <p class="tl">Today it builds a cloud client...</p>
+            <p class="tl">...and hands back the cloud backend. Tomorrow, swap in a local one right here — and nothing else changes.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── QUIZ ─────────────────────────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Think it through</h2>
+
+      <div class="quiz-container" id="quiz-module3">
+
+        <div class="quiz-question-block"
+             data-correct="opt-one"
+             data-explanation-right="Exactly. Callers depend on the trait, not the backend. The choice lives only in resolve_index, so that is the single spot to change."
+             data-explanation-wrong="Look again at the seam. Every caller talks to the Arc<dyn SemanticIndex> shape — only resolve_index names a concrete backend, so only it changes.">
+          <h3 class="quiz-question">semfs wants to add a local offline search engine. Based on the resolve function, how many call sites of grep must change?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-one" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Just one — resolve_index</span>
+            </button>
+            <button class="quiz-option" data-value="opt-all" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Every place that calls grep</span>
+            </button>
+            <button class="quiz-option" data-value="opt-trait" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The SemanticIndex trait itself must be rewritten</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-fast"
+             data-explanation-right="Right. The fake satisfies the contract with instant canned answers, so grep logic can be tested fast and offline — no cloud, no network."
+             data-explanation-wrong="Not quite. The fake is not about speed of the cloud or replacing it in production — it exists so tests can run instantly and offline by substituting anything that fits the contract.">
+          <h3 class="quiz-question">Why does the test suite ship a FakeIndex instead of calling the real cloud?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-fast" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>To test grep logic fast and offline, with no real cloud or network</span>
+            </button>
+            <button class="quiz-option" data-value="opt-faster" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Because the fake gives better search results than the cloud</span>
+            </button>
+            <button class="quiz-option" data-value="opt-prod" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>To replace the cloud backend in production</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-iface"
+             data-explanation-right="Exactly the lesson of this module. Define the contract first, put the concrete provider behind it, and swapping providers later touches almost nothing."
+             data-explanation-wrong="Think about the seam. Hard-wiring Stripe everywhere is the opposite of programming to an interface — you would have to rip out Stripe from every spot to switch to PayPal.">
+          <h3 class="quiz-question">You ask an AI to build a payment feature that might use Stripe now and PayPal later. Which instruction captures this module&apos;s lesson?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-iface" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Define a payments trait/interface and put Stripe behind it, so we can swap providers without touching the rest of the app</span>
+            </button>
+            <button class="quiz-option" data-value="opt-direct" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Call the Stripe library directly everywhere we need to charge a card</span>
+            </button>
+            <button class="quiz-option" data-value="opt-both" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Write the Stripe code and the PayPal code now and pick at runtime with if-statements scattered through the app</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-handle"
+             data-explanation-right="Spot on. It is a shareable handle to SOME thing that fulfills the search contract — the caller neither knows nor cares which concrete backend it is."
+             data-explanation-wrong="Look at the words. dyn means decided at runtime, Arc means shareable handle. It is deliberately NOT a specific backend — that vagueness is the whole feature.">
+          <h3 class="quiz-question">What does Arc&lt;dyn SemanticIndex&gt; mean in plain terms?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-handle" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>A shareable handle to some thing that fulfills the search contract — which concrete backend is unknown and irrelevant</span>
+            </button>
+            <button class="quiz-option" data-value="opt-cloud" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>A guarantee that the backend is always the cloud client</span>
+            </button>
+            <button class="quiz-option" data-value="opt-copy" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>A private copy of the search results that no one else can read</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module3')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module3')">Try Again</button>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🔭</div>
+        <div class="callout-content">
+          <strong class="callout-title">Up next</strong>
+          <p>Now that you understand the socket, let us look at the power plants that plug into it — SQLite-vec, Postgres, the Supermemory cloud — and the couriers that drive between them.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>

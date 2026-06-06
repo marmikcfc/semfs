@@ -1,0 +1,399 @@
+<section class="module" id="module-2">
+  <div class="module-content">
+
+    <!-- ── MODULE HEADER ─────────────────────────────────────── -->
+    <header class="module-header">
+      <span class="module-number">02</span>
+      <h1 class="module-title">Meet the Cast</h1>
+      <p class="module-subtitle">Last module you watched your words pass through four hands on the way from your keyboard to the cloud. Those hands have names. Let&apos;s meet the crew.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE THEATER METAPHOR ────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">One seamless show, a whole crew backstage</h2>
+
+      <p>From the outside, semfs looks like a single thing: a folder you can read and write. Behind the curtain, a small crew runs the show — and each member has exactly <strong>one</strong> job.</p>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🎭</div>
+        <div class="callout-content">
+          <strong class="callout-title">The big idea</strong>
+          <p>semfs is built from a handful of components, each with a single responsibility, talking through clean boundaries. Engineers call this
+            <span class="term" data-definition="Separation of concerns means each part of a system handles one job and one job only. It lets you fix or replace one part without disturbing the others — like a kitchen crew where the dishwasher never touches the menu.">separation of concerns</span>.
+            It&apos;s what lets you tell an AI &ldquo;the bug is in the sync layer, not the mount layer&rdquo; instead of &ldquo;it&apos;s broken somewhere.&rdquo;</p>
+        </div>
+      </div>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">🎫</div>
+          <div>
+            <strong>The CLI — the front desk</strong>
+            <p>Parses your typed
+              <span class="term" data-definition="A command is a line you type into a terminal to tell the computer to do something, like 'semfs mount'. The CLI is the program that reads that line.">command</span>
+              like <code>semfs mount</code> and hands off. It&apos;s a thin
+              <span class="term" data-definition="CLI stands for Command-Line Interface — a text-only way to control a program by typing commands instead of clicking buttons. When talking to an AI you might say 'add a CLI flag for this'.">CLI</span>
+              <span class="term" data-definition="Dispatch means handing a request off to whichever piece of code is responsible for it — like a receptionist routing your call to the right department.">dispatch</span> layer.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">🚪</div>
+          <div>
+            <strong>The Mount adapter — the translator at the door</strong>
+            <p>Turns
+              <span class="term" data-definition="The kernel is the core of your operating system — the part that talks directly to hardware and manages files, memory, and processes. Programs ask the kernel to do low-level things on their behalf.">kernel</span>
+              filesystem calls into plain method calls. The <em>only</em> place that knows about
+              <span class="term" data-definition="FUSE (Filesystem in Userspace) is a Linux feature that lets an ordinary program pretend to be a filesystem, so a folder can be backed by anything you want.">FUSE</span> or
+              <span class="term" data-definition="NFS (Network File System) is a long-standing protocol for accessing files over a network. semfs runs a tiny NFS server on your own machine to make macOS see the folder.">NFS</span>.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">📜</div>
+          <div>
+            <strong>The VFS / FileSystem trait — the contract everyone signs</strong>
+            <p>Defines what any filesystem must be able to do (lookup, read, write, mkdir). It&apos;s the rulebook — we go deep on this
+              <span class="term" data-definition="A trait (in the Rust language) is a list of abilities a thing promises to provide — like a job description. Any component that 'signs' the trait must implement every ability on the list.">trait</span> next module.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-4)">🗄️</div>
+          <div>
+            <strong>The Cache / CacheFs — the fast local vault</strong>
+            <p>A
+              <span class="term" data-definition="SQLite is a tiny, fast database that lives in a single file on your own computer — no server needed. It's one of the most widely used pieces of software on Earth.">SQLite</span>
+              database that stores your bytes durably and instantly, right on your machine.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-5)">🚚</div>
+          <div>
+            <strong>The SyncEngine — the courier</strong>
+            <p>Background
+              <span class="term" data-definition="Async (asynchronous) work happens in the background without making you wait. You hand off a task and carry on; it finishes later and tells you when it's done.">async</span>
+              loops that carry your writes up to the backend and pull remote changes back down.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">📚</div>
+          <div>
+            <strong>The Backend / SemanticIndex — the librarian</strong>
+            <p>Answers <code>grep</code> by <em>meaning</em>, not just exact words. Can be cloud, Postgres, or local.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">🧑‍🔧</div>
+          <div>
+            <strong>The Daemon — the stage manager</strong>
+            <p>The long-running
+              <span class="term" data-definition="A daemon is a program that quietly runs in the background for a long time, keeping things going without a visible window — like a building's HVAC system humming away unseen.">daemon</span>
+              process that owns an active mount, with its
+              <span class="term" data-definition="A socket is a doorway two programs use to talk to each other on the same machine or across a network. Think of it as a private phone line between processes.">socket</span>,
+              <span class="term" data-definition="A PID (Process ID) is the unique number the operating system gives each running program, so it can be found, watched, or stopped.">PID</span>, and log files.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: GROUP CHAT (HERO VISUAL) ────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Listen in on the crew: a write, in their own words</h2>
+
+      <p>Here&apos;s what the crew actually says to each other when you save a file. Play it message by message and watch who hands off to whom.</p>
+
+      <div class="chat-window" id="chat-module2">
+        <div class="chat-messages">
+
+          <div class="chat-message" data-msg="0" data-sender="cli" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-1)">🎫</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-1)">CLI</span>
+              <p>User ran <code>echo &gt; deploy.md</code>. Your turn, door.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="1" data-sender="mount" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-2)">🚪</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-2)">Mount</span>
+              <p>Save these bytes for deploy.md, please.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="2" data-sender="cache" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-4)">🗄️</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-4)">Cache</span>
+              <p>Stored and durable. You can tell them it is done.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="3" data-sender="mount" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-2)">🚪</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-2)">Mount</span>
+              <p>Prompt can return now.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="4" data-sender="sync" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-5)">🚚</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-5)">SyncEngine</span>
+              <p>I will carry deploy.md up to the backend in the background — nobody has to wait for me.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="5" data-sender="backend" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-3)">📚</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-3)">Backend</span>
+              <p>Got it. Embedding and indexing it now so grep can find it by meaning.</p>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="chat-typing" id="chat-typing" style="display:none">
+          <div class="chat-avatar" id="typing-avatar">?</div>
+          <div class="chat-typing-dots">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+          </div>
+        </div>
+
+        <div class="chat-controls">
+          <button class="btn chat-next-btn">Next Message</button>
+          <button class="btn chat-all-btn">Play All</button>
+          <button class="btn chat-reset-btn">Replay</button>
+          <span class="chat-progress"></span>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">⏱️</div>
+        <div class="callout-content">
+          <strong class="callout-title">Notice the handoff</strong>
+          <p>Your prompt comes back the instant the <strong>Cache</strong> says &ldquo;durable&rdquo; — long before the <strong>SyncEngine</strong> and <strong>Backend</strong> finish their slow background work. That split is why writes feel instant.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: CODE ↔ ENGLISH (the cast list in code) ──── -->
+    <section class="screen">
+      <h2 class="screen-heading">The cast list, in the code&apos;s own words</h2>
+
+      <p>Open the
+        <span class="term" data-definition="A library is reusable code that other programs borrow to do work — it has no 'run' button of its own. A binary is the actual runnable program. semfs splits the two so the same logic can power many front-ends.">library&apos;s</span>
+        table of contents and you&apos;ll find the entire crew listed as one
+        <span class="term" data-definition="A module is a labelled folder of related code that groups one job together. A crate is Rust's word for a whole package of modules. Each 'pub mod' line below names one module.">module</span>
+        each.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-keyword">pub mod</span> agent_hint;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> api;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> backend;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> cache;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> config;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> daemon;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> mount;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> sync;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> vfs;</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">Each <code>pub mod</code> line is one crew member, declared once.</p>
+            <p class="tl"><strong>backend</strong> is the librarian who answers grep by meaning.</p>
+            <p class="tl"><strong>cache</strong> is the fast local vault that stores your bytes.</p>
+            <p class="tl"><strong>daemon</strong> is the stage manager that owns the mount.</p>
+            <p class="tl"><strong>mount</strong> is the door that translates kernel calls.</p>
+            <p class="tl"><strong>sync</strong> is the courier carrying changes up and down.</p>
+            <p class="tl"><strong>vfs</strong> is the contract — the rulebook everyone signs.</p>
+          </div>
+        </div>
+      </div>
+
+      <p>And the runnable program? Almost empty. The
+        <span class="term" data-definition="A binary is the compiled, runnable program — the thing you actually launch. Here it does almost nothing itself; it just forwards your command to the library.">binary</span>
+        just parses and dispatches:</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line">#[tokio::main]</span>
+<span class="code-line"><span class="code-keyword">async fn</span> <span class="code-function">main</span>() -&gt; Result&lt;()&gt; {</span>
+<span class="code-line">    <span class="code-function">init_tracing</span>();</span>
+<span class="code-line">    <span class="code-keyword">let</span> cli = Cli::<span class="code-function">parse</span>();</span>
+<span class="code-line">    cmd::<span class="code-function">dispatch</span>(cli.command).<span class="code-keyword">await</span></span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">Turn on logging so we can see what happened.</p>
+            <p class="tl">Read the command the user typed.</p>
+            <p class="tl">Hand it to the right handler — and that&apos;s it.</p>
+            <p class="tl">All the interesting code lives in the library, not here.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 4: ONE DOOR, TWO TRICKS + MATCHING ─────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Only the door knows about FUSE and NFS</h2>
+
+      <p>There are two ways to make the OS see a folder. The Mount adapter hides that choice from everyone else — so the rest of the crew never has to care which one is in play.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-keyword">pub enum</span> MountBackend {</span>
+<span class="code-line">    <span class="code-comment">/// FUSE — Linux only. Uses the `fuser` crate.</span></span>
+<span class="code-line">    Fuse,</span>
+<span class="code-line"></span>
+<span class="code-line">    <span class="code-comment">/// NFSv3 over localhost — works on both macOS and Linux.</span></span>
+<span class="code-line">    Nfs,</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">Two doors to choose from, listed in one place.</p>
+            <p class="tl">On Linux, use FUSE to back the folder.</p>
+            <p class="tl">On macOS (and Linux), use a tiny local NFS server instead.</p>
+            <p class="tl">Everything else in semfs is blissfully unaware which door is open — that&apos;s the whole point of separating this out.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="screen-heading" style="font-size: var(--text-xl)">Your turn: match each actor to its one job</h3>
+      <p>Drag the crew member onto the job description that fits.</p>
+
+      <div class="dnd-container">
+        <div class="dnd-chips">
+          <div class="dnd-chip" draggable="true" data-answer="mount">🚪 Mount</div>
+          <div class="dnd-chip" draggable="true" data-answer="cache">🗄️ Cache</div>
+          <div class="dnd-chip" draggable="true" data-answer="sync">🚚 SyncEngine</div>
+          <div class="dnd-chip" draggable="true" data-answer="backend">📚 Backend</div>
+          <div class="dnd-chip" draggable="true" data-answer="daemon">🧑‍🔧 Daemon</div>
+        </div>
+        <div class="dnd-zones">
+          <div class="dnd-zone" data-correct="mount">
+            <p class="dnd-zone-label">Translates kernel filesystem calls (FUSE/NFS)</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+          <div class="dnd-zone" data-correct="cache">
+            <p class="dnd-zone-label">Stores your bytes durably and instantly (SQLite)</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+          <div class="dnd-zone" data-correct="sync">
+            <p class="dnd-zone-label">Carries writes to the backend and pulls remote changes</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+          <div class="dnd-zone" data-correct="backend">
+            <p class="dnd-zone-label">Answers grep by meaning</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+          <div class="dnd-zone" data-correct="daemon">
+            <p class="dnd-zone-label">The long-running process that owns the mount</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+        </div>
+        <button class="btn" onclick="checkDnD()">Check Matches</button>
+        <button class="btn" onclick="resetDnD()">Reset</button>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: QUIZ ────────────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Debug like you know the crew</h2>
+
+      <p>Knowing who owns what turns &ldquo;it&apos;s broken&rdquo; into &ldquo;the bug is in <em>this</em> actor.&rdquo; Try these.</p>
+
+      <div class="quiz-container" id="quiz-module2">
+
+        <div class="quiz-question-block"
+             data-correct="opt-backend"
+             data-explanation-right="Exactly. If cat reads the file back correctly, the Cache and Mount are clearly healthy — the bytes are there. Search-by-meaning is the Backend/SemanticIndex's job (or the SyncEngine that feeds it), so that's where you look first."
+             data-explanation-wrong="Not quite. If cat reads the file back fine, the Cache and Mount are doing their jobs — the bytes are stored and readable. The problem is specifically with search by meaning, which is owned by the Backend (with the SyncEngine feeding it).">
+          <h3 class="quiz-question">Search returns nothing relevant, but your files read back fine with <code>cat</code>. Which actor is the prime suspect?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-mount" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Mount adapter 🚪 — the door must be mistranslating</span>
+            </button>
+            <button class="quiz-option" data-value="opt-cache" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Cache 🗄️ — your bytes were never saved</span>
+            </button>
+            <button class="quiz-option" data-value="opt-backend" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Backend 📚 (or the SyncEngine feeding it) — meaning-search is its job</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-mount"
+             data-explanation-right="Right. The Mount adapter is the only place in the entire codebase that knows about FUSE or NFS. A brand-new way of mounting is a new door — so only the door changes. Everyone else stays blissfully unaware."
+             data-explanation-wrong="Think about separation of concerns. The Mount adapter is the *only* component that knows about how the OS sees the folder (FUSE vs NFS). A new mounting method is a new door — so the Mount adapter is the one and only place to change.">
+          <h3 class="quiz-question">You want to support a brand-new way of mounting folders on some future operating system. Which ONE component should change?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-mount" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Mount adapter 🚪 — the only one that knows about FUSE/NFS</span>
+            </button>
+            <button class="quiz-option" data-value="opt-cache" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Cache 🗄️ — it stores the files, so it must change too</span>
+            </button>
+            <button class="quiz-option" data-value="opt-all" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>All of them — a new OS touches everything</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-lib"
+             data-explanation-right="Exactly. The binary just parses the command and dispatches; all the real behavior lives in the reusable semfs_core library. That makes the logic testable on its own and reusable by other front-ends, not just this one command-line tool."
+             data-explanation-wrong="Not quite. It isn't laziness or a missing feature — it's deliberate. The binary only parses and dispatches; every bit of real behavior lives in the reusable semfs_core library, so it can be tested alone and reused by other front-ends.">
+          <h3 class="quiz-question">Why is <code>main.rs</code> only about six lines of real logic?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-unfinished" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The program is unfinished — more code is coming</span>
+            </button>
+            <button class="quiz-option" data-value="opt-lib" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>By design — the binary just dispatches; all behavior lives in the reusable library</span>
+            </button>
+            <button class="quiz-option" data-value="opt-fast" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Shorter files run faster, so they kept it tiny</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module2')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module2')">Try Again</button>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🔜</div>
+        <div class="callout-content">
+          <strong class="callout-title">Next up</strong>
+          <p>One of these actors — the Contract — is the secret to how semfs swaps its entire storage engine without anyone noticing. Next.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>
