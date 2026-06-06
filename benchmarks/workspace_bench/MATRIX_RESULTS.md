@@ -106,3 +106,33 @@ Target = supermemory (cloud): ~3 calls, ~26K tokens, grep→done.
 - **Target = cloud: 2–3 calls, 26–48K, never os.walk.** Local KG-on is bimodal (69K grep-first / 134K walk-first).
 - Cloud uses the **same** AGENTS.md contract yet never walks → the contract isn't the lever; the levers are **grep tightness** (cloud ~10KB vs local 23KB / 10 results) and codex trusting it.
 - Next: `SEMFS_RESULT_LIMIT=3` (tight grep ≈ cloud), clean accumulated `/model_output`, re-run KG-on/KG-off ×3 to drive local into the cloud spread.
+
+### Iteration log (case-289 tool-call reduction)
+| change | result | learning |
+|---|---|---|
+| baseline KG-on | 134K / 8 / walk | answer not in grep top-10 → walked |
+| **+ path-token lane** | 69K / 5 / **no walk** (best) but **bimodal** (134K when walk-first) | retrieval fixed; first-move still stochastic |
+| + RESULT_LIMIT=3 | 169K / 11 (3 greps, 3 format-traps) | tighter grep **backfired** → re-grep + more format-trap |
+| + error-page filter (drop 403 decoys from results) | 211K / 11 / format-trap=3 | **didn't help** — codex opens the 403 decoy **by name** (task names it), not via grep |
+| **+ COMPLETE-FILE trust annotation** (grep.rs) | _measuring_ | principled lever: tell codex the excerpt is the whole file → don't open/crawl |
+
+### Root cause (first principles) — why local ≠ cloud
+The corpus is **adversarial for 289**: the task names `top10_product_status_table.xlsx`, which is a **403 error page** (no data); the real answer is `best_selling_product_core_data_list.txt`. Cloud (supermemory) greps → returns the answer → codex copies → done (3 calls). Local codex **stochastically** either (a) greps → now (with path-lane) gets the answer → done, OR (b) reflexively `os.walk`s / opens the *named* 403 decoy → pandas/unzip **format-trap** → token blowup. **Variance is codex's exploration behavior on the named decoy, not retrieval** (retrieval is fixed by the path-lane).
+
+### Levers shipped (all committed)
+1. **Path-token lane** — answer ranks #1 for the agent's real query (was out of top-10).
+2. **Error-page filter** — 403 decoys never returned as hits.
+3. **COMPLETE-FILE trust annotation** — grep marks whole-file excerpts "use directly, don't open."
+4. **KG (graphify-style) + on/off** — orientation artifact (`KNOWLEDGE_GRAPH.md`) + contract.
+
+### Final spread — KG-off + path-lane + COMPLETE-FILE trust + error-filter (3×)
+| run | tokens | calls | os.walk | format-trap | vs cloud (26–48K, 2–3) |
+|---|---|---|---|---|---|
+| t1 | **35,715** | 3 | 0 | 0 | ✅ in range |
+| t2 | 612,749 | 15 | 3 | 7 | ❌ stochastic rampage |
+| t3 | **50,473** | 5 | 0 | 0 | ✅ ~in range |
+
+**2/3 cloud-comparable** (vs the pre-fix baseline of 134K **with os.walk every time**). The single t2 rampage: codex grepped first but distrusted it and **manually `zipfile`-parsed the task-named 403 `.xlsx` 7×** (the task names that corrupt file as the source). Same config as t1/t3 → pure agent-harness stochasticity.
+
+### Honest status on the gate ("3 consecutive ≤ supermemory")
+The path-lane reliably fixes *retrieval* (grep returns the answer). The residual blocker is **codex's stochastic first-move + format-trap on the task-named 403 decoy** — semfs can bias but not deterministically prevent it (it's the agent harness's behavior). The trust annotation is the last principled semfs-side lever; beyond that, deterministically matching cloud's tight spread would need agent-harness changes (e.g. suppressing pandas-on-mislabeled-files) outside semfs.

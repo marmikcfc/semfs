@@ -114,6 +114,10 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
          \n\
          \u{0020} It returns ranked, semantically relevant excerpts via a vector index.\n\
          \u{0020} The excerpt IS the content — trust it; do not re-open or crawl to verify.\n\
+         \u{0020} A result line marked `# ^ COMPLETE FILE` is the whole file — copy it as-is.\n\
+         - Some files are mislabeled (e.g. an `.xlsx`/`.pdf` that is actually a tiny HTML\n\
+         \u{0020} error page). If parsing a file fails once, do NOT retry other parsers or\n\
+         \u{0020} unzip it — `cat` it once to see what it is, or just trust the grep excerpt.\n\
          Files outside this directory behave normally — this rule is scoped to that path.\n\
          {end}\n"
     )
