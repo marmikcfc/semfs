@@ -740,6 +740,11 @@ pub async fn run(args: Args) -> Result<()> {
             .replace('\n', "\\n")
             .replace('\r', "\\r");
 
+        // Whether the returned chunk IS the file's entire content — then the
+        // excerpt is authoritative and the agent should use it directly instead
+        // of opening the file (the case-289 "trust fix": codex distrusting a
+        // partial excerpt → opening the file → format-trap was the token sink).
+        let mut complete_file = false;
         let line_range = if mount_reads_ok {
             canonical_mount
                 .as_ref()
@@ -749,7 +754,14 @@ pub async fn run(args: Args) -> Result<()> {
                         .entry(path.to_string())
                         .or_insert_with(|| read_local_or_sidecar(cm, path));
                     match &*outcome {
-                        ReadOutcome::Content(content) => line_range_in_file(content, chunk),
+                        ReadOutcome::Content(content) => {
+                            let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+                            let fc = norm(content);
+                            if !fc.is_empty() && norm(chunk).contains(&fc) {
+                                complete_file = true;
+                            }
+                            line_range_in_file(content, chunk)
+                        }
                         ReadOutcome::Missing => None,
                         ReadOutcome::TimedOut => {
                             // Mount is starved — stop reading; emit chunk-only from here.
@@ -774,6 +786,13 @@ pub async fn run(args: Args) -> Result<()> {
             }
         } else {
             println!("{}:{}", fp, escaped);
+        }
+        if complete_file {
+            // Parse-safe comment: tells the agent the excerpt is the whole file —
+            // copy it directly; no need to open the file or crawl to verify.
+            println!(
+                "# ^ COMPLETE FILE — excerpt above is this file's entire content; use it directly, do not open it."
+            );
         }
     }
 

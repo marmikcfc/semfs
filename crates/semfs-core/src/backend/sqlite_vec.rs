@@ -1057,6 +1057,28 @@ impl SqliteVecStore {
         // the workspace and waste a result slot).
         by_file.remove("/KNOWLEDGE_GRAPH.md");
 
+        // Drop saved HTTP-error pages (e.g. a `.xlsx` that is really a 321-byte
+        // "403 Forbidden" openresty page — the corpus has these as decoys named
+        // like the task). They hold no content, and returning them makes the
+        // agent open them and fall into the binary-parse format-trap. Detected by
+        // the representative chunk being a short HTML error page. (case-289.)
+        by_file.retain(|_fp, acc| {
+            let rep = acc
+                .chunks
+                .iter()
+                .min_by_key(|(r, _)| *r)
+                .map(|(_, t)| t.as_str())
+                .unwrap_or("");
+            let low = rep.trim_start().to_ascii_lowercase();
+            let is_error_page = low.starts_with("<html")
+                && rep.len() < 2048
+                && (low.contains("403 forbidden")
+                    || low.contains("404 not found")
+                    || low.contains("openresty")
+                    || low.contains("502 bad gateway"));
+            !is_error_page
+        });
+
         let mut hits = super::rank::to_hits(by_file, filepath);
         let hits_after_rrf = hits.len();
         let mut reranked = false;

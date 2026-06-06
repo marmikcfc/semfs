@@ -86,4 +86,23 @@ Retrieval is config-invariant (#0 everywhere), so the token lever is codex's exp
 _(A fresh codex smoke run can be done on any config above to refresh these numbers; retrieval rank is identical across configs, so the token delta is driven by codex tool-call count, not the retrieval config.)_
 
 ---
-_All matrix tests complete (3× each). gemma q4 skipped per instruction (f32 used)._
+_Matrix tests complete (3× each). gemma q4 skipped per instruction (f32 used)._
+
+## Case-289 tool-call / token experiment (goal: ≤ supermemory spread, correct answer)
+
+Target = supermemory (cloud): ~3 calls, ~26K tokens, grep→done.
+
+| Config | tokens | tool calls | os.walk | format-trap | status | notes |
+|---|---|---|---|---|---|---|
+| KG-on (baseline, pre-fix) | 134,991 | 8 | 1 | 2 | passed | grep returned answer NOT in top-10 → codex walked + sed'd; grep last (23KB) |
+| **KG-on + path-lane** (run1) | **69,536** | **5** | **0** | 1 | passed | read KG → straight to answer file; **os.walk eliminated**; remaining sink = `ls -R model_output` 12.7KB |
+
+**Root cause found + fixed:** codex's verbose query put the answer *out of grep's top-10* (content-only ranking ignored the filename); added a **path-token match lane** → answer ranks #1 for the agent's real query → grep-first works, no crawl. −48% tokens, −3 calls in one change.
+
+| KG-on + path-lane (run2) | 134,478 | 6 | 1 | 2 | passed | **bimodal** — codex walked first this run (16KB) |
+| **cloud (supermemory) ×3** | 27,063 / 26,196 / 48,199 | 3 / 2 / 3 | **0 / 0 / 0** | 0 | passed | **target spread**: tight, never walks |
+
+**Findings:**
+- **Target = cloud: 2–3 calls, 26–48K, never os.walk.** Local KG-on is bimodal (69K grep-first / 134K walk-first).
+- Cloud uses the **same** AGENTS.md contract yet never walks → the contract isn't the lever; the levers are **grep tightness** (cloud ~10KB vs local 23KB / 10 results) and codex trusting it.
+- Next: `SEMFS_RESULT_LIMIT=3` (tight grep ≈ cloud), clean accumulated `/model_output`, re-run KG-on/KG-off ×3 to drive local into the cloud spread.
