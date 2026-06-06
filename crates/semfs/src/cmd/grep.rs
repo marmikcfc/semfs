@@ -709,8 +709,7 @@ pub async fn run(args: Args) -> Result<()> {
     eprintln!("#   grep \"query\" path/to/dir/              search within directory");
     eprintln!("# output: <filepath>:<line_start>-<line_end>:<chunk>  — RANKED BY RELEVANCE (top = best match)");
     eprintln!(
-        "# chunk text is verbatim from the file. If the top result answers your task, USE IT AND STOP — \
-         do NOT run more searches, and never read/cat whole files (the chunk above already is the file's text)."
+        "# chunk text is verbatim from the file (the matched line range is shown above)."
     );
     eprintln!();
 
