@@ -52,3 +52,4 @@ Core gaps: typed entity→entity relations, AMBIGUOUS confidence, AST code lane,
 - 2026-06-07: tests cleared; H-C/H-D removed (revert to 7947f1b, commit 3a1ea50); TODO created. Starting T0.1.
 - 2026-06-07: T1.1-T1.3 + T3.1 done. First rebuild=0 (strict-schema confidence_score not required + 512-tok truncation) → fixed (complete_structured_n 2048 + required). Smoke OK (3 ent/2 rel). Full rebuild running.
 - 2026-06-07: T3.2 ✅ KG rebuilt from scratch on chanpin-e5-nosum: 8302 entities, 4237 typed entity→entity relations (mentions/references/relates_to/part_of/implements...), 4138 EXTRACTED+99 INFERRED. T2.1-T2.3 graph.json+GRAPH_REPORT.md done.
+- 2026-06-07: ⚠️ db-location bug — semfs mount opens ~/.semfs/<tag>.db, NOT XDG_CACHE_HOME. First rebuild hit e5nosum-test/cache (wrong db); the mount uses ~/.semfs/chanpin-e5-nosum.db (679 files, 265 edges, no confidence/graph_relation). Rebuilding the RIGHT db now.
