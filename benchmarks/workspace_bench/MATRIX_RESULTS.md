@@ -142,5 +142,13 @@ The corpus is **adversarial for 289**: the task names `top10_product_status_tabl
 
 **Net trajectory (case 289):** 134K walk-every-time → path-lane (answer #1) → trust+filter (35.7K best) → **protocol preamble (format-trap eliminated, 2/3 cloud-comparable)**. Catastrophic 600K runs gone; median ~73K vs cloud ~27K; best 36.6K = cloud-parity.
 
+### Full protocol-run distribution (12 codex runs, KG-off + all levers)
+clean (cloud-parity, no walk/trap): **p2 36.6K · p3 73K · s2 28.7K(2-call) · s3 28.1K** — ~50%.
+walk-runs (codex reflex): p1 168K · s1 66K · s4 80K · s5 108K — ~50%.
+**Never 3 clean in a row** — a stochastic os.walk always interrupts. Sidecars = 83/650 (13%) → hiding them can't bring walk-runs into cloud's 26–48K range. Best run (28.7K/2 calls) **beats** cloud; the variance is the blocker.
+
+### VERDICT: the gate is codex-stochasticity-bound, not closable from semfs
+Proven across 12 runs (~1M tokens): retrieval is fixed (path-lane → answer #1), format-trap is fixed (protocol preamble → mostly 0), but codex's **reflexive `os.walk` fires ~50% of runs regardless of the explicit "do NOT os.walk" instruction** (documented-uninterceptable: stdlib → readdir → names). No legitimate semfs lever closes it: (a) scope-the-view would hide the answer (it's not in case-289's manifest); (b) hiding sidecars saves only 13%; (c) the prompt is ignored ~50% of the time. Deterministic closure needs a **harness-level** change (disable codex's `os.walk`/python), which is outside semfs. **Stopped the run-loop — further runs are expensive luck-chasing (~18% chance of a clean triple), not engineering.**
+
 ### Honest status on the gate ("3 consecutive ≤ supermemory")
 The path-lane reliably fixes *retrieval* (grep returns the answer). The residual blocker is **codex's stochastic first-move + format-trap on the task-named 403 decoy** — semfs can bias but not deterministically prevent it (it's the agent harness's behavior). The trust annotation is the last principled semfs-side lever; beyond that, deterministically matching cloud's tight spread would need agent-harness changes (e.g. suppressing pandas-on-mislabeled-files) outside semfs.
