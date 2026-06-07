@@ -1067,6 +1067,68 @@ impl SqliteVecStore {
                 }
             }
         }
+
+        // H1 integrity lane: GUARANTEE a corrupt/error-page SOURCE that matches the
+        // query surfaces, so the agent reports it instead of copying a valid-looking
+        // look-alike. Error pages are few but the path-lane's SEARCH_POOL cap can
+        // crowd them out for broad queries (e.g. "best-selling product data" matches
+        // dozens of files on "product"/"data"). We find error pages directly and
+        // add any sharing >=1 query token with their path to the pool at top rank;
+        // the annotation+pin pass below then labels them SOURCE INACCESSIBLE and
+        // keeps them past the reranker. Disable with SEMFS_INTEGRITY_LANE=off.
+        if !matches!(
+            std::env::var("SEMFS_INTEGRITY_LANE").ok().as_deref(),
+            Some("off")
+        ) {
+            let toks: Vec<String> = query
+                .to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|t| t.chars().count() >= 3)
+                .map(|t| t.to_string())
+                .collect();
+            if !toks.is_empty() {
+                if let Ok(mut stmt) = conn.prepare(
+                    "SELECT c.id, c.filepath, c.text FROM chunks c \
+                     JOIN (SELECT filepath, MIN(id) mid FROM chunks GROUP BY filepath) g \
+                       ON c.id = g.mid \
+                     WHERE length(c.text) < 2048 \
+                       AND (instr(lower(c.text),'403 forbidden')>0 \
+                            OR instr(lower(c.text),'404 not found')>0 \
+                            OR instr(lower(c.text),'openresty')>0 \
+                            OR instr(lower(c.text),'502 bad gateway')>0) \
+                       AND (?1 IS NULL OR instr(c.filepath, ?1) = 1)",
+                ) {
+                    if let Ok(rows) = stmt.query_map(rusqlite::params![scope], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                    }) {
+                        for (id, fp, text) in rows.flatten() {
+                            if !text.trim_start().to_ascii_lowercase().starts_with("<html") {
+                                continue;
+                            }
+                            let norm: String = fp
+                                .to_lowercase()
+                                .chars()
+                                .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+                                .collect();
+                            let overlap = toks
+                                .iter()
+                                .filter(|t| norm.split(' ').any(|w| w == t.as_str()))
+                                .count();
+                            if overlap >= 1 {
+                                rep_chunk.entry(fp.clone()).or_insert(id);
+                                super::rank::rrf_bump(
+                                    &mut by_file,
+                                    fp,
+                                    text,
+                                    0,
+                                    super::rank::Lane::Path,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         drop(conn);
 
         // The KG digest is an orientation artifact, not corpus content — never
