@@ -632,6 +632,9 @@ def _restore_outputs_to_workdir(
 import os as _os
 _SEMFS_PROTOCOL = (
     "TOOL PROTOCOL for this workspace (a semfs semantic-search mount):\n"
+    "0. Work SEQUENTIALLY: run ONE command, WAIT for and READ its output, then decide\n"
+    "   the next step. Never run multiple commands at once, and never write your\n"
+    "   output file before you have read the grep result you are basing it on.\n"
     "1. FIRST action: run  semfs grep \"<2-6 key terms>\" .  — it returns the answer\n"
     "   excerpt ranked #1 (top result = best match). Do NOT start by exploring.\n"
     "2. A result line followed by '# ^ COMPLETE FILE' is that file's ENTIRE content —\n"
