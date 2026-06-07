@@ -995,6 +995,11 @@ impl SqliteVecStore {
         // can bury it, so grep misses and the agent crawls. This lane votes the
         // clearly-named file into the pool so grep returns it #1. Disable with
         // SEMFS_PATH_LANE=off. (case-289 token lever; tickets/ls-kg-semantic-readdir.)
+        // `path_pinned` holds the strongest filename match(es); they are forced into
+        // the returned top-N below so the cross-encoder reranker can't demote a
+        // correctly-named file on the basis of its content (e.g. an error-page
+        // "source" the task needs the agent to find and report).
+        let mut path_pinned: Vec<String> = Vec::new();
         if !matches!(std::env::var("SEMFS_PATH_LANE").ok().as_deref(), Some("off")) {
             let toks: Vec<String> = query
                 .to_lowercase()
@@ -1034,6 +1039,18 @@ impl SqliteVecStore {
                         }
                         // most path-token matches first → best path-lane rank
                         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.cmp(&b.2)));
+                        // Pin the files with the most matching path tokens (the
+                        // near-exact filename matches), capped so a broad query
+                        // can't pin the whole pool. These survive reranking below.
+                        let max_hits = scored.first().map(|(h, ..)| *h).unwrap_or(0);
+                        if max_hits >= 2 {
+                            path_pinned = scored
+                                .iter()
+                                .filter(|(h, ..)| *h == max_hits)
+                                .take(2)
+                                .map(|(_, _, fp, _)| fp.clone())
+                                .collect();
+                        }
                         for (rank, (_hits, id, fp, text)) in
                             scored.into_iter().take(SEARCH_POOL).enumerate()
                         {
@@ -1057,12 +1074,16 @@ impl SqliteVecStore {
         // the workspace and waste a result slot).
         by_file.remove("/KNOWLEDGE_GRAPH.md");
 
-        // Drop saved HTTP-error pages (e.g. a `.xlsx` that is really a 321-byte
-        // "403 Forbidden" openresty page — the corpus has these as decoys named
-        // like the task). They hold no content, and returning them makes the
-        // agent open them and fall into the binary-parse format-trap. Detected by
-        // the representative chunk being a short HTML error page. (case-289.)
-        by_file.retain(|_fp, acc| {
+        // Saved HTTP-error pages (e.g. a `.xlsx` that is really a 321-byte
+        // "403 Forbidden" openresty page — case-289 ships these as the actual
+        // "source" data files). Earlier we DROPPED these to avoid the agent
+        // opening them and hitting the binary-parse format-trap. That was wrong:
+        // dropping hid the one fact a task may need to *report* — that the source
+        // is inaccessible. Instead, SURFACE the file with a clear annotation so
+        // the agent reports the error rather than fabricating or substituting
+        // data, and knows not to parse it. Detected by the representative chunk
+        // being a short HTML error page.
+        for (fp, acc) in by_file.iter_mut() {
             let rep = acc
                 .chunks
                 .iter()
@@ -1076,8 +1097,34 @@ impl SqliteVecStore {
                     || low.contains("404 not found")
                     || low.contains("openresty")
                     || low.contains("502 bad gateway"));
-            !is_error_page
-        });
+            if is_error_page {
+                // An inaccessible source that matched the query AT ALL is
+                // high-value: the agent is hunting for data that lives in a
+                // broken file. Always pin it so the cross-encoder can't bury the
+                // "source is a 403 page" signal under a valid look-alike file.
+                if !path_pinned.contains(fp) {
+                    path_pinned.push(fp.clone());
+                }
+                let status = if low.contains("403 forbidden") {
+                    "403 Forbidden"
+                } else if low.contains("404 not found") {
+                    "404 Not Found"
+                } else if low.contains("502 bad gateway") {
+                    "502 Bad Gateway"
+                } else {
+                    "HTTP error"
+                };
+                let note = format!(
+                    "[semfs: SOURCE INACCESSIBLE — this file is an HTTP \"{status}\" error \
+                     page in HTML format, NOT a real spreadsheet/data file. The underlying \
+                     data could not be read (access denied). If the task needs this file, \
+                     report that the source returned \"{status}\" (it is HTML, not Excel; \
+                     access denied) — do NOT parse it as Excel and do NOT substitute data \
+                     from a differently-named file.]"
+                );
+                acc.chunks = vec![(0, note)];
+            }
+        }
 
         let mut hits = super::rank::to_hits(by_file, filepath);
         let hits_after_rrf = hits.len();
@@ -1260,6 +1307,17 @@ impl SqliteVecStore {
                     "RANKDUMP"
                 );
             }
+        }
+
+        // Pin strong filename matches to the front so a near-exact filename query
+        // returns that file even when the cross-encoder reranked it down on content
+        // (stable sort: pinned keep their order, everything else keeps its order).
+        if !path_pinned.is_empty() {
+            hits.sort_by_key(|h| {
+                !h.filepath
+                    .as_ref()
+                    .is_some_and(|fp| path_pinned.contains(fp))
+            });
         }
 
         // Knob B: cap to the returned top-N (Supermemory parity) BEFORE attaching

@@ -640,7 +640,16 @@ _SEMFS_PROTOCOL = (
     "   manually unzip or pandas/openpyxl-parse files. Many files are mislabeled\n"
     "   (e.g. an .xlsx that is actually a tiny HTML error page); if any parse fails\n"
     "   once, STOP and trust the grep excerpt instead.\n"
-    "4. The grep excerpt IS the content. Use it. Only then write your output.\n\n"
+    "4. If a grep result is a 'semfs: SOURCE INACCESSIBLE' annotation, the source\n"
+    "   data file is an HTTP error page (e.g. 403 Forbidden), not real data. Your\n"
+    "   output MUST report this: state that the source returned that HTTP error,\n"
+    "   that it is HTML (not Excel), and that access was denied / data could not be\n"
+    "   read. Do NOT fabricate data and do NOT substitute a differently-named file.\n"
+    "5. Otherwise, if a grep result's content already satisfies the task, that\n"
+    "   result IS the answer — use it verbatim and STOP. Do NOT re-grep with\n"
+    "   synonyms or hunt for a separate 'raw source' to re-derive it.\n"
+    "6. Budget: at most TWO–THREE greps (find the data, and check whether the named\n"
+    "   source is accessible), then write your output. The grep excerpt IS the content.\n\n"
 )
 def _apply_protocol(_p):
     if _os.environ.get("SEMFS_PROTOCOL", "on").lower() in ("off", "0", "false", "no"):

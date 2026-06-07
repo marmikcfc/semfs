@@ -314,6 +314,12 @@ mod resolve_tests {
 /// just searched (RCA 2026-06-04-semfs-grep-hangs-post-search-under-load).
 const LINE_RANGE_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// A matched file whose entire content is at or under this size is printed in
+/// full (instead of just the one matched chunk) and marked COMPLETE FILE. Small
+/// enough that inlining costs only a few hundred tokens, which is far cheaper
+/// than the re-greps an agent does when it distrusts a partial excerpt.
+const SMALL_FILE_INLINE_BYTES: usize = 8 * 1024;
+
 /// Outcome of a bounded read of one path off the mount.
 enum ReadOutcome {
     /// Read succeeded.
@@ -368,6 +374,28 @@ fn read_local_or_sidecar(mount: &Path, filepath: &str) -> ReadOutcome {
         }
     }
     ReadOutcome::Missing
+}
+
+/// Decide how to present a hit's excerpt, given the file's full `content` and the
+/// matched `chunk`. Returns `(complete_file, inline_full)`:
+/// - the chunk already spans the whole file → `(true, None)` (print the chunk, mark COMPLETE);
+/// - the file is small but chunked → `(true, Some(full))` (print the whole file, mark COMPLETE);
+/// - otherwise → `(false, None)` (print the partial chunk, no marker).
+///
+/// Inlining a small file is the case-289 trust fix: a chunked-but-tiny answer
+/// file (e.g. 908 B, >200 words) can never earn the COMPLETE marker from a single
+/// partial window, so the agent distrusts the excerpt and re-greps 4–9×. Printing
+/// it whole keeps the marker truthful and lets the agent answer in one grep.
+fn present_excerpt(content: &str, chunk: &str) -> (bool, Option<String>) {
+    let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let fc = norm(content);
+    if !fc.is_empty() && norm(chunk).contains(&fc) {
+        (true, None)
+    } else if !content.is_empty() && content.len() <= SMALL_FILE_INLINE_BYTES {
+        (true, Some(content.to_string()))
+    } else {
+        (false, None)
+    }
 }
 
 fn line_range_in_file(file_content: &str, chunk: &str) -> Option<(usize, usize)> {
@@ -735,16 +763,34 @@ pub async fn run(args: Args) -> Result<()> {
         }
 
         let chunk = result.chunk.as_deref().unwrap_or("");
-        let escaped = chunk
-            .replace('\\', "\\\\")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r");
 
-        // Whether the returned chunk IS the file's entire content — then the
-        // excerpt is authoritative and the agent should use it directly instead
-        // of opening the file (the case-289 "trust fix": codex distrusting a
-        // partial excerpt → opening the file → format-trap was the token sink).
+        // A semfs annotation chunk (e.g. the HTTP-error-page notice from the
+        // backend) is authoritative — print it verbatim and do NOT read/inline
+        // the underlying file (which is the corrupt page the annotation warns
+        // about). This is how a "source inaccessible (403)" signal reaches the
+        // agent so it can report the error instead of parsing garbage.
+        if chunk.starts_with("[semfs:") {
+            let escaped = chunk
+                .replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r");
+            println!("{}:{}", fp, escaped);
+            continue;
+        }
+
+        // Whether the excerpt we print IS the file's entire content — then it is
+        // authoritative and the agent should use it directly instead of opening
+        // the file (the case-289 "trust fix": codex distrusting a partial excerpt
+        // → opening the file → format-trap was the token sink).
         let mut complete_file = false;
+        // When the whole file is small enough to inline cheaply, we print the
+        // ENTIRE file instead of the one matched chunk. A small data file (e.g.
+        // case-289's 908 B answer list) is split into >1 overlapping word-window
+        // when it exceeds 200 words, so a single returned chunk is partial and
+        // could never earn the COMPLETE marker — yet inlining the whole file
+        // costs only a few hundred tokens and lets the agent answer in one grep
+        // (vs the 4–9 re-greps codex does when it distrusts a partial excerpt).
+        let mut inline_full: Option<String> = None;
         let line_range = if mount_reads_ok {
             canonical_mount
                 .as_ref()
@@ -755,10 +801,14 @@ pub async fn run(args: Args) -> Result<()> {
                         .or_insert_with(|| read_local_or_sidecar(cm, path));
                     match &*outcome {
                         ReadOutcome::Content(content) => {
-                            let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-                            let fc = norm(content);
-                            if !fc.is_empty() && norm(chunk).contains(&fc) {
-                                complete_file = true;
+                            let (cf, full) = present_excerpt(content, chunk);
+                            complete_file = cf;
+                            if let Some(f) = full {
+                                // File is small but chunked — print it whole so the
+                                // COMPLETE marker stays truthful. Line range is 1..N.
+                                let lines = f.lines().count().max(1);
+                                inline_full = Some(f);
+                                return Some((1, lines));
                             }
                             line_range_in_file(content, chunk)
                         }
@@ -777,6 +827,14 @@ pub async fn run(args: Args) -> Result<()> {
         } else {
             None
         };
+
+        // Print the full file when promoted to inline; otherwise the matched chunk.
+        let escaped = inline_full
+            .as_deref()
+            .unwrap_or(chunk)
+            .replace('\\', "\\\\")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r");
 
         if let Some((start, end)) = line_range {
             if start == end {
@@ -801,8 +859,48 @@ pub async fn run(args: Args) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{line_range_in_file, read_file_timed, ReadOutcome};
+    use super::{
+        line_range_in_file, present_excerpt, read_file_timed, ReadOutcome,
+        SMALL_FILE_INLINE_BYTES,
+    };
     use std::time::Duration;
+
+    #[test]
+    fn present_excerpt_marks_complete_when_chunk_covers_file() {
+        let content = "alpha beta gamma";
+        // Chunk contains the whole file (plus possible surrounding whitespace).
+        let (complete, full) = present_excerpt(content, "alpha beta gamma");
+        assert!(complete);
+        assert!(full.is_none(), "no inline needed when chunk already covers");
+    }
+
+    #[test]
+    fn present_excerpt_inlines_small_chunked_file() {
+        // A small file whose returned chunk is only a partial window: the marker
+        // can't fire from the chunk, so we promote to the full file content.
+        let content = "row1 data\nrow2 data\nrow3 ANSWER\nrow4 data";
+        let partial_chunk = "row1 data\nrow2 data"; // does not contain row3
+        let (complete, full) = present_excerpt(content, partial_chunk);
+        assert!(complete, "small chunked file must be marked complete");
+        assert_eq!(full.as_deref(), Some(content), "must inline the whole file");
+    }
+
+    #[test]
+    fn present_excerpt_leaves_large_file_as_partial() {
+        // A file just over the inline threshold stays chunk-only (no false COMPLETE).
+        let content = "x".repeat(SMALL_FILE_INLINE_BYTES + 1);
+        let partial_chunk = "x".repeat(100);
+        let (complete, full) = present_excerpt(&content, &partial_chunk);
+        assert!(!complete, "oversized file must not be marked complete");
+        assert!(full.is_none());
+    }
+
+    #[test]
+    fn present_excerpt_ignores_empty_file() {
+        let (complete, full) = present_excerpt("", "");
+        assert!(!complete);
+        assert!(full.is_none());
+    }
 
     /// The core of the fix (RCA 2026-06-04-semfs-grep-hangs-post-search-under-load):
     /// a blocking read of an unresponsive path must TIME OUT, not hang. A FIFO with
