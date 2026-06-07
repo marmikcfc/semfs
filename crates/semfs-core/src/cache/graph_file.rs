@@ -199,6 +199,34 @@ pub fn build_graph_json(conn: &Connection) -> rusqlite::Result<String> {
             .collect()
     };
 
+    // Typed entity→entity relations (graphify parity). Table-exists guarded so
+    // this stays safe on seeds built before the graph_relation migration.
+    let mut relations_json: Vec<Value> = Vec::new();
+    let mut rel_conf: BTreeMap<String, usize> = BTreeMap::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT source, target, relation, confidence, confidence_score, weight \
+         FROM graph_relation ORDER BY source, target, relation",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, f64>(4)?,
+                r.get::<_, f64>(5)?,
+            ))
+        }) {
+            for (s, t, rel, conf, score, w) in rows.flatten() {
+                *rel_conf.entry(conf.clone()).or_insert(0) += 1;
+                relations_json.push(json!({
+                    "source": s, "target": t, "relation": rel,
+                    "confidence": conf, "confidence_score": score, "weight": w,
+                }));
+            }
+        }
+    }
+
     // communities (reuse the same projection as the digest)
     let mut communities: Vec<Value> = Vec::new();
     if !edges.is_empty() {
@@ -268,14 +296,163 @@ pub fn build_graph_json(conn: &Connection) -> rusqlite::Result<String> {
             "files": files.len(),
             "entities": ent.len(),
             "edges": edges.len(),
+            "relations": relations_json.len(),
             "communities": communities.len(),
             "confidence": conf_counts,
+            "relation_confidence": rel_conf,
         },
         "nodes": nodes,
         "edges": edges_json,
+        "relations": relations_json,
         "communities": communities,
     });
     Ok(serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_string()))
+}
+
+/// Build `GRAPH_REPORT.md` — the rich graphify-style report from the typed
+/// entity↔entity relation graph: summary + confidence breakdown, god nodes,
+/// relations by type, surprising (low-confidence cross) connections, ambiguous
+/// edges, knowledge gaps, and suggested questions. Deterministic (sorted).
+/// Empty/graceful when the relation graph hasn't been built yet.
+pub fn build_graph_report(conn: &Connection) -> rusqlite::Result<String> {
+    // entity path -> display name
+    let mut name: HashMap<String, String> = HashMap::new();
+    if let Ok(mut s) = conn.prepare("SELECT path, name FROM graph_entity") {
+        if let Ok(rows) = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+            for row in rows.flatten() {
+                name.insert(row.0, row.1);
+            }
+        }
+    }
+    let label = |p: &str| name.get(p).cloned().unwrap_or_else(|| slug_of(p));
+
+    // relations
+    let mut rels: Vec<(String, String, String, String, f64)> = Vec::new();
+    if let Ok(mut s) = conn.prepare(
+        "SELECT source, target, relation, confidence, confidence_score FROM graph_relation",
+    ) {
+        if let Ok(rows) = s.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, f64>(4)?,
+            ))
+        }) {
+            for row in rows.flatten() {
+                rels.push(row);
+            }
+        }
+    }
+
+    let (_dirs, total_files) = dir_map(conn)?;
+    let mut s = String::new();
+    s.push_str("# GRAPH_REPORT.md — semfs knowledge graph (graphify-style)\n\n");
+    if rels.is_empty() {
+        s.push_str(&format!(
+            "_Entity relationship graph not built yet ({total_files} files indexed). \
+             Run the KG rebuild to populate typed relations._\n"
+        ));
+        return Ok(s);
+    }
+
+    // degree + confidence breakdown
+    let mut degree: HashMap<String, usize> = HashMap::new();
+    let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_conf: BTreeMap<String, usize> = BTreeMap::new();
+    for (src, tgt, rel, conf, _) in &rels {
+        *degree.entry(src.clone()).or_insert(0) += 1;
+        *degree.entry(tgt.clone()).or_insert(0) += 1;
+        *by_type.entry(rel.clone()).or_insert(0) += 1;
+        *by_conf.entry(conf.clone()).or_insert(0) += 1;
+    }
+
+    s.push_str("## Summary\n");
+    s.push_str(&format!(
+        "- files indexed: {total_files}\n- entities: {}\n- typed relations: {}\n",
+        name.len(),
+        rels.len()
+    ));
+    s.push_str("- confidence: ");
+    s.push_str(
+        &by_conf
+            .iter()
+            .map(|(k, v)| format!("{k} {v}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    s.push_str("\n\n");
+
+    // God nodes — highest-degree entities (the core concepts)
+    let mut god: Vec<(String, usize)> = degree.iter().map(|(p, d)| (p.clone(), *d)).collect();
+    god.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    s.push_str("## God nodes (most connected concepts)\n");
+    for (p, d) in god.iter().take(12) {
+        s.push_str(&format!("- {} — {d} relations\n", label(p)));
+    }
+    s.push_str("\n");
+
+    // Relations by type
+    s.push_str("## Relations by type\n");
+    let mut bt: Vec<(&String, &usize)> = by_type.iter().collect();
+    bt.sort_by(|a, b| b.1.cmp(a.1));
+    for (rel, n) in bt {
+        s.push_str(&format!("- {rel}: {n}\n"));
+    }
+    s.push_str("\n");
+
+    // Surprising connections — strongest non-trivial relations (semantically_
+    // similar_to / conceptually_related_to / contradicts), ranked by score.
+    let mut surprising: Vec<&(String, String, String, String, f64)> = rels
+        .iter()
+        .filter(|(_, _, rel, _, _)| {
+            matches!(
+                rel.as_str(),
+                "semantically_similar_to" | "conceptually_related_to" | "contradicts" | "depends_on"
+            )
+        })
+        .collect();
+    surprising.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap_or(std::cmp::Ordering::Equal));
+    if !surprising.is_empty() {
+        s.push_str("## Surprising connections (cross-concept links you may not know)\n");
+        for (src, tgt, rel, conf, score) in surprising.into_iter().take(10) {
+            s.push_str(&format!(
+                "- {} —[{rel}]→ {} ({conf} {score:.2})\n",
+                label(src),
+                label(tgt)
+            ));
+        }
+        s.push_str("\n");
+    }
+
+    // Ambiguous edges — flagged for review (graphify includes, never omits)
+    let ambiguous: Vec<&(String, String, String, String, f64)> =
+        rels.iter().filter(|(_, _, _, c, _)| c == "AMBIGUOUS").collect();
+    if !ambiguous.is_empty() {
+        s.push_str("## Ambiguous edges (low certainty — review)\n");
+        for (src, tgt, rel, _, score) in ambiguous.iter().take(10) {
+            s.push_str(&format!("- {} —[{rel}]→ {} ({score:.2})\n", label(src), label(tgt)));
+        }
+        s.push_str(&format!("  …{} ambiguous total\n\n", ambiguous.len()));
+    }
+
+    // Knowledge gaps — isolated entities + ambiguity ratio
+    let isolated: Vec<&String> = name.keys().filter(|p| !degree.contains_key(*p)).collect();
+    let amb_pct = 100.0 * by_conf.get("AMBIGUOUS").copied().unwrap_or(0) as f64 / rels.len() as f64;
+    s.push_str("## Knowledge gaps\n");
+    s.push_str(&format!(
+        "- {} entities have no typed relations (isolated)\n- {amb_pct:.0}% of relations are AMBIGUOUS\n\n",
+        isolated.len()
+    ));
+
+    // Suggested questions — from the top god nodes
+    s.push_str("## Suggested questions\n");
+    for (p, _) in god.iter().take(5) {
+        s.push_str(&format!("- What is {} and how does it relate to the rest of this workspace?\n", label(p)));
+    }
+    s.push_str("\n_(semfs: `grep` searches by meaning; this report summarizes the entity graph.)_\n");
+    Ok(s)
 }
 
 /// Top-level directory map (dir -> #indexed files) + total indexed files.
