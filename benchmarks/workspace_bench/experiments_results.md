@@ -261,6 +261,42 @@ Same total, **different composition**: the semfs run **gained [7]** (correctly h
 
 ---
 
+---
+
+## 10. Four-condition graded experiment (n=3, judge = claude-sonnet-4.6 via OpenRouter)
+
+The decisive run: plain codex (no semfs) / semfs kg_off / semfs kg_on / cloud, 3 reps each,
+graded with the rubric judge. Judge = `anthropic/claude-sonnet-4.6` through OpenRouter
+(`agent_eval.py` chat-completions path). Paper's judge is `seed-2.0-lite` (on OpenRouter,
+swap is one yaml line) — we used claude as a proxy; numbers are *relative under one judge*.
+
+| condition | avg tokens | avg tool calls | rubrics (3 reps) | avg rubrics | format-traps |
+|---|---|---|---|---|---|
+| **plain codex (no semfs)** | **108.4K** | **8.0** | 6 / 6 / 4 | **5.3/15** | 2–3 per run |
+| semfs kg_off | 25.6K | 2.3 | 4 / 5 / 4 | 4.3/15 | 0 |
+| semfs kg_on | 41.6K | 3.3 | 4 / 5 / 5 | 4.7/15 | 0 |
+| cloud (Supermemory) | 18.9K | 2.0 | 3 / 4 / 4 | 3.7/15 | 0 |
+
+**Findings:**
+1. **Token reduction is real and large:** plain 108K → kg_off 25.6K (**−76%**) → cloud 18.9K (**−83%**).
+2. **Tool calls: plain 8 → semfs/cloud 2–3.** kg_off = 2,3,2 vs cloud 2,2,2 → **3 consecutive cloud-comparable runs ⇒ the tool-call gate is MET.**
+3. **KG is a net negative on 289:** kg_on costs +63% tokens over kg_off (agent pays to `cat KNOWLEDGE_GRAPH.md` + extra greps) for no correctness gain (4.7 vs 4.3, within noise). Matches the retrieval matrix (KG has no rank effect here).
+4. **⚠️ Correctness DROPS with semfs (5.3 → 4.3/4.7/3.7) — the key trade-off.**
+
+**Why correctness drops (the important result):** 289 is an error-detection task — the correct
+answer reports that the source `.xlsx` is a 403 page. **Plain codex discovers the 403 *by* the
+exploration semfs removes:** it `os.walk`s and tries to `pandas`-open the `.xlsx` (the format-traps,
+2–3 per run); the open *fails*, revealing the file is broken/403, so it reports it → 6/15. semfs
+makes codex grep-only and efficient, so it never opens the broken file, never learns it's a 403,
+and copies the list excerpt → 4–5/15. **semfs trades the exploration-that-finds-the-error for
+token efficiency.** The 403-annotation fix (§9) surfaces the 403 in grep for `top10 product`
+queries, but codex's actual query (`best-selling product data`) returns the list, so it doesn't fire.
+The lever to recover correctness *and* keep efficiency: get the 403 annotation to surface for the
+queries codex actually issues (broaden the error-page pin, or protocol-nudge codex to verify the
+named source's accessibility).
+
+---
+
 ### Honest assessment
 The token/tool gap to cloud is **codex-behavioral and stochastic**, not a retrieval or infra deficiency. Reaching "3 consecutive" reliably likely requires either (a) a near-deterministic protocol that forces *copy-and-stop* on a satisfying grep hit (risk: over-correction → codex skips retrieval, as px1 hints), or (b) accepting variance and reporting a distribution (e.g. median calls, % cloud-comparable) rather than a brittle consecutive-streak gate.
 
