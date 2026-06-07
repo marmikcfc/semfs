@@ -68,6 +68,13 @@ impl Graph {
         g
     }
 
+    /// Add a symmetric weighted edge (used when building induced subgraphs for
+    /// oversized-community splitting). Assumes `a != b` and both in range.
+    pub fn add_edge(&mut self, a: usize, b: usize, w: f64) {
+        self.adj[a].push((b, w));
+        self.adj[b].push((a, w));
+    }
+
     fn weighted_degree(&self, i: usize) -> f64 {
         self.adj[i].iter().map(|(_, w)| w).sum()
     }
@@ -96,9 +103,76 @@ impl CommunityDetector for Louvain {
         let mut comm = louvain_one_level(g, resolution);
         if self.leiden_refine {
             comm = refine_connected(g, &comm);
+            // graphify parity: a community that is too large to be a useful topic
+            // is recursively re-clustered (graphify `_MAX_COMMUNITY_FRACTION=0.25`,
+            // `_MIN_SPLIT_SIZE=10`). Off when refinement is off (plain Louvain).
+            comm = split_oversized(g, comm, resolution);
         }
         densify(&comm)
     }
+}
+
+/// graphify `_MAX_COMMUNITY_FRACTION` — a community covering more than this
+/// fraction of all nodes is too coarse to be a topic and is re-clustered.
+const MAX_COMMUNITY_FRACTION: f64 = 0.25;
+/// graphify `_MIN_SPLIT_SIZE` — never split below this many nodes (the threshold
+/// is `max(fraction*n, MIN_SPLIT_SIZE)`), so small graphs aren't over-shredded.
+const MIN_SPLIT_SIZE: usize = 10;
+
+/// Recursively split communities larger than `max(25% of nodes, 10)` by
+/// re-clustering each oversized community's induced subgraph. Iterates so a
+/// still-oversized sub-community is split again; a bounded pass count prevents a
+/// pathological dense blob (no modularity structure to split) from looping.
+fn split_oversized(g: &Graph, mut comm: Vec<usize>, resolution: f64) -> Vec<usize> {
+    let max_size = ((g.n as f64 * MAX_COMMUNITY_FRACTION).floor() as usize).max(MIN_SPLIT_SIZE);
+    for _pass in 0..8 {
+        let mut members: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for (i, &c) in comm.iter().enumerate() {
+            members.entry(c).or_default().push(i);
+        }
+        let mut next_id = comm.iter().copied().max().map_or(0, |m| m + 1);
+        let mut changed = false;
+        for (_c, nodes) in members {
+            if nodes.len() <= max_size {
+                continue;
+            }
+            // induced subgraph over this community's nodes (local indices)
+            let local: HashMap<usize, usize> =
+                nodes.iter().enumerate().map(|(li, &orig)| (orig, li)).collect();
+            let mut sub = Graph::new(nodes.len());
+            for &u in &nodes {
+                let ui = local[&u];
+                for &(v, w) in &g.adj[u] {
+                    if let Some(&vi) = local.get(&v) {
+                        if ui < vi {
+                            sub.add_edge(ui, vi, w);
+                        }
+                    }
+                }
+            }
+            // re-cluster; if it produced >1 community, adopt the split
+            let mut sub_comm = louvain_one_level(&sub, resolution);
+            sub_comm = refine_connected(&sub, &sub_comm);
+            let distinct: HashSet<usize> = sub_comm.iter().copied().collect();
+            if distinct.len() <= 1 {
+                continue; // unsplittable blob — leave it (avoids infinite loop)
+            }
+            let mut remap: HashMap<usize, usize> = HashMap::new();
+            for (li, &orig) in nodes.iter().enumerate() {
+                let gid = *remap.entry(sub_comm[li]).or_insert_with(|| {
+                    let id = next_id;
+                    next_id += 1;
+                    id
+                });
+                comm[orig] = gid;
+            }
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+    comm
 }
 
 /// One Louvain level: each node starts in its own community; greedily move each
@@ -309,6 +383,33 @@ mod tests {
         let g = Graph::from_file_entities(&fe);
         let comm = Louvain { leiden_refine: true }.detect(&g, 1.0);
         assert_eq!(comm.iter().copied().collect::<HashSet<_>>().len(), 3);
+    }
+
+    #[test]
+    fn oversized_clique_not_shattered() {
+        // Two 12-node cliques (each via a shared entity) exceed max_size(=10), so
+        // the graphify-style oversized splitter runs — but a clique has no
+        // sub-structure, so it must NOT be shattered (over-shred guard), and the
+        // two cliques must stay distinct. Also checks determinism with split on.
+        let mut fe = Vec::new();
+        for _ in 0..12 {
+            fe.push(hs(&[100])); // group A: files 0..=11
+        }
+        for _ in 0..12 {
+            fe.push(hs(&[200])); // group B: files 12..=23
+        }
+        fe[0].insert(300); // one weak bridge between the two cliques
+        fe[12].insert(300);
+        let g = Graph::from_file_entities(&fe);
+        let comm = Louvain { leiden_refine: true }.detect(&g, 1.0);
+        for i in 1..12 {
+            assert_eq!(comm[0], comm[i], "A node {i} split off");
+        }
+        for i in 13..24 {
+            assert_eq!(comm[12], comm[i], "B node {i} split off");
+        }
+        assert_ne!(comm[0], comm[12], "cliques merged");
+        assert_eq!(comm, Louvain { leiden_refine: true }.detect(&g, 1.0));
     }
 
     #[test]
