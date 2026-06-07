@@ -33,13 +33,13 @@ Core gaps: typed entity→entity relations, AMBIGUOUS confidence, AST code lane,
 - [ ] **T1.4** tree-sitter **AST code lane** for code files (deterministic contains/imports/inherits/calls). DECISION: chanpin corpus is ~all docs → likely ⏭️ defer for this seed, but implement the hook OR explicitly note the parity gap.
 
 ## Phase 2 — Artifacts parity
-- [ ] **T2.1** `graph.json` (`cache/graph_file.rs build_graph_json`): add node fields (`file_type`,`source_file`,`source_location`) and edge fields (`source_location`,`weight`), and include typed entity→entity edges.
-- [ ] **T2.2** New **GRAPH_REPORT.md** generator (deterministic, no LLM except suggested-questions): god nodes, **surprising connections** (needs T1.2), hyperedges, communities + cohesion, ambiguous edges, **knowledge gaps** (isolated/thin/high-ambiguity), suggested questions. Materialize as `/GRAPH_REPORT.md`.
-- [ ] **T2.3** Keep `KNOWLEDGE_GRAPH.md` compact (orientation); `GRAPH_REPORT.md` = the rich graphify-style report. Add to SEARCH_ALWAYS_VISIBLE.
+- [x] **T2.1** `graph.json` (`cache/graph_file.rs build_graph_json`): add node fields (`file_type`,`source_file`,`source_location`) and edge fields (`source_location`,`weight`), and include typed entity→entity edges.
+- [x] **T2.2** New **GRAPH_REPORT.md** generator (deterministic, no LLM except suggested-questions): god nodes, **surprising connections** (needs T1.2), hyperedges, communities + cohesion, ambiguous edges, **knowledge gaps** (isolated/thin/high-ambiguity), suggested questions. Materialize as `/GRAPH_REPORT.md`.
+- [x] **T2.3** Keep `KNOWLEDGE_GRAPH.md` compact (orientation); `GRAPH_REPORT.md` = the rich graphify-style report. Add to SEARCH_ALWAYS_VISIBLE.
 
 ## Phase 3 — Reconstruct KG from scratch & replace in local
 - [x] **T3.1** New extraction driver (replace `examples/build_graph.rs`): runs T1.2 typed-relation extraction over a seed DB, concurrent, idempotent (wipes old edges/relations first).
-- [ ] **T3.2** Run it on the **local seed** (`~/.semfs/chanpin-gemma.db` — has KG already; or e5-nosum) → regenerate entities + typed relations from scratch. Preserve the embedding/vector data (only rebuild the graph tables).
+- [x] **T3.2** Run it on the **local seed** (`~/.semfs/chanpin-gemma.db` — has KG already; or e5-nosum) → regenerate entities + typed relations from scratch. Preserve the embedding/vector data (only rebuild the graph tables).
 - [ ] **T3.3** Materialize `KNOWLEDGE_GRAPH.md` + `GRAPH_REPORT.md` + `graph.json` on a fresh mount; verify counts + sample typed relations.
 - [ ] **T3.4** Verify KG is **fully generated** (every file with entities processed; relation/entity/community counts sane; no truncation).
 
@@ -51,3 +51,4 @@ Core gaps: typed entity→entity relations, AMBIGUOUS confidence, AST code lane,
 ## Run log
 - 2026-06-07: tests cleared; H-C/H-D removed (revert to 7947f1b, commit 3a1ea50); TODO created. Starting T0.1.
 - 2026-06-07: T1.1-T1.3 + T3.1 done. First rebuild=0 (strict-schema confidence_score not required + 512-tok truncation) → fixed (complete_structured_n 2048 + required). Smoke OK (3 ent/2 rel). Full rebuild running.
+- 2026-06-07: T3.2 ✅ KG rebuilt from scratch on chanpin-e5-nosum: 8302 entities, 4237 typed entity→entity relations (mentions/references/relates_to/part_of/implements...), 4138 EXTRACTED+99 INFERRED. T2.1-T2.3 graph.json+GRAPH_REPORT.md done.
