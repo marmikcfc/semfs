@@ -94,8 +94,11 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
              \n\
              - To ORIENT (what is this workspace about / how is it organized), read the\n\
              \u{0020} knowledge graph: `cat {path_str}/KNOWLEDGE_GRAPH.md` — topic clusters\n\
-             \u{0020} (communities) with key entities, suggested questions, and the dir map.\n\
-             \u{0020} It updates automatically as files are added or removed.\n\
+             \u{0020} (communities) with key entities and the dir map.\n\
+             - For a deeper map, `cat {path_str}/GRAPH_REPORT.md` — god-node concepts,\n\
+             \u{0020} typed relations, surprising connections, KNOWLEDGE GAPS (including any\n\
+             \u{0020} inaccessible / error-page source files), and suggested questions.\n\
+             \u{0020} `{path_str}/graph.json` is the full queryable graph. All auto-update.\n\
              - To FIND content, use semantic search instead of grep/rg/find/os.walk:\n"
         )
     } else {

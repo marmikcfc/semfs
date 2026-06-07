@@ -632,6 +632,10 @@ def _restore_outputs_to_workdir(
 import os as _os
 _SEMFS_PROTOCOL = (
     "TOOL PROTOCOL for this workspace (a semfs semantic-search mount):\n"
+    "0. This workspace has a KNOWLEDGE GRAPH. To orient, you may `cat KNOWLEDGE_GRAPH.md`\n"
+    "   (topics + key concepts) and `cat GRAPH_REPORT.md` (god-node concepts, typed\n"
+    "   relations, and KNOWLEDGE GAPS — including any inaccessible / error-page source\n"
+    "   files). Use it to learn the corpus and which sources are broken.\n"
     "1. FIRST action: run  semfs grep \"<2-6 key terms>\" .  — it returns the answer\n"
     "   excerpt ranked #1 (top result = best match). Do NOT start by exploring.\n"
     "2. A result line followed by '# ^ COMPLETE FILE' is that file's ENTIRE content —\n"

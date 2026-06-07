@@ -437,13 +437,61 @@ pub fn build_graph_report(conn: &Connection) -> rusqlite::Result<String> {
         s.push_str(&format!("  …{} ambiguous total\n\n", ambiguous.len()));
     }
 
+    // Data integrity — source files that are HTTP error pages / unreadable.
+    // Detected from the representative chunk (a short HTML error page). This is
+    // the factual signal an agent needs to REPORT a broken source instead of
+    // fabricating data from a look-alike.
+    let mut inaccessible: Vec<(String, String)> = Vec::new();
+    if let Ok(mut st) = conn.prepare(
+        "SELECT c.filepath, c.text FROM chunks c \
+         JOIN (SELECT filepath, MIN(id) mid FROM chunks GROUP BY filepath) g ON c.id = g.mid \
+         WHERE length(c.text) < 2048 \
+           AND (instr(lower(c.text),'403 forbidden')>0 OR instr(lower(c.text),'404 not found')>0 \
+                OR instr(lower(c.text),'openresty')>0 OR instr(lower(c.text),'502 bad gateway')>0)",
+    ) {
+        if let Ok(rows) = st.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for (fp, text) in rows.flatten() {
+                let low = text.trim_start().to_ascii_lowercase();
+                if !low.starts_with("<html") {
+                    continue;
+                }
+                let status = if low.contains("403 forbidden") {
+                    "HTTP 403 Forbidden"
+                } else if low.contains("404 not found") {
+                    "HTTP 404 Not Found"
+                } else if low.contains("502 bad gateway") {
+                    "HTTP 502 Bad Gateway"
+                } else {
+                    "HTTP error"
+                };
+                inaccessible.push((fp, status.to_string()));
+            }
+        }
+    }
+    inaccessible.sort();
+    if !inaccessible.is_empty() {
+        s.push_str("## Data integrity — inaccessible source files\n");
+        s.push_str(
+            "_These files are HTTP error pages (HTML), NOT real data — access denied / unreadable. \
+             If the task needs one, report its status; do not fabricate or substitute another file._\n",
+        );
+        for (fp, status) in inaccessible.iter().take(20) {
+            s.push_str(&format!("- {fp} — {status} (HTML, not the labeled format)\n"));
+        }
+        s.push_str("\n");
+    }
+
     // Knowledge gaps — isolated entities + ambiguity ratio
     let isolated: Vec<&String> = name.keys().filter(|p| !degree.contains_key(*p)).collect();
     let amb_pct = 100.0 * by_conf.get("AMBIGUOUS").copied().unwrap_or(0) as f64 / rels.len() as f64;
     s.push_str("## Knowledge gaps\n");
     s.push_str(&format!(
-        "- {} entities have no typed relations (isolated)\n- {amb_pct:.0}% of relations are AMBIGUOUS\n\n",
-        isolated.len()
+        "- {} entities have no typed relations (isolated)\n- {amb_pct:.0}% of relations are AMBIGUOUS\n\
+         - {} source file(s) are inaccessible (see Data integrity)\n\n",
+        isolated.len(),
+        inaccessible.len()
     ));
 
     // Suggested questions — from the top god nodes
