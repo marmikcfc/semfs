@@ -138,8 +138,29 @@ CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_path);
 CREATE TABLE IF NOT EXISTS graph_entity (
     path TEXT PRIMARY KEY,   -- = edges.to_path (the /memories/<slug>.md node)
     name TEXT NOT NULL,      -- original entity name (CJK preserved)
-    kind TEXT NOT NULL       -- ontology type (Person/Organization/Concept/…)
+    kind TEXT NOT NULL,      -- ontology type (Person/Organization/Concept/…)
+    file_type TEXT,          -- graphify: code|document|paper|image (nullable)
+    source_file TEXT,        -- file the entity was first extracted from (nullable)
+    rationale TEXT           -- graphify: design-intent text on the node (nullable)
 );
+
+-- Graphify-parity entity↔entity relationship graph (typed, directed). Distinct
+-- from `edges` (which is the file→entity co-mention graph). source/target are
+-- `/memories/<slug>.md` node paths. Re-derived on rebuild; weight = strength.
+CREATE TABLE IF NOT EXISTS graph_relation (
+    source           TEXT NOT NULL,   -- /memories/<slug>.md
+    target           TEXT NOT NULL,   -- /memories/<slug>.md
+    relation         TEXT NOT NULL,   -- calls|cites|conceptually_related_to|… (RELATION_TYPES)
+    confidence       TEXT NOT NULL DEFAULT 'INFERRED',  -- EXTRACTED|INFERRED|AMBIGUOUS
+    confidence_score REAL NOT NULL DEFAULT 0.5,
+    source_file      TEXT,            -- file the relation was extracted from
+    source_location  TEXT,
+    weight           REAL NOT NULL DEFAULT 1.0,
+    created_at       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source, target, relation)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_src ON graph_relation(source);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_tgt ON graph_relation(target);
 
 -- BM25 keyword index over chunk text. rowid is kept equal to chunks.id so the
 -- vec0 KNN and fts5 BM25 result sets join back to the same chunk.
