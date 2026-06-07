@@ -1164,13 +1164,11 @@ impl SqliteVecStore {
                     || low.contains("openresty")
                     || low.contains("502 bad gateway"));
             if is_error_page {
-                // An inaccessible source that matched the query AT ALL is
-                // high-value: the agent is hunting for data that lives in a
-                // broken file. Always pin it so the cross-encoder can't bury the
-                // "source is a 403 page" signal under a valid look-alike file.
-                if !path_pinned.contains(fp) {
-                    path_pinned.push(fp.clone());
-                }
+                // Mark it as an inaccessible source. NOTE: error pages are NOT
+                // forced above real data (that would bury the answer on normal
+                // tasks); they only get a RESERVED slot in the returned set below
+                // (`error_pinned`), so a corrupt source stays visible without
+                // outranking a legitimate data file.
                 if !error_pinned.contains(fp) {
                     error_pinned.push(fp.clone());
                 }
@@ -1183,13 +1181,16 @@ impl SqliteVecStore {
                 } else {
                     "HTTP error"
                 };
+                let fname = fp.rsplit('/').next().unwrap_or(fp.as_str());
+                // H1b: lead with a verbatim, copy-ready sentence carrying the exact
+                // phrases a report needs ("403 Forbidden", "HTML … not Excel",
+                // "access … denied") so the agent copies them instead of paraphrasing.
                 let note = format!(
-                    "[semfs: SOURCE INACCESSIBLE — this file is an HTTP \"{status}\" error \
-                     page in HTML format, NOT a real spreadsheet/data file. The underlying \
-                     data could not be read (access denied). If the task needs this file, \
-                     report that the source returned \"{status}\" (it is HTML, not Excel; \
-                     access denied) — do NOT parse it as Excel and do NOT substitute data \
-                     from a differently-named file.]"
+                    "[semfs: SOURCE INACCESSIBLE. Copy this sentence VERBATIM into your \
+                     output file: \"Source file {fname} returned HTTP {status} — it is an \
+                     HTML error page, not a real Excel/data file; access was denied and the \
+                     data could not be read.\" Do NOT parse it as Excel and do NOT substitute \
+                     data from a differently-named look-alike file.]"
                 );
                 acc.chunks = vec![(0, note)];
             }
@@ -1381,19 +1382,41 @@ impl SqliteVecStore {
         // Pin strong filename matches to the front so a near-exact filename query
         // returns that file even when the cross-encoder reranked it down on content
         // (stable sort: pinned keep their order, everything else keeps its order).
-        if !path_pinned.is_empty() || !error_pinned.is_empty() {
-            // 3-tier stable sort: error-page sources first, then other filename
-            // matches, then everything else (each tier keeps its prior order).
+        if !path_pinned.is_empty() {
+            // Strong filename (data) matches move to the front so a near-exact
+            // filename query returns that file even if reranked down on content.
+            // Stable: pinned keep their order, the rest keep theirs. Error pages
+            // are deliberately NOT included here — they must not outrank real data.
             hits.sort_by_key(|h| {
-                let fp = h.filepath.as_deref();
-                if fp.is_some_and(|p| error_pinned.iter().any(|e| e == p)) {
-                    0u8
-                } else if fp.is_some_and(|p| path_pinned.iter().any(|e| e == p)) {
-                    1
-                } else {
-                    2
-                }
+                !h.filepath
+                    .as_deref()
+                    .is_some_and(|p| path_pinned.iter().any(|e| e == p))
             });
+        }
+        // RESERVE one returned slot for a corrupt/error source when one matched the
+        // query, WITHOUT displacing the top data result: if none is already inside
+        // the returned window, move the best error-page hit into the LAST slot. This
+        // keeps a broken source visible (so the agent can report it) while a
+        // legitimate data file still ranks #1 — the safe fix to "errors ranked first".
+        {
+            let lim = result_limit();
+            if lim >= 2 && !error_pinned.is_empty() {
+                let in_window = hits
+                    .iter()
+                    .take(lim)
+                    .any(|h| h.filepath.as_deref().is_some_and(|p| error_pinned.iter().any(|e| e == p)));
+                if !in_window {
+                    if let Some(pos) = hits
+                        .iter()
+                        .position(|h| h.filepath.as_deref().is_some_and(|p| error_pinned.iter().any(|e| e == p)))
+                    {
+                        if pos >= lim {
+                            let h = hits.remove(pos);
+                            hits.insert(lim - 1, h);
+                        }
+                    }
+                }
+            }
         }
 
         // Knob B: cap to the returned top-N (Supermemory parity) BEFORE attaching
