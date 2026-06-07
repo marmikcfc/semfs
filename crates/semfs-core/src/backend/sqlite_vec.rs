@@ -1000,6 +1000,10 @@ impl SqliteVecStore {
         // correctly-named file on the basis of its content (e.g. an error-page
         // "source" the task needs the agent to find and report).
         let mut path_pinned: Vec<String> = Vec::new();
+        // Error-page sources get pinned ABOVE regular filename matches: a broken
+        // source is the highest-value signal for an error-detection task, and a
+        // tight RESULT_LIMIT must not let a valid-looking look-alike crowd it out.
+        let mut error_pinned: Vec<String> = Vec::new();
         if !matches!(std::env::var("SEMFS_PATH_LANE").ok().as_deref(), Some("off")) {
             let toks: Vec<String> = query
                 .to_lowercase()
@@ -1166,6 +1170,9 @@ impl SqliteVecStore {
                 // "source is a 403 page" signal under a valid look-alike file.
                 if !path_pinned.contains(fp) {
                     path_pinned.push(fp.clone());
+                }
+                if !error_pinned.contains(fp) {
+                    error_pinned.push(fp.clone());
                 }
                 let status = if low.contains("403 forbidden") {
                     "403 Forbidden"
@@ -1374,11 +1381,18 @@ impl SqliteVecStore {
         // Pin strong filename matches to the front so a near-exact filename query
         // returns that file even when the cross-encoder reranked it down on content
         // (stable sort: pinned keep their order, everything else keeps its order).
-        if !path_pinned.is_empty() {
+        if !path_pinned.is_empty() || !error_pinned.is_empty() {
+            // 3-tier stable sort: error-page sources first, then other filename
+            // matches, then everything else (each tier keeps its prior order).
             hits.sort_by_key(|h| {
-                !h.filepath
-                    .as_ref()
-                    .is_some_and(|fp| path_pinned.contains(fp))
+                let fp = h.filepath.as_deref();
+                if fp.is_some_and(|p| error_pinned.iter().any(|e| e == p)) {
+                    0u8
+                } else if fp.is_some_and(|p| path_pinned.iter().any(|e| e == p)) {
+                    1
+                } else {
+                    2
+                }
             });
         }
 
