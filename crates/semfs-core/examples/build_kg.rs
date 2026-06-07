@@ -75,6 +75,18 @@ fn main() -> anyhow::Result<()> {
         }
         acc.into_iter().map(|(fp, t)| (fp, t.chars().take(6000).collect())).collect()
     };
+    // Smoke mode: `build_kg <db> smoke` — process the first 5 files sequentially
+    // with errors + per-file counts visible, to verify extraction before a full run.
+    if std::env::args().nth(2).as_deref() == Some("smoke") {
+        let client = LlmClient::openrouter(key.clone());
+        for (fp, text) in files.iter().take(5) {
+            match extract_graph(&client, text) {
+                Ok(g) => println!("OK {fp}: {} entities, {} relations", g.entities.len(), g.relations.len()),
+                Err(e) => println!("ERR {fp}: {e}"),
+            }
+        }
+        return Ok(());
+    }
     println!("rebuilding KG for {} files (8 workers)…", files.len());
 
     let files = Arc::new(files);

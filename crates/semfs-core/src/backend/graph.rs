@@ -180,7 +180,7 @@ pub fn extract_graph(client: &LlmClient, content: &str) -> anyhow::Result<GraphE
                         "confidence": { "type": "string", "enum": CONFIDENCE_LEVELS },
                         "confidence_score": { "type": "number" }
                     },
-                    "required": ["source", "target", "relation", "confidence"],
+                    "required": ["source", "target", "relation", "confidence", "confidence_score"],
                     "additionalProperties": false
                 }
             }
@@ -197,7 +197,8 @@ pub fn extract_graph(client: &LlmClient, content: &str) -> anyhow::Result<GraphE
         INFERRED (0.4-0.9) for a reasonable inference; AMBIGUOUS (0.1-0.3) when uncertain — \
         INCLUDE it, do NOT omit. NEVER invent edges. Use semantically_similar_to only when the \
         similarity is genuinely non-obvious. Return empty lists if there is nothing. JSON only.";
-    let raw = client.complete_structured(system, content, schema)?;
+    // Bigger budget than the 512 default — entities + relations would truncate.
+    let raw = client.complete_structured_n(system, content, schema, 2048)?;
     let json = strip_code_fence(&raw);
     let parsed: GraphExtractionRaw = serde_json::from_str(&json)
         .map_err(|e| anyhow::anyhow!("graph JSON parse failed: {e}; raw: {raw}"))?;

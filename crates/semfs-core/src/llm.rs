@@ -46,11 +46,24 @@ impl LlmClient {
         user: &str,
         schema: serde_json::Value,
     ) -> anyhow::Result<String> {
+        self.complete_structured_n(system, user, schema, 512)
+    }
+
+    /// Same as [`complete_structured`] but with an explicit output token budget —
+    /// graph extraction (entities + typed relations) needs more than the 512
+    /// default or the JSON truncates and fails to parse.
+    pub fn complete_structured_n(
+        &self,
+        system: &str,
+        user: &str,
+        schema: serde_json::Value,
+        max_tokens: u32,
+    ) -> anyhow::Result<String> {
         let response_format = serde_json::json!({
             "type": "json_schema",
             "json_schema": { "name": "extraction", "strict": true, "schema": schema }
         });
-        self.chat(system, user, Some(response_format), 512)
+        self.chat(system, user, Some(response_format), max_tokens)
     }
 
     fn chat(
