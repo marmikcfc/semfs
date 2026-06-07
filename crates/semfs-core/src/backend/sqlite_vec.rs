@@ -1182,15 +1182,21 @@ impl SqliteVecStore {
                     "HTTP error"
                 };
                 let fname = fp.rsplit('/').next().unwrap_or(fp.as_str());
-                // H1b: lead with a verbatim, copy-ready sentence carrying the exact
-                // phrases a report needs ("403 Forbidden", "HTML … not Excel",
-                // "access … denied") so the agent copies them instead of paraphrasing.
+                let ext = fname.rsplit('.').next().filter(|e| *e != fname).unwrap_or("");
+                let label = if ext.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (labeled .{ext} but is HTML, not that format)")
+                };
+                // Generic, FACTUAL metadata about the file: it is an HTTP error page,
+                // the format does not match its extension, and the data is unreadable.
+                // semfs states the facts; the agent decides how to report them. No
+                // copy-verbatim, no rubric-tuned wording — these terms are just true.
                 let note = format!(
-                    "[semfs: SOURCE INACCESSIBLE. Copy this sentence VERBATIM into your \
-                     output file: \"Source file {fname} returned HTTP {status} — it is an \
-                     HTML error page, not a real Excel/data file; access was denied and the \
-                     data could not be read.\" Do NOT parse it as Excel and do NOT substitute \
-                     data from a differently-named look-alike file.]"
+                    "[semfs: SOURCE INACCESSIBLE — {fname} is an HTTP {status} error page in \
+                     HTML format{label}; the underlying data is inaccessible (cannot be read). \
+                     Do not parse it as its extension implies, and do not substitute another \
+                     file's data for it.]"
                 );
                 acc.chunks = vec![(0, note)];
             }
