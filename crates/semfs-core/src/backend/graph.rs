@@ -77,6 +77,139 @@ pub fn extract_entities(client: &LlmClient, content: &str) -> anyhow::Result<Vec
         .collect())
 }
 
+/// Relation ontology for entity→entity edges — graphify parity (`skill.md`).
+/// Code: calls/implements/references/imports. Docs/papers:
+/// cites/conceptually_related_to/semantically_similar_to/depends_on/contradicts/
+/// mentions. Cross-domain: shares_data_with/part_of/relates_to.
+pub const RELATION_TYPES: &[&str] = &[
+    "calls",
+    "implements",
+    "references",
+    "imports",
+    "cites",
+    "conceptually_related_to",
+    "semantically_similar_to",
+    "depends_on",
+    "contradicts",
+    "mentions",
+    "shares_data_with",
+    "part_of",
+    "relates_to",
+];
+
+/// Confidence levels — graphify parity. EXTRACTED = explicit (score 1.0);
+/// INFERRED = reasonable structural inference (0.4–0.9); AMBIGUOUS = uncertain,
+/// flagged but INCLUDED, never omitted (0.1–0.3).
+pub const CONFIDENCE_LEVELS: &[&str] = &["EXTRACTED", "INFERRED", "AMBIGUOUS"];
+
+/// One typed entity→entity relationship. `source`/`target` are entity *names*
+/// (the driver maps them to `/memories/<slug>.md` node paths).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct ExtractedRelation {
+    pub source: String,
+    pub target: String,
+    pub relation: String,
+    #[serde(default)]
+    pub confidence: String,
+    #[serde(default)]
+    pub confidence_score: f64,
+}
+
+/// A file's extracted knowledge graph: typed entities + typed entity↔entity
+/// relations (graphify parity, vs the old entities-only co-mention model).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GraphExtraction {
+    pub entities: Vec<ExtractedEntity>,
+    pub relations: Vec<ExtractedRelation>,
+}
+
+#[derive(Deserialize)]
+struct GraphExtractionRaw {
+    #[serde(default)]
+    entities: Vec<ExtractedEntity>,
+    #[serde(default)]
+    relations: Vec<ExtractedRelation>,
+}
+
+/// Keep only well-formed relations whose endpoints are BOTH extracted entities
+/// (graphify: source/target are graph nodes) and that aren't self-loops. Pure,
+/// so it is unit-testable without the LLM.
+pub fn clean_relations(
+    entities: &[ExtractedEntity],
+    relations: Vec<ExtractedRelation>,
+) -> Vec<ExtractedRelation> {
+    let names: std::collections::HashSet<&str> =
+        entities.iter().map(|e| e.name.trim()).filter(|n| !n.is_empty()).collect();
+    relations
+        .into_iter()
+        .filter(|r| {
+            let (s, t) = (r.source.trim(), r.target.trim());
+            !s.is_empty() && !t.is_empty() && s != t && names.contains(s) && names.contains(t)
+        })
+        .collect()
+}
+
+/// Extract a typed knowledge graph (entities + entity→entity relations) from
+/// `content` via the LLM — graphify-parity extraction. **Fail-open** like
+/// [`extract_entities`]. The relation `source`/`target` reference entity names;
+/// callers slugify them to `/memories/<slug>.md` node paths.
+pub fn extract_graph(client: &LlmClient, content: &str) -> anyhow::Result<GraphExtraction> {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "entities": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "type": { "type": "string", "enum": ONTOLOGY }
+                    },
+                    "required": ["name", "type"],
+                    "additionalProperties": false
+                }
+            },
+            "relations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "source": { "type": "string" },
+                        "target": { "type": "string" },
+                        "relation": { "type": "string", "enum": RELATION_TYPES },
+                        "confidence": { "type": "string", "enum": CONFIDENCE_LEVELS },
+                        "confidence_score": { "type": "number" }
+                    },
+                    "required": ["source", "target", "relation", "confidence"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["entities", "relations"],
+        "additionalProperties": false
+    });
+    let system = "Extract a knowledge graph from the user's text.\n\
+        ENTITIES: specific named things (people, organizations, projects, decisions, tools, \
+        artifacts, key domain concepts) — skip generic words; classify each with an allowed type.\n\
+        RELATIONS: typed directed edges BETWEEN the entities you listed. `source` and `target` \
+        MUST be names from your entities list. Use an allowed relation type. Set confidence: \
+        EXTRACTED (confidence_score 1.0) when the relation is explicitly stated in the text; \
+        INFERRED (0.4-0.9) for a reasonable inference; AMBIGUOUS (0.1-0.3) when uncertain — \
+        INCLUDE it, do NOT omit. NEVER invent edges. Use semantically_similar_to only when the \
+        similarity is genuinely non-obvious. Return empty lists if there is nothing. JSON only.";
+    let raw = client.complete_structured(system, content, schema)?;
+    let json = strip_code_fence(&raw);
+    let parsed: GraphExtractionRaw = serde_json::from_str(&json)
+        .map_err(|e| anyhow::anyhow!("graph JSON parse failed: {e}; raw: {raw}"))?;
+    let entities: Vec<ExtractedEntity> = parsed
+        .entities
+        .into_iter()
+        .filter(|e| !e.name.trim().is_empty())
+        .collect();
+    let relations = clean_relations(&entities, parsed.relations);
+    Ok(GraphExtraction { entities, relations })
+}
+
 /// The memory-page path an entity maps to (its graph node).
 pub fn entity_path(name: &str) -> String {
     format!("/memories/{}.md", slugify(name))
@@ -134,6 +267,34 @@ fn stable_hash(s: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ent(n: &str) -> ExtractedEntity {
+        ExtractedEntity { name: n.into(), kind: "Concept".into() }
+    }
+    fn rel(s: &str, t: &str) -> ExtractedRelation {
+        ExtractedRelation {
+            source: s.into(),
+            target: t.into(),
+            relation: "relates_to".into(),
+            confidence: "INFERRED".into(),
+            confidence_score: 0.5,
+        }
+    }
+
+    #[test]
+    fn clean_relations_keeps_only_edges_between_known_entities() {
+        let ents = vec![ent("Auth Service"), ent("Token Store")];
+        let rels = vec![
+            rel("Auth Service", "Token Store"), // both known → keep
+            rel("Auth Service", "Unknown Thing"), // target unknown → drop
+            rel("Auth Service", "Auth Service"), // self-loop → drop
+            rel("", "Token Store"),              // empty endpoint → drop
+        ];
+        let out = clean_relations(&ents, rels);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source, "Auth Service");
+        assert_eq!(out[0].target, "Token Store");
+    }
 
     #[test]
     fn slugify_makes_url_safe_slugs() {
