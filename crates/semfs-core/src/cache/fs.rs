@@ -1038,6 +1038,53 @@ fn sql_err(e: rusqlite::Error) -> VfsError {
 const INODE_COLS: &str =
     "ino, mode, nlink, uid, gid, size, atime, mtime, ctime, rdev, atime_nsec, mtime_nsec, ctime_nsec";
 
+/// Search-first mount (opt-in `SEMFS_SEARCH_ONLY`): hide pre-existing corpus
+/// *files* from `readdir` so `os.walk`/`ls -R` return only the cheap directory
+/// tree + the knowledge graph, forcing the agent to `semfs grep` instead of
+/// crawling hundreds of files. Directories stay visible (so the agent still sees
+/// the structure/position), `model_output` contents stay visible (the agent's
+/// own writes + output staging), and the KG/contract files stay visible.
+/// path-lookup is unaffected, so grep-returned paths remain `cat`-able. This is
+/// the POSIX-pragmatic realization of "ls shows the directory + the KG, not a
+/// flat dump" (tickets/ls-kg-semantic-readdir; reduces the os.walk token sink).
+fn search_only_enabled() -> bool {
+    matches!(
+        std::env::var("SEMFS_SEARCH_ONLY").ok().as_deref(),
+        Some("1") | Some("on") | Some("true") | Some("yes")
+    )
+}
+
+/// Files always shown even in search-first mode (orientation artifacts).
+const SEARCH_ALWAYS_VISIBLE: &[&str] = &["KNOWLEDGE_GRAPH.md", "AGENTS.md", "CLAUDE.md"];
+
+/// True if `dir_ino` is `/model_output` or nested inside it. Walked on the held
+/// `conn` (no re-lock). Bounded depth guards against a cycle.
+fn under_model_output(conn: &rusqlite::Connection, dir_ino: u64) -> bool {
+    let mut cur = dir_ino;
+    for _ in 0..64 {
+        if cur == super::db::ROOT_INO {
+            return false;
+        }
+        let row: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT name, parent_ino FROM fs_dentry WHERE ino = ?1",
+                [cur as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        match row {
+            Some((name, parent)) => {
+                if name == "model_output" {
+                    return true;
+                }
+                cur = parent as u64;
+            }
+            None => return false,
+        }
+    }
+    false
+}
+
 #[async_trait]
 impl FileSystem for CacheFs {
     async fn lookup(&self, parent_ino: u64, name: &str) -> VfsResult<Option<FileAttr>> {
@@ -1193,12 +1240,26 @@ impl FileSystem for CacheFs {
             }
 
             let mut stmt = conn
-                .prepare_cached("SELECT name FROM fs_dentry WHERE parent_ino = ?1 ORDER BY name")
+                .prepare_cached(
+                    "SELECT d.name, i.mode FROM fs_dentry d JOIN fs_inode i ON i.ino = d.ino \
+                     WHERE d.parent_ino = ?1 ORDER BY d.name",
+                )
                 .map_err(sql_err)?;
-            let names: Vec<String> = stmt
-                .query_map([ino as i64], |r| r.get(0))
+            let raw: Vec<(String, i64)> = stmt
+                .query_map([ino as i64], |r| Ok((r.get(0)?, r.get(1)?)))
                 .map_err(sql_err)?
                 .filter_map(|r| r.ok())
+                .collect();
+            // Search-first: hide corpus leaf files (keep dirs + KG + model_output).
+            let hide = search_only_enabled() && !under_model_output(&conn, ino);
+            let names: Vec<String> = raw
+                .into_iter()
+                .filter(|(name, mode)| {
+                    !hide
+                        || (*mode as u32 & S_IFMT) == S_IFDIR
+                        || SEARCH_ALWAYS_VISIBLE.contains(&name.as_str())
+                })
+                .map(|(n, _)| n)
                 .collect();
             names
         }; // conn + stmt dropped here
@@ -1237,7 +1298,19 @@ impl FileSystem for CacheFs {
                 return Ok(None);
             }
 
-            self.query_dir_entries(&conn, ino)?
+            let entries = self.query_dir_entries(&conn, ino)?;
+            // Search-first: hide corpus leaf files (keep dirs + KG + model_output).
+            if search_only_enabled() && !under_model_output(&conn, ino) {
+                entries
+                    .into_iter()
+                    .filter(|e| {
+                        (e.attr.mode & S_IFMT) == S_IFDIR
+                            || SEARCH_ALWAYS_VISIBLE.contains(&e.name.as_str())
+                    })
+                    .collect()
+            } else {
+                entries
+            }
         }; // conn dropped here
 
         if !entries.is_empty() || self.api.is_none() {

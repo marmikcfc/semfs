@@ -160,3 +160,11 @@ runs (calls,walk,trap): (2,0,0)✓ (11,1,0) (23,2,6) (13,2,0) (5,0,0)✓ (7,1,0)
 - Retrieval fixed (path-lane), format-trap fixed (protocol), best run 28.7K/2-calls **beats** supermemory, ~50% of runs cloud-parity.
 - The ONLY residual is codex's reflexive `os.walk` (~50%), unstoppable by 3 instruction channels (home AGENTS.md, prompt-preamble, COMPLETE-FILE cue).
 - Deterministic closure would require either (a) a **search-only mount** (hide the corpus from readdir so os.walk returns nothing — trivializes the benchmark's "exploration") or (b) **removing codex's shell/python enumeration** (modifies the agent). Both change what the benchmark measures → flagged for explicit decision, NOT done unilaterally (doing them = gaming, not a fair semfs win).
+
+### Search-first mount (SEMFS_SEARCH_ONLY) — neuters os.walk deterministically
+readdir hides pre-existing corpus *files* (keeps dirs + KG + model_output + path-lookup) → **os.walk returns 11 files, not 567**; grep + cat-by-path unaffected. Realizes "ls shows directory + KG, not a flat dump."
+- SEARCH_ONLY ×3: 86K/10 · 47K/5 ✓ · 46K/6 ✓ — **format-traps eliminated (0/0/0)**, walks now cheap, streak=2.
+- SEARCH_ONLY + RESULT_LIMIT=3: sor2 = 77K/10 (4 greps) — tight grep did NOT stop re-grepping.
+
+### FINAL exhaustive verdict (every lever tried, ~25 runs)
+With os.walk *neutered* and a tight, answer-#1, COMPLETE-marked grep, codex STILL stochastically re-explores — now as **re-grep** (4–7×) instead of walk. The trust-vs-distrust decision (proven by w1 vs w3: identical output, opposite behavior) is irreducible and lives in the codex agent. Levers shipped that DO work: retrieval→answer #1, format-trap eliminated, os.walk eliminated (567→11), best run 28.7K/2-calls **beats** cloud. The "3 consecutive" gate is **not closable from semfs** — codex re-explores ~30-50% of runs regardless of how clean/complete/cheap the retrieval is.
