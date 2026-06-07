@@ -57,12 +57,14 @@ semfs `KNOWLEDGE_GRAPH.md` currently has: Topics (communities by god-node) + Dir
 
 | # | gap | effort | value | status |
 |---|---|---|---|---|
-| A | Leiden oversized-community recursive split (>25%, min 10) | S | M | ⬜ |
-| B | `AMBIGUOUS` confidence level + populate EXTRACTED vs INFERRED | S | M | ⬜ |
-| C | `graph.json` artifact (nodes+edges, queryable) | M | M | ⬜ |
-| D | enrich `GRAPH_REPORT.md` (summary/confidence, surprising connections, knowledge gaps, suggested questions) | M | H | ⬜ |
-| E | **typed entity→entity relation extraction** (relation ontology + confidence + source) | L | **H** | ⬜ |
+| A | Leiden oversized-community recursive split (>25%, min 10) | S | M | ✅ done (`community.rs` `split_oversized`, commit 34430bd) |
+| B | `AMBIGUOUS` confidence level + populate EXTRACTED vs INFERRED | S | M | ⬜ (schema supports it; extraction still writes INFERRED) |
+| C | `graph.json` artifact (nodes+edges, queryable) | M | M | ✅ done (`graph_file.rs` `build_graph_json` → `/graph.json`, commit 6dbf7dc) |
+| D | enrich report (summary/confidence breakdown, communities) | M | H | ◑ partial — stats + confidence breakdown + per-community god-nodes now in `graph.json`; KNOWLEDGE_GRAPH.md kept compact on purpose (token budget); surprising-connections needs E |
+| E | **typed entity→entity relation extraction** (relation ontology + confidence + source) | L | **H** | ⬜ biggest remaining gap — needs LLM re-extraction over the seed |
 | F | tree-sitter AST code lane (deterministic, free) | L | M (low for chanpin doc corpus) | ⬜ |
+
+**Design note:** graphify bundles everything into `GRAPH_REPORT.md` (rich) + `graph.json`. semfs splits it: `KNOWLEDGE_GRAPH.md` stays **compact** (it's read into the agent's context every mount → token cost), while the **rich** queryable data (stats, confidence breakdown, per-community god-nodes + files) lives in `graph.json`, read only on demand. This serves the token-reduction goal that the flat report would undercut.
 
 ## 6. Note on 289 relevance
 The retrieval matrix already showed **KG has no rank effect on case 289** (answer already #0; the 403 source now surfaces via the path-lane, not the KG). So richer KG improves *orientation/quality* generally but is **not** the lever for 289's tool-call count. The E2E KG on/off experiment is run below to confirm, not assumed.
