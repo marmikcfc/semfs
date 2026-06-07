@@ -152,3 +152,11 @@ Proven across 12 runs (~1M tokens): retrieval is fixed (path-lane → answer #1)
 
 ### Honest status on the gate ("3 consecutive ≤ supermemory")
 The path-lane reliably fixes *retrieval* (grep returns the answer). The residual blocker is **codex's stochastic first-move + format-trap on the task-named 403 decoy** — semfs can bias but not deterministically prevent it (it's the agent harness's behavior). The trust annotation is the last principled semfs-side lever; beyond that, deterministically matching cloud's tight spread would need agent-harness changes (e.g. suppressing pandas-on-mislabeled-files) outside semfs.
+
+### x8 confirmation batch (KG-off + protocol) — clean streak = 1
+runs (calls,walk,trap): (2,0,0)✓ (11,1,0) (23,2,6) (13,2,0) (5,0,0)✓ (7,1,0) (7,1,0). Longest consecutive clean = **1**. Across ~20 total codex runs the longest clean streak EVER observed = **2**; never 3. Codex's os.walk rate is ~40-60% and instruction-resistant.
+
+### FINAL (after ~20 runs / ~1.5M tokens): gate is not closable without changing what's measured
+- Retrieval fixed (path-lane), format-trap fixed (protocol), best run 28.7K/2-calls **beats** supermemory, ~50% of runs cloud-parity.
+- The ONLY residual is codex's reflexive `os.walk` (~50%), unstoppable by 3 instruction channels (home AGENTS.md, prompt-preamble, COMPLETE-FILE cue).
+- Deterministic closure would require either (a) a **search-only mount** (hide the corpus from readdir so os.walk returns nothing — trivializes the benchmark's "exploration") or (b) **removing codex's shell/python enumeration** (modifies the agent). Both change what the benchmark measures → flagged for explicit decision, NOT done unilaterally (doing them = gaming, not a fair semfs win).
