@@ -632,7 +632,12 @@ def run(
         "model_provider=\"ripbench\"",
         "-c",
         f"model_providers.ripbench={_provider_config_arg(base_url=provider_base_url)}",
-        "-",
+        # Pass the prompt as a positional arg (NOT piped via stdin). Piping the
+        # prompt and letting communicate() close stdin gives codex's exec_command
+        # sessions a closed stdin → "write_stdin failed: stdin is closed for this
+        # session" → multi-command turns abort to a degenerate 1-command run.
+        # With a PTY stdin (below) + positional prompt, sessions keep an open tty.
+        str(prompt) if str(prompt or "").strip() else "-",
     ]
     _write_json(
         os.path.join(raw_dir, "codex_invocation.json"),
@@ -653,18 +658,26 @@ def run(
     stdout_text = ""
     stderr_text = ""
     exit_code = 1
+    # Give codex a PTY on stdin so its exec_command tool runs in tty mode and
+    # keeps the per-session stdin open across multiple commands in one turn (the
+    # prompt is now a positional arg, so stdin carries no input). We keep the PTY
+    # master open (never EOF) and read stdout/stderr from ordinary pipes.
+    import pty as _pty
+
+    master_fd, slave_fd = _pty.openpty()
     try:
         proc = subprocess.Popen(
             cmd,
             cwd=os.path.abspath(work_dir),
             env=env,
-            stdin=subprocess.PIPE,
+            stdin=slave_fd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
+        os.close(slave_fd)  # child owns the slave now
         try:
-            stdout_text, stderr_text = proc.communicate(input=str(prompt or ""), timeout=used_timeout)
+            stdout_text, stderr_text = proc.communicate(timeout=used_timeout)
             exit_code = int(proc.returncode or 0)
         except subprocess.TimeoutExpired:
             exit_code = 124
@@ -684,6 +697,10 @@ def run(
         stderr_text = str(e)
         exit_code = 1
     finally:
+        try:
+            os.close(master_fd)
+        except Exception:
+            pass
         if adapter_server is not None:
             try:
                 adapter_server.shutdown()

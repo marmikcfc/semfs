@@ -843,12 +843,17 @@ impl CacheFs {
     /// a graph error never blocks the mount. Cheap (O(edges)) so it can run at
     /// mount and on debounced graph change. See `cache/graph_file.rs`.
     pub fn refresh_knowledge_graph(&self) -> VfsResult<()> {
-        let digest = {
+        let (digest, graph_json) = {
             let conn = self.db.conn.lock();
-            super::graph_file::build_digest(&conn)
-                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?
+            let digest = super::graph_file::build_digest(&conn)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
+            // graphify-parity queryable artifact alongside the markdown digest.
+            let graph_json = super::graph_file::build_graph_json(&conn)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
+            (digest, graph_json)
         };
         self.create_derived_sibling("/KNOWLEDGE_GRAPH.md", &digest)?;
+        self.create_derived_sibling("/graph.json", &graph_json)?;
         Ok(())
     }
 
@@ -1055,7 +1060,8 @@ fn search_only_enabled() -> bool {
 }
 
 /// Files always shown even in search-first mode (orientation artifacts).
-const SEARCH_ALWAYS_VISIBLE: &[&str] = &["KNOWLEDGE_GRAPH.md", "AGENTS.md", "CLAUDE.md"];
+const SEARCH_ALWAYS_VISIBLE: &[&str] =
+    &["KNOWLEDGE_GRAPH.md", "graph.json", "AGENTS.md", "CLAUDE.md"];
 
 /// True if `dir_ino` is `/model_output` or nested inside it. Walked on the held
 /// `conn` (no re-lock). Bounded depth guards against a cycle.
