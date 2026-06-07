@@ -45,3 +45,4 @@ codex narrates its *tool process* ("grep didn't return data") instead of the *so
 - 2026-06-07: reserve-slot → 403 visible without displacing data; gamey 7/15 (reverted).
 - 2026-06-07: generic (no gaming) → kg_off 4/15, kg_on 6/15 @ 72K (seed judge).
 - 2026-06-07: H-C reframe protocol → kg_off run in flight.
+- 2026-06-07: H-C run #1 hit codex stdin bug (1 call, grep=0, saw403=0) → INVALID. Need n>=3.
