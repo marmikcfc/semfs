@@ -137,5 +137,10 @@ The corpus is **adversarial for 289**: the task names `top10_product_status_tabl
 ### Full KG-off + levers distribution (5 runs, incl. anti-rampage contract)
 `35.7K ✓ · 612K ✗ · 50.5K ✓ · 79.7K ~ · 221K ✗` (✓ = within cloud 26–48K; ✗ = codex format-trap rampage on the task-named 403 decoy). The anti-rampage **contract line did NOT reliably suppress** the rampage (a3 still format-trapped 4×) — confirming research that agents drift from prompt instructions. **Best case = cloud-parity; variance = codex, not semfs.**
 
+### + Protocol preamble (semfs-codex adapter; SEMFS_PROTOCOL=on) — 3×
+`168.8K (3 os.walk) · 36.6K ✓ · 73.0K ✓` — **format-trap = 0/0/0** (was the 612K/221K killer). The inline grep-first/no-unzip/trust protocol (read directly by codex, applied to local AND cloud via the adapter) **reliably eliminates the manual-unzip rampage**; the residual is **codex's stochastic `os.walk`** (p1 only, 1/3) — the documented uninterceptable reflex.
+
+**Net trajectory (case 289):** 134K walk-every-time → path-lane (answer #1) → trust+filter (35.7K best) → **protocol preamble (format-trap eliminated, 2/3 cloud-comparable)**. Catastrophic 600K runs gone; median ~73K vs cloud ~27K; best 36.6K = cloud-parity.
+
 ### Honest status on the gate ("3 consecutive ≤ supermemory")
 The path-lane reliably fixes *retrieval* (grep returns the answer). The residual blocker is **codex's stochastic first-move + format-trap on the task-named 403 decoy** — semfs can bias but not deterministically prevent it (it's the agent harness's behavior). The trust annotation is the last principled semfs-side lever; beyond that, deterministically matching cloud's tight spread would need agent-harness changes (e.g. suppressing pandas-on-mislabeled-files) outside semfs.
