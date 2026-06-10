@@ -350,6 +350,20 @@ fn read_file_timed(path: PathBuf, budget: Duration) -> ReadOutcome {
 /// Read a hit's content (real file, else a transcription sidecar) for line-range
 /// computation, with each read time-bounded. A timeout on the primary read
 /// short-circuits — we don't then pay the budget on five more sidecar reads.
+/// Binary file types whose extracted text is inlined from the `chunks` table
+/// at grep time, so the agent never needs to open or parse the binary.
+fn is_binary_ext(filepath: &str) -> bool {
+    let ext = filepath
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "xlsx" | "xls" | "pdf" | "docx" | "pptx" | "ppt" | "doc"
+    )
+}
+
 fn read_local_or_sidecar(mount: &Path, filepath: &str) -> ReadOutcome {
     let stripped = filepath.trim_start_matches('/');
     match read_file_timed(mount.join(stripped), LINE_RANGE_READ_TIMEOUT) {
@@ -741,6 +755,25 @@ pub async fn run(args: Args) -> Result<()> {
     );
     eprintln!();
 
+    // Open the DB once for binary-file inline: binary hits (xlsx/pdf/docx/etc.)
+    // are served from the `chunks` table instead of reading raw bytes off FUSE.
+    // This eliminates the format trap (agent invoking openpyxl/libreoffice to
+    // parse binaries) — the extracted text is already present in `chunks`.
+    //
+    // Knob: `SEMFS_GREP_INLINE=off` disables inlining (leaves `grep_db` None, so
+    // the binary block below falls through to the normal chunk-excerpt path).
+    // Use this when `.extracted.md` siblings deliver the text instead, so the
+    // agent `cat`s a few lines on demand rather than receiving the whole file in
+    // every grep result. Default is on (inline).
+    let grep_inline_enabled = std::env::var("SEMFS_GREP_INLINE")
+        .map(|v| !matches!(v.as_str(), "off" | "0" | "false"))
+        .unwrap_or(true);
+    let grep_db: Option<semfs_core::cache::Db> = if grep_inline_enabled {
+        db_path.and_then(|p| semfs_core::cache::Db::open(std::path::Path::new(p)).ok())
+    } else {
+        None
+    };
+
     let mut file_cache: HashMap<String, ReadOutcome> = HashMap::new();
     // Circuit breaker: once a line-range read times out (mount starved under the
     // search load), stop reading and print <file>:<chunk> for all remaining hits —
@@ -776,6 +809,23 @@ pub async fn run(args: Args) -> Result<()> {
                 .replace('\r', "\\r");
             println!("{}:{}", fp, escaped);
             continue;
+        }
+
+        // Binary inline: serve the full extracted text from `chunks` so the agent
+        // never opens or parses the binary. Skips the FUSE read entirely.
+        if is_binary_ext(fp) {
+            if let Some(text) = grep_db.as_ref().and_then(|db| db.get_extracted_text(fp)) {
+                let lines = text.lines().count().max(1);
+                let escaped = text
+                    .replace('\\', "\\\\")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r");
+                println!("{}:1-{}:{}", fp, lines, escaped);
+                println!(
+                    "# ^ COMPLETE FILE — excerpt above is this file's entire content; use it directly, do not open it."
+                );
+                continue;
+            }
         }
 
         // Whether the excerpt we print IS the file's entire content — then it is

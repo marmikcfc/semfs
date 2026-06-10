@@ -162,6 +162,31 @@ CREATE TABLE IF NOT EXISTS graph_relation (
 CREATE INDEX IF NOT EXISTS idx_graph_relation_src ON graph_relation(source);
 CREATE INDEX IF NOT EXISTS idx_graph_relation_tgt ON graph_relation(target);
 
+-- Materialized Louvain projection (graph-as-filesystem). The community→god-node→
+-- member-file skeleton is otherwise recomputed ephemerally inside build_digest();
+-- the FS traversal ops (readdir/lookup) can't run Louvain per `ls`, so the
+-- projection is persisted here once at KG-refresh time and read cheaply.
+-- See tickets/ls-kg-semantic-readdir/graph-as-filesystem-traversal.md §4.4.
+-- Louvain is a hard partition, so each file maps to exactly one community
+-- (is_primary=1); the column reserves future multi-membership without churn.
+CREATE TABLE IF NOT EXISTS graph_community (
+    file_path    TEXT    NOT NULL,
+    community_id INTEGER NOT NULL,
+    is_primary   INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (file_path, community_id)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_community_cid ON graph_community(community_id);
+
+-- Ranked god-nodes (central entities) per community — labels the god-node dir
+-- and seeds cross-edge navigation. rank 0 = most central (the dir's display name).
+CREATE TABLE IF NOT EXISTS graph_god_node (
+    community_id INTEGER NOT NULL,
+    entity_path  TEXT    NOT NULL,   -- = graph_entity.path (/memories/<slug>.md)
+    rank         INTEGER NOT NULL,
+    PRIMARY KEY (community_id, entity_path)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_god_node_cid ON graph_god_node(community_id);
+
 -- BM25 keyword index over chunk text. rowid is kept equal to chunks.id so the
 -- vec0 KNN and fts5 BM25 result sets join back to the same chunk.
 CREATE VIRTUAL TABLE IF NOT EXISTS ffts USING fts5(text);

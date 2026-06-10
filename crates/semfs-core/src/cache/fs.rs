@@ -18,6 +18,10 @@ const DERIVED_SIBLING_SUFFIXES: &[&str] = &[
     ".audio-transcription.md",
     ".webpage-transcription.md",
     ".semfs-error.txt",
+    // Binary-extraction sibling (xlsx/pdf/docx/… extracted text), materialized
+    // on flush when `SEMFS_EXTRACT_SIBLING=on`. Listed here so unlink/rename of
+    // the source file also reaps the derived sibling.
+    ".extracted.md",
 ];
 use crate::vfs::error::{VfsError, VfsResult};
 use crate::vfs::mode::{MAX_NAME_LEN, S_IFDIR, S_IFLNK, S_IFMT, S_IFREG};
@@ -854,11 +858,34 @@ impl CacheFs {
             // ambiguous edges, knowledge gaps, suggested questions).
             let report = super::graph_file::build_graph_report(&conn)
                 .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
+            // Persist the Louvain community→god-node→member-file projection so the
+            // graph-as-filesystem traversal ops (readdir/lookup) read the skeleton
+            // cheaply instead of re-running Louvain per `ls`. Same projection that
+            // backs the digest above — one source of truth, three views.
+            super::graph_file::materialize_projection(&conn)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
             (digest, graph_json, report)
         };
-        self.create_derived_sibling("/KNOWLEDGE_GRAPH.md", &digest)?;
-        self.create_derived_sibling("/graph.json", &graph_json)?;
-        self.create_derived_sibling("/GRAPH_REPORT.md", &report)?;
+        // All KG artifacts live under a single `/kg/` folder (a clean, predictable
+        // place the agent can read first). The injected AGENTS.md/CLAUDE.md block
+        // (see agent_hint.rs) explains what each kg/ file is for, so the agent reads
+        // the *minimal right file* for its need rather than crawling the corpus
+        // (token reduction + avoids context distraction).
+        self.create_derived_sibling("/kg/KNOWLEDGE_GRAPH.md", &digest)?;
+        self.create_derived_sibling("/kg/graph.json", &graph_json)?;
+        self.create_derived_sibling("/kg/GRAPH_REPORT.md", &report)?;
+        // Drop a workspace-root AGENTS.md / CLAUDE.md so any agent that reads the
+        // working tree (codex, claude, gemini) is pointed at kg/ regardless of
+        // $HOME — the home-dir global hint may never reach the agent's env. We
+        // NEVER clobber a corpus-provided file: a non-derived collision surfaces
+        // as AlreadyExists, which we treat as "leave the user's file alone".
+        let root_hint = crate::agent_hint::render_workspace_root();
+        for path in ["/AGENTS.md", "/CLAUDE.md"] {
+            match self.create_derived_sibling(path, &root_hint) {
+                Ok(_) | Err(VfsError::AlreadyExists) => {}
+                Err(e) => return Err(e),
+            }
+        }
         Ok(())
     }
 
@@ -1096,10 +1123,83 @@ fn under_model_output(conn: &rusqlite::Connection, dir_ino: u64) -> bool {
     false
 }
 
+/// Synthetic read-only directory attributes for a graph-overlay node (the
+/// `/by-topic` root and each community god-node dir). World r-x so any user can
+/// `ls`/`cd` regardless of owner; these inodes are not in `fs_inode`.
+fn synthetic_dir_attr(ino: u64) -> FileAttr {
+    let mut a = FileAttr::new_dir(ino, 0, 0);
+    a.mode = S_IFDIR | 0o555;
+    a
+}
+
+/// Resolve a real corpus path to its real-inode [`FileAttr`] by walking the
+/// dentry tree from root, so a member file under a graph dir reads real bytes
+/// (and existing annotations, incl. `SOURCE INACCESSIBLE`) via its real inode.
+fn real_attr_for_path(conn: &rusqlite::Connection, path: &str) -> Option<FileAttr> {
+    let mut ino = super::db::ROOT_INO;
+    for comp in path.split('/').filter(|c| !c.is_empty()) {
+        ino = conn
+            .query_row(
+                "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+                rusqlite::params![ino as i64, comp],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()? as u64;
+    }
+    conn.query_row(
+        &format!("SELECT {INODE_COLS} FROM fs_inode WHERE ino = ?1"),
+        [ino as i64],
+        Db::row_to_attr,
+    )
+    .ok()
+}
+
+impl CacheFs {
+    /// Resolve a lookup that targets the `/by-topic` graph overlay. Returns the
+    /// synthetic dir attr for the overlay root / a community dir, or the REAL
+    /// attr for a member file. `None` if `(parent_ino, name)` is not a graph node.
+    fn graph_lookup(&self, parent_ino: u64, name: &str) -> Option<FileAttr> {
+        let b = super::graph_fs::Bounds::from_env();
+        let conn = self.db.conn.lock();
+        // real root → the `/by-topic` overlay directory
+        if parent_ino == super::db::ROOT_INO {
+            return (name == super::graph_fs::BY_TOPIC_NAME)
+                .then(|| synthetic_dir_attr(super::graph_fs::BY_TOPIC_INO));
+        }
+        // overlay root → a community god-node directory
+        if parent_ino == super::graph_fs::BY_TOPIC_INO {
+            let e = super::graph_fs::graph_root_entries(&conn, &b)
+                .ok()?
+                .into_iter()
+                .find(|e| e.name == name)?;
+            return Some(synthetic_dir_attr(super::graph_fs::community_to_ino(
+                e.community_id?,
+            )));
+        }
+        // community dir → a member file (resolved to its REAL inode attr)
+        if let Some(cid) = super::graph_fs::ino_to_community(parent_ino) {
+            let real = super::graph_fs::resolve_member(&conn, cid, name, &b).ok()??;
+            return real_attr_for_path(&conn, &real);
+        }
+        None
+    }
+}
+
 #[async_trait]
 impl FileSystem for CacheFs {
     async fn lookup(&self, parent_ino: u64, name: &str) -> VfsResult<Option<FileAttr>> {
         validate_name(name)?;
+
+        // Graph-as-filesystem overlay (`/by-topic`). Resolve synthetic nodes
+        // before the real fs_inode path; a synthetic parent never falls through.
+        if super::graph_fs::graph_fs_enabled() {
+            if let Some(attr) = self.graph_lookup(parent_ino, name) {
+                return Ok(Some(attr));
+            }
+            if super::graph_fs::is_graph_ino(parent_ino) {
+                return Ok(None);
+            }
+        }
 
         // All DB work in a sync block — conn must be dropped before any .await.
         let result = {
@@ -1179,6 +1279,11 @@ impl FileSystem for CacheFs {
     }
 
     async fn getattr(&self, ino: u64) -> VfsResult<Option<FileAttr>> {
+        // Synthetic graph-overlay inodes (overlay root + community dirs) are
+        // directories; member files resolve to real inodes handled below.
+        if super::graph_fs::graph_fs_enabled() && super::graph_fs::is_graph_ino(ino) {
+            return Ok(Some(synthetic_dir_attr(ino)));
+        }
         let conn = self.db.conn.lock();
         let attr = conn
             .query_row(
@@ -1232,6 +1337,20 @@ impl FileSystem for CacheFs {
     }
 
     async fn readdir(&self, ino: u64) -> VfsResult<Option<Vec<String>>> {
+        // Graph overlay: synthetic dirs list their bounded graph entries.
+        if super::graph_fs::graph_fs_enabled() && super::graph_fs::is_graph_ino(ino) {
+            let b = super::graph_fs::Bounds::from_env();
+            let conn = self.db.conn.lock();
+            let entries = if ino == super::graph_fs::BY_TOPIC_INO {
+                super::graph_fs::graph_root_entries(&conn, &b).map_err(sql_err)?
+            } else if let Some(cid) = super::graph_fs::ino_to_community(ino) {
+                super::graph_fs::graph_community_entries(&conn, cid, &b).map_err(sql_err)?
+            } else {
+                return Ok(None);
+            };
+            return Ok(Some(entries.into_iter().map(|e| e.name).collect()));
+        }
+
         // All DB work in a sync block so conn/stmt are dropped before any .await.
         let names = {
             let conn = self.db.conn.lock();
@@ -1263,7 +1382,7 @@ impl FileSystem for CacheFs {
                 .collect();
             // Search-first: hide corpus leaf files (keep dirs + KG + model_output).
             let hide = search_only_enabled() && !under_model_output(&conn, ino);
-            let names: Vec<String> = raw
+            let mut names: Vec<String> = raw
                 .into_iter()
                 .filter(|(name, mode)| {
                     !hide
@@ -1272,6 +1391,10 @@ impl FileSystem for CacheFs {
                 })
                 .map(|(n, _)| n)
                 .collect();
+            // Graph overlay: expose `/by-topic` alongside the real root entries.
+            if super::graph_fs::graph_fs_enabled() && ino == super::db::ROOT_INO {
+                names.push(super::graph_fs::BY_TOPIC_NAME.to_string());
+            }
             names
         }; // conn + stmt dropped here
 
@@ -1291,8 +1414,39 @@ impl FileSystem for CacheFs {
     }
 
     async fn readdir_plus(&self, ino: u64) -> VfsResult<Option<Vec<DirEntry>>> {
+        // Graph overlay: synthetic dirs list their bounded graph entries (with attrs).
+        if super::graph_fs::graph_fs_enabled() && super::graph_fs::is_graph_ino(ino) {
+            let b = super::graph_fs::Bounds::from_env();
+            let conn = self.db.conn.lock();
+            if ino == super::graph_fs::BY_TOPIC_INO {
+                let out = super::graph_fs::graph_root_entries(&conn, &b)
+                    .map_err(sql_err)?
+                    .into_iter()
+                    .filter_map(|e| {
+                        e.community_id.map(|cid| DirEntry {
+                            attr: synthetic_dir_attr(super::graph_fs::community_to_ino(cid)),
+                            name: e.name,
+                        })
+                    })
+                    .collect();
+                return Ok(Some(out));
+            }
+            if let Some(cid) = super::graph_fs::ino_to_community(ino) {
+                let mut out = Vec::new();
+                for e in super::graph_fs::graph_community_entries(&conn, cid, &b).map_err(sql_err)? {
+                    if let Some(rp) = e.real_path {
+                        if let Some(attr) = real_attr_for_path(&conn, &rp) {
+                            out.push(DirEntry { name: e.name, attr });
+                        }
+                    }
+                }
+                return Ok(Some(out));
+            }
+            return Ok(None);
+        }
+
         // First pass: query from local cache. All DB work in one sync block.
-        let entries = {
+        let mut entries = {
             let conn = self.db.conn.lock();
 
             let mode: Option<i64> = conn
@@ -1323,6 +1477,14 @@ impl FileSystem for CacheFs {
                 entries
             }
         }; // conn dropped here
+
+        // Graph overlay: expose `/by-topic` alongside the real root entries.
+        if super::graph_fs::graph_fs_enabled() && ino == super::db::ROOT_INO {
+            entries.push(DirEntry {
+                name: super::graph_fs::BY_TOPIC_NAME.to_string(),
+                attr: synthetic_dir_attr(super::graph_fs::BY_TOPIC_INO),
+            });
+        }
 
         if !entries.is_empty() || self.api.is_none() {
             return Ok(Some(entries));

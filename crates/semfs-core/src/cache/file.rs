@@ -24,6 +24,15 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Whether flush should materialize `<file>.extracted.md` siblings for binary
+/// documents (`SEMFS_EXTRACT_SIBLING`). Off unless explicitly enabled; the
+/// shipped delivery path inlines extracted text in `semfs grep` instead.
+fn extract_sibling_enabled() -> bool {
+    std::env::var("SEMFS_EXTRACT_SIBLING")
+        .map(|v| matches!(v.as_str(), "on" | "1" | "true"))
+        .unwrap_or(false)
+}
+
 /// A handle to an open file backed by chunked SQLite storage.
 ///
 /// Each read/write operates directly on `fs_data` chunks. The handle
@@ -313,17 +322,38 @@ impl crate::vfs::File for SqliteFile {
                         let bytes = e.into_bytes();
                         let fmt = crate::extract::sniff(&bytes);
                         match crate::extract::extract_text(filepath, &bytes).await {
-                            // Extracted: index it. If indexing FAILS we must not
-                            // clear the marker — record it as unindexed so the
-                            // file is accounted, never silently dropped.
-                            Some(text) => match indexer.index(self.ino, filepath, &text).await {
-                                Ok(()) => self.db.clear_unindexed(self.ino),
-                                Err(e) => {
-                                    tracing::warn!(filepath, "local index on flush failed: {e}");
-                                    self.db
-                                        .mark_unindexed(self.ino, filepath, &format!("{fmt:?}"));
+                            // Extracted text recovered. When `SEMFS_EXTRACT_SIBLING=on`,
+                            // materialize a read-only `<file>.extracted.md` sibling so
+                            // agents can `cat`/`head` a few lines instead of shelling out
+                            // to openpyxl/pandas/zipfile (the format trap). Off by default
+                            // — the shipped path inlines extracted text in `semfs grep`.
+                            // Either way we index the text below.
+                            Some(text) => {
+                                if extract_sibling_enabled() {
+                                    if let Err(e) =
+                                        self.db.upsert_extracted_sibling(filepath, &text)
+                                    {
+                                        tracing::warn!(
+                                            filepath,
+                                            "extracted sibling materialize failed: {e}"
+                                        );
+                                    }
                                 }
-                            },
+                                match indexer.index(self.ino, filepath, &text).await {
+                                    Ok(()) => self.db.clear_unindexed(self.ino),
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            filepath,
+                                            "local index on flush failed: {e}"
+                                        );
+                                        self.db.mark_unindexed(
+                                            self.ino,
+                                            filepath,
+                                            &format!("{fmt:?}"),
+                                        );
+                                    }
+                                }
+                            }
                             // No recoverable text — deindex any STALE prior content
                             // for this path (e.g. a text file overwritten by a
                             // binary) so search can't return it, then account it.
@@ -417,3 +447,4 @@ impl crate::vfs::File for SqliteFile {
         .map_err(|_| VfsError::NotFound)
     }
 }
+

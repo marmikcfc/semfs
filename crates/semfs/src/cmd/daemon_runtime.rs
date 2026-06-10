@@ -528,19 +528,23 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         });
     }
 
-    startup.report("mounting_fs", "mounting filesystem")?;
-    let handle = mount_fs(fs.clone(), opts).await?;
-
-    // Materialize the workspace knowledge graph (`/KNOWLEDGE_GRAPH.md`) from the
-    // warm cache's entity edges so `ls` shows it and `cat` serves it immediately.
-    // Fail-soft: a graph error never blocks the mount. On a fresh seed the graph
-    // is sparse → a structural map now, refreshed by the L7 worker as edges land.
-    // Gated by `SEMFS_KG` (default on) so the KG can be A/B'd against no-KG.
+    // Materialize the workspace knowledge graph BEFORE the filesystem goes live, so
+    // "mount ready" implies "KG ready". Otherwise an agent that reads
+    // `kg/KNOWLEDGE_GRAPH.md` (or the injected AGENTS.md/CLAUDE.md hints) the instant
+    // the mount is browsable can RACE the materialization, read an empty file, and
+    // fabricate from a bare workdir (RCA: a codex graph-fs run read an empty KG
+    // mid-build → 0/15). A large graph (Louvain + digest) takes seconds; doing it
+    // before `mount_fs` makes the mount BLOCK on it instead of racing the consumer.
+    // Mount-independent: it only touches the cache db + derived siblings. Fail-soft:
+    // a graph error never blocks the mount. Gated by `SEMFS_KG` (default on).
     if semfs_core::cache::graph_file::kg_enabled() {
         if let Err(e) = fs.refresh_knowledge_graph() {
             tracing::warn!("knowledge-graph build failed (non-fatal): {e}");
         }
     }
+
+    startup.report("mounting_fs", "mounting filesystem")?;
+    let handle = mount_fs(fs.clone(), opts).await?;
 
     // Auto-install grep wrapper on first mount.
     if let Ok(true) = super::init::ensure_grep_wrapper_present() {

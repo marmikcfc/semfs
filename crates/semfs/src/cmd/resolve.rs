@@ -162,6 +162,21 @@ pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
         );
     }
     Ok(match choose_embed(env) {
+        // BYO-ONNX route: `SEMFS_EMBED_MODEL=gemma-q4` loads a custom Q4 gemma ONNX
+        // from `SEMFS_EMBED_ONNX_DIR` (default `$HOME/gemma_q4`), since the fastembed
+        // registry exposes only fp32 gemma and has no Q4 mode. Everything else uses
+        // the registry. The q4 embedder's identity (`byo:gemma-q4-onnx:768`) differs
+        // from the registry's, so a q4 seed and an fp32 seed can't be cross-read.
+        EmbedChoice::Local if env.embed_model.as_deref() == Some("gemma-q4") => {
+            let dir = std::env::var("SEMFS_EMBED_ONNX_DIR")
+                .unwrap_or_else(|_| format!("{}/gemma_q4", std::env::var("HOME").unwrap_or_default()));
+            Arc::new(LocalEmbedder::from_onnx_dir(
+                std::path::Path::new(&dir),
+                768,
+                "model_q4",
+                "gemma-q4-onnx",
+            )?)
+        }
         EmbedChoice::Local => Arc::new(LocalEmbedder::from_registry(
             text_embed_model(env.embed_model.as_deref()),
             None,

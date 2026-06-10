@@ -285,7 +285,20 @@ def _toml_str(value: str) -> str:
 
 
 def _provider_config_arg(*, base_url: str) -> str:
-    return "{name=\"ripbench\", base_url=" + _toml_str(base_url) + ", env_key=\"CODEX_API_KEY\", wire_api=\"responses\"}"
+    # wire_api: "responses" (default) hits the OpenAI Responses API; "chat" hits
+    # /chat/completions. On OpenRouter the chat path surfaces prompt caching
+    # (usage.prompt_tokens_details.cached_tokens) which the responses path did not,
+    # so set CODEX_WIRE_API=chat to capture caching in multi-turn runs.
+    wire = (os.environ.get("CODEX_WIRE_API") or "responses").strip().lower()
+    if wire not in ("responses", "chat"):
+        wire = "responses"
+    return (
+        "{name=\"ripbench\", base_url="
+        + _toml_str(base_url)
+        + ", env_key=\"CODEX_API_KEY\", wire_api=\""
+        + wire
+        + "\"}"
+    )
 
 
 def _should_use_chat_adapter(model: str) -> bool:
@@ -599,19 +612,41 @@ def run(
     )
     if not api_key:
         api_key = None
+    # ChatGPT-account auth path (CODEX_USE_CHATGPT=1): codex uses its logged-in
+    # ChatGPT OAuth instead of a configured provider/API key. No base_url/api_key
+    # is required and NO provider override is passed below — codex's default
+    # "openai" provider serves the OAuth login. The model still comes from the run
+    # config (e.g. gpt-5.4).
+    use_chatgpt = str(os.environ.get("CODEX_USE_CHATGPT") or "").strip().lower() in {"1", "on", "true", "yes"}
     if not model:
         return {"status": "error", "paths": [], "errorMessage": "Missing model in api_provider"}
-    if not api_key:
+    if use_chatgpt and "/" in model:
+        # ChatGPT/OpenAI expects a bare model id (e.g. "gpt-5.4"); the run config
+        # carries the OpenRouter "openai/…" slug for the API-key path. Strip it.
+        model = model.rsplit("/", 1)[-1]
+    if not api_key and not use_chatgpt:
         return {"status": "error", "paths": [], "errorMessage": "Missing CODEX_API_KEY/apiProvider.apiKey for Codex harness"}
 
     adapter_server = None
     provider_base_url = base_url
     provider_api_key = api_key
-    if _should_use_chat_adapter(model):
+    if not use_chatgpt and _should_use_chat_adapter(model):
         adapter_server, provider_base_url = _start_chat_adapter(target_base_url=base_url, api_key=api_key, model=model, raw_dir=raw_dir)
         provider_api_key = "local-adapter"
 
     last_message_path = os.path.join(raw_dir, "last_message.txt")
+    # No provider override on the ChatGPT path → codex's default provider uses the
+    # logged-in ChatGPT account. Otherwise route via the configured "ripbench" provider.
+    provider_args = (
+        []
+        if use_chatgpt
+        else [
+            "-c",
+            "model_provider=\"ripbench\"",
+            "-c",
+            f"model_providers.ripbench={_provider_config_arg(base_url=provider_base_url)}",
+        ]
+    )
     cmd = [
         codex_bin,
         "-a",
@@ -628,10 +663,7 @@ def run(
         last_message_path,
         "--model",
         model,
-        "-c",
-        "model_provider=\"ripbench\"",
-        "-c",
-        f"model_providers.ripbench={_provider_config_arg(base_url=provider_base_url)}",
+        *provider_args,
         # Pass the prompt as a positional arg (NOT piped via stdin). Piping the
         # prompt and letting communicate() close stdin gives codex's exec_command
         # sessions a closed stdin → "write_stdin failed: stdin is closed for this
@@ -653,29 +685,43 @@ def run(
     )
 
     env = os.environ.copy()
-    env["CODEX_API_KEY"] = provider_api_key
+    if use_chatgpt:
+        # Force the logged-in ChatGPT OAuth: remove any API keys / base-url so codex
+        # doesn't switch to API-key auth (it would send the OpenRouter key to
+        # api.openai.com → 401) or get redirected to a custom endpoint.
+        for _k in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"):
+            env.pop(_k, None)
+    elif provider_api_key:
+        env["CODEX_API_KEY"] = provider_api_key
     used_timeout = timeout_s if isinstance(timeout_s, (int, float)) and timeout_s > 0 else None
     stdout_text = ""
     stderr_text = ""
     exit_code = 1
-    # Give codex a PTY on stdin so its exec_command tool runs in tty mode and
-    # keeps the per-session stdin open across multiple commands in one turn (the
-    # prompt is now a positional arg, so stdin carries no input). We keep the PTY
-    # master open (never EOF) and read stdout/stderr from ordinary pipes.
-    import pty as _pty
+    # stdin handling. The OpenRouter/HTTP path keeps a PTY on stdin so codex's
+    # exec_command tool runs in tty mode with stdin open across multi-command
+    # turns. But codex 0.133 BLOCKS at "Reading additional input from stdin…" when
+    # stdin never EOFs (the open PTY master) — fatal on the ChatGPT-OAuth path,
+    # which hung indefinitely before its first turn. `/dev/null` gives immediate
+    # EOF and still supports multi-command turns in 0.133 (verified), so the
+    # ChatGPT path uses it; the OpenRouter path keeps the PTY to avoid regressing.
+    master_fd = None
+    slave_fd = None
+    if not use_chatgpt:
+        import pty as _pty
 
-    master_fd, slave_fd = _pty.openpty()
+        master_fd, slave_fd = _pty.openpty()
     try:
         proc = subprocess.Popen(
             cmd,
             cwd=os.path.abspath(work_dir),
             env=env,
-            stdin=slave_fd,
+            stdin=(slave_fd if slave_fd is not None else subprocess.DEVNULL),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        os.close(slave_fd)  # child owns the slave now
+        if slave_fd is not None:
+            os.close(slave_fd)  # child owns the slave now
         try:
             stdout_text, stderr_text = proc.communicate(timeout=used_timeout)
             exit_code = int(proc.returncode or 0)
@@ -697,10 +743,11 @@ def run(
         stderr_text = str(e)
         exit_code = 1
     finally:
-        try:
-            os.close(master_fd)
-        except Exception:
-            pass
+        if master_fd is not None:
+            try:
+                os.close(master_fd)
+            except Exception:
+                pass
         if adapter_server is not None:
             try:
                 adapter_server.shutdown()

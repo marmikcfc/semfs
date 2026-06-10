@@ -1,0 +1,5 @@
+semfs: server rejected this file (HTTP 402).
+
+reason: {"error":"SuperRAG text limit reached","details":"You've run out of credits. Top up to continue."}
+
+To retry, delete this error file and re-copy the source.

@@ -91,6 +91,14 @@ fn snippet_return_mode() -> bool {
         .unwrap_or(false)
 }
 
+/// True if `path` is the agent's own output directory (`model_output/`) — where
+/// the agent stages its deliverable. Such files are never SOURCES, so search
+/// excludes them (a prior run's fabricated output must not be retrieved as data).
+fn is_agent_output_path(path: &str) -> bool {
+    let p = path.trim_start_matches('/');
+    p == "model_output" || p.starts_with("model_output/")
+}
+
 /// A post-rerank ranking stage (`SEMFS_SALIENCE` / `SEMFS_COMENTION`) is ENABLED
 /// unless its env var is explicitly set to an off value. Lets us A/B the L6/L7
 /// boosts off for deterministic, pure-rerank ordering.
@@ -1425,6 +1433,12 @@ impl SqliteVecStore {
             }
         }
 
+        // Never return the agent's own output dir as a SOURCE: a prior run's
+        // deliverable under `model_output/` may be fabricated, and retrieving it
+        // lures the agent into copying it (case-289: stale fabricated list →
+        // 207K tokens, dishonest 5/15). Drop before the top-N cap.
+        hits.retain(|h| !h.filepath.as_deref().is_some_and(is_agent_output_path));
+
         // Knob B: cap to the returned top-N (Supermemory parity) BEFORE attaching
         // documents, so we reconstruct text for ~N files, not the whole pool.
         hits.truncate(result_limit());
@@ -1437,13 +1451,17 @@ impl SqliteVecStore {
         // cloud path fills, so grep renders local + cloud identically.
         if !hits.is_empty() {
             if snippet_return_mode() {
-                // Cloud-style: return only the matched chunk(s) already on each hit
-                // (the reranker's input), capped — no whole-doc stitch.
+                // H1 trust-marker path: leave `memory` None so `grep` renders each hit
+                // via the chunk presenter (line ranges + `# ^ COMPLETE FILE — …do not
+                // open it`), matching the cloud backend. That "the excerpt IS the file,
+                // don't re-open it" signal is what stops codex pandas/xlrd/zipfile-
+                // parsing the file — the format-trap token sink (case-289 gfs2/gfs3).
+                // Populating `memory` here would short-circuit grep.rs before the
+                // presenter and emit a bare `path:dump` with no marker (the old local
+                // behavior). The `[semfs: SOURCE INACCESSIBLE]` 403 chunk is preserved
+                // (grep handles it ahead of the presenter), so local keeps honesty too.
                 for h in hits.iter_mut() {
-                    if let Some(c) = h.chunk.clone() {
-                        let n = floor_char_boundary(&c, doc_return_cap());
-                        h.memory = Some(c[..n].to_string());
-                    }
+                    h.memory = None;
                 }
             } else {
                 let conn = self.db.conn.lock();
@@ -2469,6 +2487,87 @@ mod tests {
         assert_eq!(fs.unindexed_count(), 0);
     }
 
+    /// Flushing a binary xlsx indexes extracted text into `chunks` so it is
+    /// queryable via `Db::get_extracted_text` (the grep-inline path). No sibling
+    /// file is materialised — that would duplicate storage already in `chunks`.
+    #[tokio::test]
+    async fn flush_xlsx_extracted_text_queryable_via_db() {
+        use crate::cache::{CacheFs, LocalIndexer, ROOT_INO};
+        use crate::vfs::FileSystem;
+
+        const XLSX: &[u8] = include_bytes!("../../tests/fixtures/chanpin/sample.xlsx");
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store =
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
+        let fs = CacheFs::new(db.clone()).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
+
+        let (_attr, handle) = fs
+            .create_file(ROOT_INO, "sales.xlsx", 0o644, 0, 0)
+            .await
+            .unwrap();
+        handle.write(0, XLSX).await.unwrap();
+        handle.flush().await.unwrap();
+
+        // No `.extracted.md` sibling in the FUSE mount — storage stays lean.
+        let names = fs.readdir(ROOT_INO).await.unwrap().unwrap_or_default();
+        assert!(
+            !names.iter().any(|n| n.ends_with(".extracted.md")),
+            "unexpected extracted sibling in FUSE; entries: {names:?}"
+        );
+
+        // Extracted text must be queryable from the chunks table.
+        let text = db
+            .get_extracted_text("/sales.xlsx")
+            .expect("extracted text must be present in chunks");
+        assert!(
+            text.contains("Changan Automobile"),
+            "extracted text missing known cell; got: {:?}",
+            &text[..text.len().min(200)]
+        );
+    }
+
+    /// `Db::upsert_extracted_sibling` materialises a read-only `.extracted.md`
+    /// sibling in the FUSE mount — the `SEMFS_EXTRACT_SIBLING=on` delivery path,
+    /// where the agent `cat`s a few lines instead of receiving the whole file
+    /// inline via grep. Idempotent: a repeat call reuses the derived inode.
+    #[tokio::test]
+    async fn upsert_extracted_sibling_materialises_readonly_sibling() {
+        use crate::cache::{CacheFs, LocalIndexer, ROOT_INO};
+        use crate::vfs::FileSystem;
+
+        const XLSX: &[u8] = include_bytes!("../../tests/fixtures/chanpin/sample.xlsx");
+
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store =
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
+        let fs = CacheFs::new(db.clone()).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
+
+        let (_attr, handle) = fs
+            .create_file(ROOT_INO, "sales.xlsx", 0o644, 0, 0)
+            .await
+            .unwrap();
+        handle.write(0, XLSX).await.unwrap();
+        handle.flush().await.unwrap();
+
+        let text = db
+            .get_extracted_text("/sales.xlsx")
+            .expect("extracted text must be present in chunks");
+
+        // Materialise the sibling (what flush does under SEMFS_EXTRACT_SIBLING=on),
+        // then again to prove idempotency.
+        let ino1 = db.upsert_extracted_sibling("/sales.xlsx", &text).unwrap();
+        let ino2 = db.upsert_extracted_sibling("/sales.xlsx", &text).unwrap();
+        assert_eq!(ino1, ino2, "upsert must reuse the derived inode in place");
+
+        // Visible in the FUSE mount as a sibling of the source file.
+        let names = fs.readdir(ROOT_INO).await.unwrap().unwrap_or_default();
+        assert!(
+            names.iter().any(|n| n == "sales.xlsx.extracted.md"),
+            "extracted sibling missing from FUSE; entries: {names:?}"
+        );
+    }
+
     /// A binary file with no recoverable text is recorded as unindexed (visible
     /// in `semfs status`) — never silently dropped, never crashes the flush.
     #[tokio::test]
@@ -2680,6 +2779,51 @@ mod tests {
             "final score should be the reranker's (≫ RRF's ~0.017), got {}",
             hits[0].similarity
         );
+    }
+
+    /// H1b: a prior run's deliverable under `model_output/` (possibly fabricated)
+    /// must never be returned as a search SOURCE — case-289's worst run read a
+    /// stale fabricated `model_output/` list and copied it (207K tokens, 5/15,
+    /// dishonest). Search must exclude the agent's own output dir.
+    #[tokio::test]
+    async fn search_excludes_agent_output_dir() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap();
+        store
+            .index(2, "/notes/auth.md", "reset your password via the emailed link")
+            .unwrap();
+        store
+            .index(3, "/model_output/answer.md", "reset your password via the emailed link")
+            .unwrap();
+        let hits = store.search("password reset", None).await.unwrap();
+        assert!(!hits.is_empty(), "the real source should still be found");
+        assert!(
+            hits.iter().all(|h| h.filepath.as_deref() != Some("/model_output/answer.md")),
+            "model_output/ (agent's own output) must be excluded from search"
+        );
+    }
+
+    /// H1: in snippet mode the store must NOT populate `memory`, so `grep` renders
+    /// each hit through the chunk presenter (line ranges + `# ^ COMPLETE FILE …do not
+    /// open it`) instead of a bare `path:dump`. Populating `memory` short-circuits
+    /// grep.rs ahead of the presenter — the local behavior that left codex distrusting
+    /// the excerpt and format-trapping (.xls parse loops). Chunk stays for the presenter.
+    #[tokio::test]
+    async fn snippet_mode_leaves_memory_none_so_grep_emits_complete_marker() {
+        std::env::set_var("SEMFS_RETURN_MODE", "snippet");
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap();
+        store
+            .index(2, "/notes/auth.md", "reset your password via the emailed link")
+            .unwrap();
+        let hits = store.search("password reset", None).await.unwrap();
+        std::env::remove_var("SEMFS_RETURN_MODE");
+        assert!(!hits.is_empty(), "expected a hit for the indexed file");
+        assert!(
+            hits[0].memory.is_none(),
+            "snippet mode must leave memory None so grep uses the chunk presenter"
+        );
+        assert!(hits[0].chunk.is_some(), "chunk must be preserved for the presenter");
     }
 
     // The whole local pipeline to the reranker stage (real fastembed embed →

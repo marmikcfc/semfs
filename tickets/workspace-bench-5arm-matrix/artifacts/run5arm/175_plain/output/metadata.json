@@ -1,0 +1,90 @@
+{
+  "absolute_id": 175,
+  "persona": "Product Manager",
+  "task": "Generate a fixed asset depreciation ledger (__ PH_12 __) based on the 2024 asset depreciation details and output it to the desktop",
+  "task_diff": "medium",
+  "output_files": [
+    "Depreciation_Ledger_For_Fixed_Assets.xlsx"
+  ],
+  "rubrics": [
+    "Have you successfully read all 5 depreciation statement CSV files (__ PH_10 __ to __ PH_9 __)?",
+    "Whether the output file __ PH_12 __ contains 5 data records, corresponding to 5 months from January to May",
+    "Whether the first line of the ledger contains the correct column header: month, asset number, asset name, purchase date, original value, current month depreciation, accumulated depreciation, net value, residual value rate",
+    "Whether the asset number in the January 2024 record is FA-2023-001, and whether the asset name is office equipment 1",
+    "Whether the depreciation for this month is ¥417 in the January 2024 record, and whether the accumulated depreciation is ¥2277",
+    "Is the residual value rate of 5% for all records",
+    "Whether the purchase date of all assets is retained: 2023-12-11, 2023-05-02, 2023-02-17, 2023-11-20, 2023-11-18",
+    "Whether the data is sorted in ascending order by month (→January-May order)",
+    "Whether all numeric fields (original value, current month depreciation, accumulated depreciation, net value) retain the original currency symbol ¥ prefix",
+    "Whether the generated Excel file can be opened normally, and whether the sheet name is' fixed asset depreciation ledger '",
+    "Whether each record in the ledger is correctly associated with the corresponding month information, and there is no mismatch",
+    "Whether all 5 raw data are included in the ledger and none of the original records are missing"
+  ],
+  "rubric_types": [
+    "Basic Evaluation",
+    "Basic Evaluation",
+    "Basic Evaluation",
+    "Outcome Evaluation",
+    "Outcome Evaluation",
+    "Process Evaluation",
+    "Process Evaluation",
+    "Process Evaluation",
+    "Process Evaluation",
+    "Outcome Evaluation",
+    "Outcome Evaluation",
+    "Outcome Evaluation"
+  ],
+  "file_dep_graph": [
+    {
+      "from": "Depreciation_Breakdown_2024_1.csv",
+      "to": "Depreciation_Ledger_For_Fixed_Assets.xlsx"
+    },
+    {
+      "from": "Depreciation_Breakdown_2024_2.csv",
+      "to": "Depreciation_Ledger_For_Fixed_Assets.xlsx"
+    },
+    {
+      "from": "Depreciation_Breakdown_2024_3.csv",
+      "to": "Depreciation_Ledger_For_Fixed_Assets.xlsx"
+    },
+    {
+      "from": "Depreciation_Breakdown_2024_4.csv",
+      "to": "Depreciation_Ledger_For_Fixed_Assets.xlsx"
+    },
+    {
+      "from": "Depreciation_Breakdown_2024_5.csv",
+      "to": "Depreciation_Ledger_For_Fixed_Assets.xlsx"
+    }
+  ],
+  "data_manifest": [
+    {
+      "filename": "Depreciation_Breakdown_2024_5.csv",
+      "stored_relpath": "data/43c3f049437012df_Depreciation_Breakdown_2024_5.csv"
+    },
+    {
+      "filename": "Depreciation_Breakdown_2024_1.csv",
+      "stored_relpath": "data/c18fdec4b127d343_Depreciation_Breakdown_2024_1.csv"
+    },
+    {
+      "filename": "Depreciation_Breakdown_2024_2.csv",
+      "stored_relpath": "data/19f1558770101d64_Depreciation_Breakdown_2024_2.csv"
+    },
+    {
+      "filename": "Depreciation_Breakdown_2024_3.csv",
+      "stored_relpath": "data/a50a9badb09b0574_Depreciation_Breakdown_2024_3.csv"
+    },
+    {
+      "filename": "Depreciation_Breakdown_2024_4.csv",
+      "stored_relpath": "data/1282d3320b36d138_Depreciation_Breakdown_2024_4.csv"
+    }
+  ],
+  "tested_capabilities": [
+    "Workspace Exploration",
+    "Result-Providing Files Utilization"
+  ],
+  "id": "175",
+  "file_system": "产品人员",
+  "user_profit": "产品人员",
+  "job": "Product Manager",
+  "__metadata_path": "/srv/semfs-benchmark/Workspace-Bench/evaluation/tasks_lite/175/metadata.json"
+}

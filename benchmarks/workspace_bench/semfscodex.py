@@ -629,38 +629,6 @@ def _restore_outputs_to_workdir(
     return restored
 
 
-import os as _os
-_SEMFS_PROTOCOL = (
-    "TOOL PROTOCOL for this workspace (a semfs semantic-search mount):\n"
-    "0. This workspace has a KNOWLEDGE GRAPH. To orient, you may `cat KNOWLEDGE_GRAPH.md`\n"
-    "   (topics + key concepts) and `cat GRAPH_REPORT.md` (god-node concepts, typed\n"
-    "   relations, and KNOWLEDGE GAPS — including any inaccessible / error-page source\n"
-    "   files). Use it to learn the corpus and which sources are broken.\n"
-    "1. FIRST action: run  semfs grep \"<2-6 key terms>\" .  — it returns the answer\n"
-    "   excerpt ranked #1 (top result = best match). Do NOT start by exploring.\n"
-    "2. A result line followed by '# ^ COMPLETE FILE' is that file's ENTIRE content —\n"
-    "   copy it directly; do not open the file.\n"
-    "3. Do NOT use os.walk / find / ls -R / glob to enumerate the tree, and do NOT\n"
-    "   manually unzip or pandas/openpyxl-parse files. Many files are mislabeled\n"
-    "   (e.g. an .xlsx that is actually a tiny HTML error page); if any parse fails\n"
-    "   once, STOP and trust the grep excerpt instead.\n"
-    "4. If any grep result is a 'semfs: SOURCE INACCESSIBLE' annotation, the source\n"
-    "   the task relies on is unreadable (an HTTP error page / wrong format). Report\n"
-    "   the failure ACCURATELY and SPECIFICALLY in your output — state the concrete\n"
-    "   error the annotation gives (the HTTP status, the real format, that the data\n"
-    "   could not be read) — instead of vaguely saying no data was found. Do NOT\n"
-    "   fabricate data and do NOT substitute a differently-named file's data.\n"
-    "5. Otherwise, if a grep result's content already satisfies the task, that\n"
-    "   result IS the answer — use it verbatim and STOP. Do NOT re-grep with\n"
-    "   synonyms or hunt for a separate 'raw source' to re-derive it.\n"
-    "6. Make at most two or three greps, then write your output from the grep\n"
-    "   excerpt. Never describe your tool usage in the output file itself.\n\n"
-)
-def _apply_protocol(_p):
-    if _os.environ.get("SEMFS_PROTOCOL", "on").lower() in ("off", "0", "false", "no"):
-        return _p
-    return _SEMFS_PROTOCOL + _p
-
 def run(
     *,
     prompt: str,
@@ -696,11 +664,35 @@ def run(
             "durationMs": int(mount_result.get("durationMs") or 0),
         }
 
+    # SEMFS_NO_HOME_HINT=1: delete home-level agent instruction files immediately
+    # after mount so the agent sees only the workspace-root AGENTS.md/CLAUDE.md,
+    # not the duplicate home-level block. Used for A/B token experiments.
+    if _truthy(os.environ.get("SEMFS_NO_HOME_HINT")):
+        _home = Path.home()
+        _hint_paths = [
+            _home / ".codex" / "AGENTS.md",
+            _home / ".claude" / "CLAUDE.md",
+            _home / ".gemini" / "GEMINI.md",
+        ]
+        removed = []
+        for _hp in _hint_paths:
+            try:
+                _hp.unlink(missing_ok=True)
+                removed.append(str(_hp))
+            except OSError:
+                pass
+        semfs_trace["noHomeHint"] = {"removed": removed}
+
     result: Dict[str, Json]
     staged: List[Tuple[str, str]] = []
     try:
+        # Clean A/B: send the EXACT upstream-wrapped prompt the baseline gets — no
+        # semfs-specific protocol prepended. semfs is tested purely as an environment
+        # (a mount + the product-injected AGENTS.md/kg files), with stock codex.py
+        # invoked unchanged at the mount root. Any difference vs baseline is the
+        # product, not harness coaching.
         result = codex_run(
-            prompt=_apply_protocol(prompt),
+            prompt=prompt,
             work_dir=work_dir,
             sandbox_dir=sandbox_dir,
             timeout_s=timeout_s,

@@ -1,7 +1,7 @@
 # Feature: local document text extractors in semfs (L1 parse) — index Office/PDF/legacy/images without Supermemory
 
 - **Type:** Feature (backend-agnosticism / local-authoritative seeding)
-- **Status:** IMPLEMENTED 2026-06-03 (extractors + flush hook + accounting; Codex-reviewed; large-doc hang fixed). Pending: EC2 E2E re-run + merge.
+- **Status:** IMPLEMENTED 2026-06-03 (pure-Rust extractors + flush hook + accounting; Codex-reviewed; large-doc hang fixed). **FAST-FOLLOWS IMPLEMENTED 2026-06-08** (CLI-tool fallbacks: pdftotext / soffice / page-split OCR — closes the named CJK-PDF + legacy-`.ppt` gaps; coverage 663→696/704 on the q4 seed). See "Update — 2026-06-08" below. Pending: commit (`feat/backend-agnostic-store`, currently deployed-to-box-only) + merge.
 - **Created:** 2026-06-03
 - **Component:** `semfs-core` — new `extract` module + hook in `cache/file.rs::flush()`; `semfs status` (`unindexed_files`)
 - **Branch context:** `feat/backend-agnostic-store`
@@ -132,6 +132,50 @@ Landed in `crates/semfs-core/src/extract/` + `cache/file.rs` + `cache/db.rs` +
 - **Review:** Codex adversarial pass (2 HIGH + 4 MEDIUM) + a verification pass
   (2 MEDIUM) + `codex exec review` (1 P1) — all resolved. `cargo test
   -p semfs-core` green (260), clippy + fmt clean.
+
+## Update — 2026-06-08: fast-follows implemented (CLI-tool fallbacks)
+
+The two "fast-follow" gaps named above (legacy `.ppt`/OLE, and CJK PDFs) are now closed by
+shelling out to the **mature CLI tools the Workspace-Bench agents themselves use** — a
+**deliberate reversal of the original "pure-Rust, no LibreOffice shell-out" posture**, justified
+because the pure-Rust extractors structurally cannot decode CJK CID fonts (`pdf-extract`),
+legacy OLE (`.doc`/`.ppt`), or scanned-image PDFs, while these tools can, fast and locally. The
+pattern: when the pure-Rust extractor returns `None`, fall back to the CLI tool (still
+content-sniffed, never extension-trusted; gated, bounded, graceful when the tool is absent).
+
+**Shipped (49 extract tests pass; deployed to box, uncommitted):**
+- **`pdftotext` (poppler)** — `extract/pdf.rs::pdftotext`. Reads CJK CID-font **text layers** that
+  `pdf-extract` panics on (verified: 57-page PDF → 28,701 CJK chars, <1 s, no OCR). This is the
+  big win: the prior whole-PDF `mistral-ocr` fallback **timed out (120 s)** on multi-MB CJK PDFs
+  whose text was sitting in a layer the whole time.
+- **`soffice` (LibreOffice headless)** — `extract/mod.rs::soffice_to_text`. Universal fallback for
+  legacy OLE `.doc`/`.ppt`/`.xls` + any office binary the Rust path can't read. Gated to OLE2/OOXML
+  containers, format-aware filter (Writer→txt, Calc→csv, Impress→txt), **private per-call
+  `UserInstallation` profile** (so concurrent warm extractions don't collide on soffice's lock).
+- **`ocr_pdf_paged` (poppler + vision)** — `extract/ocr.rs`. For image-only scans of ANY size:
+  `pdftoppm` rasterizes ≤40 pages → downscaled ~100 KB JPEGs → per-page `gpt-4.1-mini` vision OCR
+  (bounded-parallel, 6 workers) → concat. **Recovered the 141-page + 28-page scanned PDFs** the
+  whole-blob OCR couldn't touch (the unit of work is now "one page," not "whole document").
+
+**New PDF routing chain** (`extract/mod.rs`): `pdf-extract → pdftotext → ocr_pdf_paged → ocr_pdf`
+(cheap+local first, expensive+networked last). Legacy OLE: `<pure-Rust> → soffice`.
+
+**New runtime dependencies (host, not the binary):** `poppler-utils` (`pdftotext`/`pdftoppm`) and
+`libreoffice-writer/calc/impress`. The binary degrades gracefully (returns `None` → unindexed) when
+they're absent, so the build is still a single static binary — but **full coverage now requires
+these on the seed/serving host.** Acceptance criterion "pure-Rust single binary (no native libs)"
+is **amended**: extractor *fallbacks* are external CLI tools (opt-in by presence), not linked libs.
+
+**Coverage result (q4 seed, `chanpin-gemma-q4`):** 663 → **696 / 704 contentful files (98.9%)**.
+Remaining 8 are genuinely hard: 2 truly-empty (a `.pyc`, a `.jpg` photo), 2 `P0202…` PDFs poppler
+**cannot parse** (malformed/encrypted), ~4 image-only `.pptx` / odd legacy `.xls` edge cases.
+
+**Root cause of the low *initial* coverage** (separate from the extractor gaps): the seed daemon ran
+**without `OPENROUTER_API_KEY`** — `source`'d from `.semfs_seed_env` (plain `KEY=…`) but never
+`export`ed, so every LLM OCR/vision/xlsx-summary fallback returned `None`. The recurring footgun;
+durable fix = `export` in `.semfs_seed_env`. RCAs:
+`rcas/2026-06-08-extraction-coverage-cjk-pdf-legacy-ole-empty-placeholders.md`,
+`rcas/2026-06-08-kg-materialization-race-empty-kg-codex-fabrication.md`; EXPERIMENTS.md §8.
 
 ## Acceptance criteria
 

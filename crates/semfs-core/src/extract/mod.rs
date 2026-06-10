@@ -42,6 +42,24 @@ const OCR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 /// raw cells on a per-call failure, so only a true hang reaches this ceiling.
 const SUMMARY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
+/// Wall-clock budget for a headless LibreOffice conversion — the universal
+/// fallback for legacy OLE `.doc`/`.ppt` and any office binary the pure-Rust
+/// extractors can't read (the same tool Workspace-Bench agents shell out to).
+/// Generous because soffice cold-starts an office process; bounded so one slow
+/// file can't stall the import.
+const SOFFICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Wall-clock budget for page-split PDF OCR (`pdftoppm` rasterize + per-page
+/// vision, bounded-parallel). Larger than the single-shot `OCR_TIMEOUT` because
+/// it fans out up to `MAX_OCR_PAGES` small requests — but each page is tiny, so
+/// the bounded-concurrency fan-out still finishes well inside this.
+const PAGED_OCR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Wall-clock budget for the VLM-describe fallback on an OFFICE file: a soffice
+/// convert-to-PDF, then `pdftoppm` rasterize, then a few describe calls. Sum of
+/// the soffice + paged-render budgets, bounded so one file can't stall a seed.
+const DESCRIBE_OFFICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(240);
+
 /// Extract searchable text from a document's raw bytes, routing by sniffed
 /// format. CPU parsers run on the blocking pool (time-bounded); image OCR is a
 /// key-gated network call. The returned text is capped to `MAX_EXTRACT_BYTES`.
@@ -51,7 +69,10 @@ const SUMMARY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180)
 pub async fn extract_text(filepath: &str, bytes: &[u8]) -> Option<String> {
     let fmt = sniff(bytes);
     let owned = bytes.to_vec();
-    let result = match fmt {
+    // Opt-in merged vision tier: for visual formats it transcribes text if
+    // present, else describes — so a textless image is never indexed as OCR junk.
+    let describe = vlm_describe_enabled();
+    let primary = match fmt {
         DocFormat::Docx => blocking(move || ooxml::extract_docx(&owned), EXTRACT_TIMEOUT).await,
         DocFormat::Pptx => blocking(move || ooxml::extract_pptx(&owned), EXTRACT_TIMEOUT).await,
         DocFormat::Xlsx | DocFormat::Xls => {
@@ -67,26 +88,124 @@ pub async fn extract_text(filepath: &str, bytes: &[u8]) -> Option<String> {
             .await
         }
         DocFormat::Pdf => {
-            // Pure-Rust text layer first; if it can't decode (scanned, or CJK CID
-            // fonts pdf-extract chokes on), fall back to gpt-4.1-mini, which reads
-            // the PDF natively (OpenRouter file-parser). Key-gated: no key ⇒ the
-            // fallback returns None ⇒ unindexed. RCA: local-seed-coverage-gaps #2.
+            // Three tiers, cheapest first: (1) pure-Rust text layer; (2) poppler
+            // `pdftotext` — reads CJK CID-font text layers that pdf-extract can't
+            // decode, fast + local, so a large CJK PDF never reaches the slow OCR;
+            // (3) gpt-4.1-mini `mistral-ocr` for TRUE scans only (no text layer).
+            // OCR is the last resort, not the second — it timed out on multi-MB
+            // CJK PDFs that actually had extractable text (local-seed-coverage-gaps).
+            let for_poppler = owned.clone();
+            let for_paged = owned.clone();
             let for_ocr = owned.clone();
             match blocking(move || pdf::extract_pdf(&owned), EXTRACT_TIMEOUT).await {
                 Some(t) => Some(t),
-                None => blocking(move || ocr::ocr_pdf(&for_ocr), OCR_TIMEOUT).await,
+                None => match blocking(move || pdf::pdftotext(&for_poppler), EXTRACT_TIMEOUT).await
+                {
+                    Some(t) => Some(t),
+                    // Image-only scan (no text layer): merged vision
+                    // (transcribe-or-describe) when enabled, else the
+                    // transcribe-only OCR chain (page-split, then whole-PDF).
+                    None => {
+                        if describe {
+                            blocking(
+                                move || ocr::vision_extract_pdf_paged(&for_paged),
+                                PAGED_OCR_TIMEOUT,
+                            )
+                            .await
+                        } else {
+                            match blocking(move || ocr::ocr_pdf_paged(&for_paged), PAGED_OCR_TIMEOUT)
+                                .await
+                            {
+                                Some(t) => Some(t),
+                                None => blocking(move || ocr::ocr_pdf(&for_ocr), OCR_TIMEOUT).await,
+                            }
+                        }
+                    }
+                },
             }
         }
-        DocFormat::Jpeg => blocking(move || ocr::ocr_image(&owned), OCR_TIMEOUT).await,
+        DocFormat::Jpeg => {
+            if describe {
+                blocking(move || ocr::vision_extract_image(&owned), OCR_TIMEOUT).await
+            } else {
+                blocking(move || ocr::ocr_image(&owned), OCR_TIMEOUT).await
+            }
+        }
         // Known gaps / non-document content: accounted as unindexed by the caller.
         DocFormat::Ppt => legacy_ppt::extract_ppt(bytes),
         DocFormat::Html | DocFormat::Unknown => None,
+    };
+    // LibreOffice fallback — convert legacy OLE (`.doc`/`.ppt`) and any office
+    // binary the pure-Rust path couldn't read, the same tool Workspace-Bench
+    // agents shell out to. Gated to real office containers (OLE2 / OOXML zip) so
+    // soffice never fires on HTML or garbage; a no-op where soffice is absent
+    // (the spawn errors → None). RCA: tickets/local-seed-coverage-gaps (legacy).
+    let result = match primary {
+        Some(t) => Some(t),
+        None if is_office_binary(bytes) => {
+            let owned2 = bytes.to_vec();
+            let ext = soffice_ext(fmt);
+            blocking(move || soffice_to_text(&owned2, ext), SOFFICE_TIMEOUT).await
+        }
+        None => None,
+    };
+    // Office VLM fallback (opt-in): image-only slides/sheets that yielded no text
+    // get a merged vision pass (transcribe-or-describe) via soffice→PDF→render.
+    // Images/PDFs are already handled by the merged vision step in `primary`.
+    let result = match result {
+        Some(t) => Some(t),
+        None if describe && is_office_binary(bytes) => {
+            let b = bytes.to_vec();
+            let ext = soffice_ext(fmt);
+            blocking(
+                move || soffice_to_pdf(&b, ext).and_then(|pdf| ocr::vision_extract_pdf_paged(&pdf)),
+                DESCRIBE_OFFICE_TIMEOUT,
+            )
+            .await
+        }
+        None => None,
     };
     let result = result.map(cap_text);
     if result.is_none() {
         tracing::debug!(filepath, ?fmt, "extract_text produced no text (unindexed)");
     }
     result
+}
+
+/// Whether the opt-in VLM-describe fallback is enabled (`SEMFS_VLM_DESCRIBE`).
+/// Off by default: it adds vision-API cost and indexes descriptions rather than
+/// source text, so it's a deliberate per-run choice.
+fn vlm_describe_enabled() -> bool {
+    std::env::var("SEMFS_VLM_DESCRIBE")
+        .map(|v| matches!(v.trim(), "1" | "on" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+/// Convert an office document to PDF bytes with headless LibreOffice (so the
+/// describe tier can rasterize image-only slides/sheets). Mirrors
+/// [`soffice_to_text`]'s private-profile pattern. `None` if soffice is absent,
+/// errors, or produces no PDF.
+fn soffice_to_pdf(bytes: &[u8], ext: &str) -> Option<Vec<u8>> {
+    let dir = tempfile::tempdir().ok()?;
+    let input = dir.path().join(format!("in.{ext}"));
+    std::fs::write(&input, bytes).ok()?;
+    let profile = dir.path().join("profile");
+    let status = std::process::Command::new("soffice")
+        .args(["--headless", "--norestore", "--nolockcheck"])
+        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
+        .args(["--convert-to", "pdf", "--outdir"])
+        .arg(dir.path())
+        .arg(&input)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    std::fs::read(dir.path().join("in.pdf"))
+        .ok()
+        .filter(|b| !b.is_empty())
 }
 
 /// Truncate to at most `MAX_EXTRACT_BYTES`, on a UTF-8 char boundary so the
@@ -123,6 +242,67 @@ where
             tracing::warn!("extractor exceeded time budget; routing to unindexed");
             None
         }
+    }
+}
+
+/// True if the bytes are a real office-binary container — legacy OLE2
+/// (`D0CF11E0`) or an OOXML zip (`PK`). The gate for the LibreOffice fallback,
+/// so soffice never runs on HTML, images, or arbitrary garbage.
+fn is_office_binary(b: &[u8]) -> bool {
+    b.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]) || b.starts_with(b"PK\x03\x04")
+}
+
+/// Extension to hand LibreOffice so it selects the right import filter. An OLE2
+/// file that sniffed as `Unknown` is almost always legacy Word, so default to
+/// `.doc`.
+fn soffice_ext(fmt: DocFormat) -> &'static str {
+    match fmt {
+        DocFormat::Docx => "docx",
+        DocFormat::Xlsx => "xlsx",
+        DocFormat::Pptx => "pptx",
+        DocFormat::Xls => "xls",
+        DocFormat::Ppt => "ppt",
+        _ => "doc",
+    }
+}
+
+/// Convert a document to UTF-8 text with headless LibreOffice. Each call uses a
+/// PRIVATE `UserInstallation` profile dir so concurrent conversions during a warm
+/// can't collide on the shared default profile (soffice refuses a second instance
+/// otherwise). Returns `None` when soffice is absent, errors, or yields no text —
+/// the caller then accounts the file unindexed (never silently dropped).
+fn soffice_to_text(bytes: &[u8], ext: &str) -> Option<String> {
+    // LibreOffice's text-export filter is module-specific: Writer exports plain
+    // text (`txt:Text`), Calc exports CSV, Impress has no rich text export so we
+    // take its best-effort `txt`. The output filename's extension follows.
+    let (filter, out_ext) = match ext {
+        "xls" | "xlsx" => ("csv", "csv"),
+        "ppt" | "pptx" => ("txt", "txt"),
+        _ => ("txt:Text", "txt"), // doc/docx (Writer) + OLE-Unknown (legacy .doc)
+    };
+    let dir = tempfile::tempdir().ok()?;
+    let input = dir.path().join(format!("in.{ext}"));
+    std::fs::write(&input, bytes).ok()?;
+    let profile = dir.path().join("profile");
+    let status = std::process::Command::new("soffice")
+        .args(["--headless", "--norestore", "--nolockcheck"])
+        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
+        .args(["--convert-to", filter, "--outdir"])
+        .arg(dir.path())
+        .arg(&input)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    let out = dir.path().join(format!("in.{out_ext}"));
+    let text = std::fs::read_to_string(out).ok()?;
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
     }
 }
 
@@ -260,6 +440,51 @@ mod tests {
     }
 
     #[test]
+    fn office_binary_gate_admits_ole_and_ooxml_only() {
+        // The LibreOffice fallback fires ONLY for real office containers, so it
+        // never wastes a soffice spawn on HTML/images/garbage.
+        assert!(is_office_binary(PPT)); // legacy OLE2
+        assert!(is_office_binary(XLS)); // legacy OLE2
+        assert!(is_office_binary(DOCX)); // OOXML zip
+        assert!(!is_office_binary(PDF));
+        assert!(!is_office_binary(JPG));
+        assert!(!is_office_binary(HTML_AS_XLSX));
+        assert!(!is_office_binary(&[0xDE, 0xAD]));
+    }
+
+    #[test]
+    fn soffice_ext_maps_ole_unknown_to_doc() {
+        // An OLE2 file that sniffed Unknown is almost always legacy Word.
+        assert_eq!(soffice_ext(DocFormat::Unknown), "doc");
+        assert_eq!(soffice_ext(DocFormat::Ppt), "ppt");
+        assert_eq!(soffice_ext(DocFormat::Xls), "xls");
+    }
+
+    /// Live (skips without LibreOffice): the legacy `.ppt` that `legacy_ppt`
+    /// returns `None` for must now extract real text via the soffice fallback.
+    /// Validated on the seed box (where soffice is installed); skipped in CI.
+    #[tokio::test]
+    async fn extract_text_legacy_ppt_via_soffice_when_available() {
+        let soffice_ok = std::process::Command::new("soffice")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !soffice_ok {
+            eprintln!("skipping: soffice (LibreOffice) not installed");
+            return;
+        }
+        let t = extract_text("/x.ppt", PPT).await.expect("legacy .ppt via soffice");
+        assert!(
+            t.trim().chars().count() > 20,
+            "expected real slide text from soffice, got: {:?}",
+            t.chars().take(60).collect::<String>()
+        );
+    }
+
+    #[test]
     fn sniffs_extension_lie_html_as_html_not_xlsx() {
         // Named `.xlsx`, actually a 403 HTML page. `sniff` classifies by content,
         // so it returns Html (NOT Xlsx) — it would never be mis-sent to calamine.
@@ -323,7 +548,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extract_text_legacy_ppt_is_unindexed_gap() {
+    async fn extract_text_legacy_ppt_unindexed_without_soffice() {
+        // Without LibreOffice the pure-Rust path has no legacy-`.ppt` decoder, so
+        // the file is accounted unindexed (never dropped). WITH soffice it now
+        // extracts — see `extract_text_legacy_ppt_via_soffice_when_available`.
+        let soffice_ok = std::process::Command::new("soffice")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if soffice_ok {
+            eprintln!("skipping: soffice present (covered by the via_soffice test)");
+            return;
+        }
         assert_eq!(extract_text("/x.ppt", PPT).await, None);
     }
 

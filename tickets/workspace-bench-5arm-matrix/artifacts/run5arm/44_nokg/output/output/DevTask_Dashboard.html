@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Development Task Dashboard</title>
+  <style>
+    :root {
+      --bg:#0f172a; --panel:#111827; --card:#1f2937; --text:#e5e7eb; --muted:#94a3b8;
+      --accent:#38bdf8; --warn:#f59e0b; --danger:#ef4444; --border:#334155;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Arial,Helvetica,sans-serif; background:linear-gradient(135deg,#0f172a,#111827 50%,#1e293b); color:var(--text); }
+    .wrap { max-width:1100px; margin:0 auto; padding:32px 20px 48px; }
+    h1 { margin:0 0 8px; font-size:32px; }
+    .sub { color:var(--muted); margin-bottom:24px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; margin-bottom:24px; }
+    .card { background:rgba(31,41,55,.9); border:1px solid var(--border); border-radius:16px; padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.18); }
+    .metric { font-size:30px; font-weight:700; margin-top:8px; }
+    .label { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-size:12px; }
+    .notice { border-left:5px solid var(--warn); background:rgba(245,158,11,.12); }
+    table { width:100%; border-collapse:collapse; margin-top:12px; }
+    th, td { padding:12px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+    th { color:#cbd5e1; font-size:13px; text-transform:uppercase; letter-spacing:.04em; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; background:rgba(239,68,68,.18); color:#fecaca; border:1px solid rgba(239,68,68,.35); }
+    .footer { color:var(--muted); font-size:13px; margin-top:18px; }
+    code { background:#0b1220; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Development Task Dashboard</h1>
+    <div class="sub">Requested consolidation target: 120 development tasks from three Excel workbooks</div>
+
+    <div class="grid">
+      <div class="card"><div class="label">Expected Tasks</div><div class="metric">120</div></div>
+      <div class="card"><div class="label">Accessible Tasks</div><div class="metric">0</div></div>
+      <div class="card"><div class="label">Accessible Source Files</div><div class="metric">0 / 3</div></div>
+      <div class="card"><div class="label">Dashboard Status</div><div class="metric" style="font-size:22px;color:#fbbf24;">Blocked by missing source files</div></div>
+    </div>
+
+    <div class="card notice">
+      <h2 style="margin-top:0;">Source Access Issue</h2>
+      <p>The requested source files development-task-list.xlsx, development-task-2.xlsx, and development-task-3.xlsx were not found or accessible within the working directory, so the 120 development tasks could not be consolidated. This dashboard reports the source access issue instead of fabricating data.</p>
+      <ul>
+        <li><code>development-task-list.xlsx</code>: not found in working directory</li>
+        <li><code>development-task-2.xlsx</code>: not found in working directory</li>
+        <li><code>development-task-3.xlsx</code>: not found in working directory</li>
+      </ul>
+      <p>Per instructions, this deliverable reports the concrete access problem and does not invent or substitute task data.</p>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Source File Check</h2>
+      <table>
+        <thead>
+          <tr><th>Source File</th><th>Status</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>development-task-list.xlsx</td><td><span class="pill">SOURCE INACCESSIBLE</span></td><td>File not present or not accessible within the allowed working directory.</td></tr>
+          <tr><td>development-task-2.xlsx</td><td><span class="pill">SOURCE INACCESSIBLE</span></td><td>File not present or not accessible within the allowed working directory.</td></tr>
+          <tr><td>development-task-3.xlsx</td><td><span class="pill">SOURCE INACCESSIBLE</span></td><td>File not present or not accessible within the allowed working directory.</td></tr>
+        </tbody>
+      </table>
+      <div class="footer">Output path adjusted to <code>model_output/</code> per user instruction override.</div>
+    </div>
+  </div>
+</body>
+</html>

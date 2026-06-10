@@ -12,6 +12,7 @@ pub mod digest;
 mod file;
 mod fs;
 pub mod graph_file;
+pub mod graph_fs;
 pub mod graph_queue;
 pub mod hydration;
 

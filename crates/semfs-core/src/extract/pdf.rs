@@ -45,6 +45,34 @@ pub fn extract_pdf(bytes: &[u8]) -> Option<String> {
     }
 }
 
+/// Extract a PDF's text layer with poppler's `pdftotext` — the CJK-capable
+/// fallback for the many real PDFs whose CID fonts `pdf-extract` can't decode
+/// (it panics, handled above). Fast and LOCAL (no OCR, no network), so it
+/// replaces the slow `mistral-ocr` path for the common case of a large CJK PDF
+/// that simply has a text layer. Returns `None` if pdftotext is absent, errors,
+/// or the PDF has no text layer (a true scan — the caller then escalates to OCR).
+pub fn pdftotext(bytes: &[u8]) -> Option<String> {
+    let dir = tempfile::tempdir().ok()?;
+    let input = dir.path().join("in.pdf");
+    std::fs::write(&input, bytes).ok()?;
+    let out = std::process::Command::new("pdftotext")
+        .arg("-q") // suppress diagnostics
+        .arg(&input)
+        .arg("-") // write extracted text to stdout
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +104,30 @@ mod tests {
     #[test]
     fn garbage_returns_none_no_panic() {
         assert_eq!(extract_pdf(&[0x25, 0x50, 0x44, 0x46, 0x00, 0x01]), None);
+    }
+
+    /// Live (skips without poppler): the CJK CID-font PDF that `extract_pdf`
+    /// returns `None` for must extract via `pdftotext`. This is the fallback that
+    /// closes the CJK-PDF gap without the slow/timeout-prone OCR path. Validated
+    /// on the seed box (poppler installed); skipped in CI.
+    #[test]
+    fn pdftotext_recovers_cjk_text_layer_when_available() {
+        let have_poppler = std::process::Command::new("pdftotext")
+            .arg("-v")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !have_poppler {
+            eprintln!("skipping: pdftotext (poppler) not installed");
+            return;
+        }
+        let t = pdftotext(CJK_PDF).expect("pdftotext should read the CJK text layer");
+        assert!(
+            t.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+            "expected CJK characters from the text layer, got: {:?}",
+            t.chars().take(60).collect::<String>()
+        );
     }
 }

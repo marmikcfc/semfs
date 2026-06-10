@@ -5,10 +5,14 @@
 //! pooling/normalization internally, so there is no hand-rolled pooling here.
 //! (Bring-your-own-ONNX is intentionally deferred — see the project goal.)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use anyhow::Context;
+use fastembed::{
+    EmbeddingModel, InitOptions, InitOptionsUserDefined, OutputKey, QuantizationMode,
+    TextEmbedding, TokenizerFiles, UserDefinedEmbeddingModel,
+};
 
 use super::Embedder;
 
@@ -71,6 +75,56 @@ impl LocalEmbedder {
             model: Mutex::new(model),
             dims,
             identity,
+        })
+    }
+
+    /// Bring-your-own-ONNX embedder for a model the fastembed registry doesn't
+    /// expose — notably a **Q4-quantized** EmbeddingGemma (registry `gemma` is
+    /// fp32 only; fastembed has no Q4 mode). Loads `<base>.onnx` + its external
+    /// weights `<base>.onnx_data` + the gemma tokenizer files from `dir`.
+    ///
+    /// `dims` is the model's vector width (768 for EmbeddingGemma-300M).
+    /// `identity_tag` is folded into a `byo:<tag>:<dims>` identity that is
+    /// DISTINCT from the registry `fastembed:…` identity, so a reader never
+    /// mistakes a q4 seed for an fp32 one (their vectors differ → not searchable
+    /// against each other). EmbeddingGemma emits a pooled `sentence_embedding`
+    /// output, so we select it by name and apply NO extra pooling.
+    pub fn from_onnx_dir(
+        dir: &Path,
+        dims: usize,
+        model_base: &str,
+        identity_tag: &str,
+    ) -> anyhow::Result<Self> {
+        let rd = |name: &str| -> anyhow::Result<Vec<u8>> {
+            std::fs::read(dir.join(name))
+                .with_context(|| format!("read {}", dir.join(name).display()))
+        };
+        let onnx = rd(&format!("{model_base}.onnx"))?;
+        // The external-data filename MUST match the one referenced inside the
+        // ONNX (`<base>.onnx_data` for the onnx-community gemma exports).
+        let data_name = format!("{model_base}.onnx_data");
+        let data = rd(&data_name)?;
+        let tokenizer_files = TokenizerFiles {
+            tokenizer_file: rd("tokenizer.json")?,
+            config_file: rd("config.json")?,
+            special_tokens_map_file: rd("special_tokens_map.json")?,
+            tokenizer_config_file: rd("tokenizer_config.json")?,
+        };
+        let mut model = UserDefinedEmbeddingModel::new(onnx, tokenizer_files)
+            .with_external_initializer(data_name, data)
+            // q4 weights are statically quantized; `None` (no runtime dynamic
+            // quant) is the right mode. Verified by the cosine sanity gate.
+            .with_quantization(QuantizationMode::None);
+        model.output_key = Some(OutputKey::ByName("sentence_embedding"));
+
+        let te = TextEmbedding::try_new_from_user_defined(
+            model,
+            InitOptionsUserDefined::new().with_max_length(EMBED_MAX_LENGTH),
+        )?;
+        Ok(Self {
+            model: Mutex::new(te),
+            dims,
+            identity: format!("byo:{identity_tag}:{dims}"),
         })
     }
 }

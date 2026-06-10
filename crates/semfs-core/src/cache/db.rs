@@ -25,6 +25,7 @@ fn register_sqlite_vec() {
     });
 }
 
+use crate::vfs::mode::S_IFREG;
 use crate::vfs::{FileAttr, Timestamp, DEFAULT_DIR_MODE, PREFERRED_BLOCK_SIZE};
 
 /// Default chunk size for file data storage (bytes).
@@ -773,6 +774,110 @@ impl Db {
     pub(crate) fn clear_unindexed(&self, ino: u64) {
         let conn = self.conn.lock();
         let _ = conn.execute("DELETE FROM fs_unindexed WHERE ino = ?1", [ino as i64]);
+    }
+
+    /// Return the full extracted text for a binary file by stitching all chunks
+    /// ordered by `ord`. Returns `None` if no chunks exist for this filepath.
+    pub fn get_extracted_text(&self, filepath: &str) -> Option<String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT text FROM chunks WHERE filepath = ?1 ORDER BY ord")
+            .ok()?;
+        let parts: Vec<String> = stmt
+            .query_map([filepath], |r| r.get(0))
+            .ok()?
+            .filter_map(|r| r.ok())
+            .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    }
+
+    /// Materialize a read-only `<filepath>.extracted.md` sibling holding the
+    /// extracted text of a binary file, so an agent can `cat`/`head`/`sed` a few
+    /// lines instead of getting the whole file inlined via grep (or shelling out
+    /// to openpyxl/libreoffice — the format trap). Gated at the call site (flush)
+    /// by `SEMFS_EXTRACT_SIBLING`. Mirrors `CacheFs::create_derived_sibling`'s row
+    /// shape: `derived=1`, mode `S_IFREG|0444`, content split by `chunk_size`.
+    ///
+    /// Lives on `Db` (not `CacheFs`) because `flush()` only holds an `Arc<Db>`.
+    /// The source file's directory already exists, so the parent walk always
+    /// resolves. A name already taken by a NON-derived (user) file is left
+    /// untouched.
+    pub fn upsert_extracted_sibling(&self, filepath: &str, content: &str) -> rusqlite::Result<u64> {
+        let sibling = format!("{filepath}.extracted.md");
+        let pos = sibling
+            .rfind('/')
+            .ok_or_else(|| rusqlite::Error::InvalidParameterName(sibling.clone()))?;
+        let dir = if pos == 0 { "/" } else { &sibling[..pos] };
+        let filename = &sibling[pos + 1..];
+
+        let bytes = content.as_bytes();
+        let size = bytes.len() as i64;
+        let chunk_size = self.chunk_size;
+        let now = Timestamp::now();
+
+        let conn = self.conn.lock();
+
+        // Resolve the parent dir ino by walking from root (ino 1). Every
+        // component exists because the binary source file lives in this dir.
+        let mut parent_ino: i64 = 1;
+        for part in dir.split('/').filter(|p| !p.is_empty()) {
+            parent_ino = conn.query_row(
+                "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+                rusqlite::params![parent_ino, part],
+                |r| r.get(0),
+            )?;
+        }
+
+        let existing: Option<(i64, i64)> = conn
+            .query_row(
+                "SELECT d.ino, i.derived FROM fs_dentry d JOIN fs_inode i ON i.ino = d.ino
+                  WHERE d.parent_ino = ?1 AND d.name = ?2",
+                rusqlite::params![parent_ino, filename],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+
+        let ino = if let Some((ino, derived)) = existing {
+            // A user-owned file at this name — do not clobber it.
+            if derived == 0 {
+                return Ok(ino as u64);
+            }
+            conn.execute("DELETE FROM fs_data WHERE ino = ?1", [ino])?;
+            for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
+                conn.execute(
+                    "INSERT INTO fs_data (ino, chunk_index, data) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![ino, i as i64, chunk],
+                )?;
+            }
+            conn.execute(
+                "UPDATE fs_inode SET size = ?2, mtime = ?3, mtime_nsec = ?4 WHERE ino = ?1",
+                rusqlite::params![ino, size, now.sec, now.nsec as i64],
+            )?;
+            ino as u64
+        } else {
+            conn.execute(
+                "INSERT INTO fs_inode (mode, nlink, uid, gid, size, atime, mtime, ctime, rdev, atime_nsec, mtime_nsec, ctime_nsec, derived)
+                 VALUES (?1, 1, 0, 0, ?2, ?3, ?3, ?3, 0, ?4, ?4, ?4, 1)",
+                rusqlite::params![(S_IFREG | 0o444) as i64, size, now.sec, now.nsec as i64],
+            )?;
+            let new_ino = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO fs_dentry (name, parent_ino, ino) VALUES (?1, ?2, ?3)",
+                rusqlite::params![filename, parent_ino, new_ino],
+            )?;
+            for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
+                conn.execute(
+                    "INSERT INTO fs_data (ino, chunk_index, data) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![new_ino, i as i64, chunk],
+                )?;
+            }
+            new_ino as u64
+        };
+        Ok(ino)
     }
 
     /// Count of binary files currently recorded as unindexed. Surfaced as

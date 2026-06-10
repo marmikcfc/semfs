@@ -88,24 +88,41 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
     let path_str = mount_path.display();
     // KG-on: name the knowledge graph as the orientation artifact. KG-off
     // (SEMFS_KG=off): the original grep-only contract — used as the A/B baseline.
+    let graph_fs_line = if crate::cache::graph_fs::graph_fs_enabled() {
+        format!(
+            "- It ALSO exposes a `{path_str}/by-topic/` overlay. Each top-level dir under\n\
+             \u{0020} `by-topic/` is a TOPIC (a cluster of related files) named by its central\n\
+             \u{0020} concept; inside are the files about that topic. How traversal calls behave:\n\
+             \u{0020} `ls by-topic/` lists TOPICS — read this to orient before searching.\n\
+             \u{0020} `ls`/`find`/`os.walk` under `by-topic/` walk a BOUNDED topic tree, not a\n\
+             \u{0020} flat file dump. Prefer `by-topic/` to orient, `semfs grep` to pinpoint.\n"
+        )
+    } else {
+        String::new()
+    };
     let kg_line = if crate::cache::graph_file::kg_enabled() {
         format!(
-            "It maintains a whole-workspace KNOWLEDGE GRAPH and answers semantic search.\n\
-             \n\
-             - To ORIENT (what is this workspace about / how is it organized), read the\n\
-             \u{0020} knowledge graph: `cat {path_str}/KNOWLEDGE_GRAPH.md` — topic clusters\n\
-             \u{0020} (communities) with key entities and the dir map.\n\
-             - For a deeper map, `cat {path_str}/GRAPH_REPORT.md` — god-node concepts,\n\
-             \u{0020} typed relations, surprising connections, KNOWLEDGE GAPS (including any\n\
-             \u{0020} inaccessible / error-page source files), and suggested questions.\n\
-             \u{0020} `{path_str}/graph.json` is the full queryable graph. All auto-update.\n\
+            "It maintains a whole-workspace KNOWLEDGE GRAPH in `{path_str}/kg/`, plus\n\
+             semantic search. Prefer reading ONE small kg/ file over crawling files\n\
+             (it is faster and keeps your context small and clean). The kg/ files:\n\
+             \u{0020} - `kg/KNOWLEDGE_GRAPH.md` — compact orientation: topic clusters\n\
+             \u{0020}   (communities) with key entities + the dir map. Read this FIRST.\n\
+             \u{0020} - `kg/GRAPH_REPORT.md` — deeper map: god-node concepts, typed\n\
+             \u{0020}   relations, surprising connections, KNOWLEDGE GAPS (incl. any\n\
+             \u{0020}   inaccessible / error-page source files), and suggested questions.\n\
+             \u{0020} - `kg/graph.json` — the full queryable graph (nodes + typed edges);\n\
+             \u{0020}   parse it only when you need exact relations, not for orientation.\n\
+             \u{0020} All three auto-update as files are added or removed.\n\
+             {graph_fs_line}\
              - To FIND content, use semantic search instead of grep/rg/find/os.walk:\n"
         )
     } else {
-        "It answers semantic search over its contents.\n\
-         \n\
-         - To FIND content, use semantic search instead of grep/rg/find/os.walk:\n"
-            .to_string()
+        format!(
+            "It answers semantic search over its contents.\n\
+             \n\
+             {graph_fs_line}\
+             - To FIND content, use semantic search instead of grep/rg/find/os.walk:\n"
+        )
     };
     format!(
         "{begin}\n\
@@ -121,8 +138,78 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
          - Some files are mislabeled (e.g. an `.xlsx`/`.pdf` that is actually a tiny HTML\n\
          \u{0020} error page). If parsing a file fails once, do NOT retry other parsers or\n\
          \u{0020} unzip it — `cat` it once to see what it is, or just trust the grep excerpt.\n\
+         - If a source a task needs is inaccessible or corrupt (a `SOURCE INACCESSIBLE`\n\
+         \u{0020} note, or an HTTP error page like `403 Forbidden`), REPORT that fact in your\n\
+         \u{0020} deliverable — state the concrete error — and do NOT fabricate data or\n\
+         \u{0020} substitute a different file's data to make the output look complete.\n\
          Files outside this directory behave normally — this rule is scoped to that path.\n\
+         <!-- semfs:delivery=home-level -->\n\
          {end}\n"
+    )
+}
+
+/// Body for a workspace-root `AGENTS.md` / `CLAUDE.md` (materialized *inside*
+/// the mount by the KG refresh). Unlike [`render_block`] this is the WHOLE file,
+/// not a tagged block (the file is wholly ours), and it uses workspace-relative
+/// `kg/` paths because the agent reads it from the workspace root. This is the
+/// robust delivery path: any agent that reads the working tree's AGENTS.md sees
+/// it regardless of `$HOME`, so it does not depend on the home-dir global hint
+/// reaching the agent's environment.
+pub fn render_workspace_root() -> String {
+    let kg_section = if crate::cache::graph_file::kg_enabled() {
+        "It maintains a whole-workspace KNOWLEDGE GRAPH in `kg/`, plus semantic search.\n\
+         Prefer reading ONE small kg/ file over crawling files (faster; keeps your\n\
+         context small and clean):\n\
+         \n\
+         - `kg/KNOWLEDGE_GRAPH.md` — compact orientation: topic clusters (communities)\n\
+         \u{0020} with key entities + the dir map. Read this FIRST.\n\
+         - `kg/GRAPH_REPORT.md` — deeper map: god-node concepts, typed relations,\n\
+         \u{0020} surprising connections, KNOWLEDGE GAPS (incl. any inaccessible /\n\
+         \u{0020} error-page source files), and suggested questions.\n\
+         - `kg/graph.json` — the full queryable graph (nodes + typed edges); parse it\n\
+         \u{0020} only when you need exact relations, not for orientation.\n\
+         \n"
+    } else {
+        "It answers semantic search over its contents.\n\n"
+    };
+    // Graph-as-filesystem overlay: describe `by-topic/` and how traversal calls
+    // behave there, so the agent's reflexive `ls`/`find`/`os.walk` becomes a
+    // guided, bounded topic walk instead of a flat file dump.
+    let graph_section = if crate::cache::graph_fs::graph_fs_enabled() {
+        "It ALSO exposes a `by-topic/` knowledge-graph overlay. Each top-level dir under\n\
+         `by-topic/` is a TOPIC (a cluster of related files) named by its central concept;\n\
+         inside are the files about that topic. How calls behave there:\n\
+         - `ls by-topic/` lists the workspace's TOPICS — read this to orient.\n\
+         - `ls`/`find`/`os.walk` under `by-topic/` walk a BOUNDED, topic-organized tree\n\
+         \u{0020} (the knowledge graph), not a flat dump of every file — cheap to crawl.\n\
+         - `cat by-topic/<topic>/<file>` reads the REAL file (normal bytes + annotations).\n\
+         - The real directory tree is still present for exact paths; `semfs grep` still\n\
+         \u{0020} reaches every file. Prefer `by-topic/` to orient, `semfs grep` to pinpoint.\n\
+         \n"
+    } else {
+        ""
+    };
+    format!(
+        "# This workspace is a semfs semantic-search mount\n\
+         \n\
+         <!-- generated by `semfs mount`; read-only, regenerated automatically -->\n\
+         \n\
+         {kg_section}\
+         {graph_section}\
+         To FIND content, use semantic search instead of grep/rg/find/os.walk:\n\
+         \n\
+         \u{0020}   semfs grep \"<natural language query>\" .\n\
+         \n\
+         The excerpt IS the content — trust it; do not re-open or crawl to verify. A\n\
+         result line marked `# ^ COMPLETE FILE` is the whole file — copy it as-is.\n\
+         Some files are mislabeled (e.g. an `.xlsx`/`.pdf` that is actually a tiny HTML\n\
+         error page). If parsing a file fails once, do NOT retry other parsers or unzip\n\
+         it — `cat` it once to see what it is, or just trust the grep excerpt.\n\
+         If a source a task needs is inaccessible or corrupt (a `SOURCE INACCESSIBLE`\n\
+         note, or an HTTP error page like `403 Forbidden`), REPORT that fact in your\n\
+         deliverable — state the concrete error — and do NOT fabricate data or\n\
+         substitute a different file's data to make the output look complete.\n\
+         <!-- semfs:delivery=workspace-root -->\n"
     )
 }
 
@@ -375,6 +462,47 @@ mod tests {
     fn fake_home(tmp: &Path) {
         env::set_var("HOME", tmp);
         env::remove_var("CLAUDE_CONFIG_DIR");
+    }
+
+    // graph_fs_enabled() reads SEMFS_GRAPH_FS (process-global) — serialize.
+    #[test]
+    fn workspace_root_describes_by_topic_overlay_when_graph_fs_on() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::set_var("SEMFS_GRAPH_FS", "1");
+        let body = render_workspace_root();
+        env::remove_var("SEMFS_GRAPH_FS");
+        assert!(body.contains("by-topic/"), "names the overlay path");
+        assert!(
+            body.to_lowercase().contains("topic"),
+            "explains topic-organized dirs"
+        );
+    }
+
+    #[test]
+    fn home_block_includes_by_topic_when_graph_fs_on() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::set_var("SEMFS_GRAPH_FS", "1");
+        env::set_var("SEMFS_KG", "1");
+        let block = render_block("t", Path::new("/m/ws"));
+        env::remove_var("SEMFS_GRAPH_FS");
+        env::remove_var("SEMFS_KG");
+        assert!(block.contains("/m/ws/by-topic/"), "home block names overlay with absolute path");
+    }
+
+    #[test]
+    fn home_block_omits_by_topic_when_graph_fs_off() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::remove_var("SEMFS_GRAPH_FS");
+        let block = render_block("t", Path::new("/m/ws"));
+        assert!(!block.contains("by-topic/"), "no overlay mention when off");
+    }
+
+    #[test]
+    fn workspace_root_omits_by_topic_when_graph_fs_off() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::remove_var("SEMFS_GRAPH_FS");
+        let body = render_workspace_root();
+        assert!(!body.contains("by-topic/"), "no overlay mention when off");
     }
 
     #[test]

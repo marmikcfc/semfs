@@ -1,5 +1,9 @@
 # Experiment Log — case 289 retrieval investigation
 
+> Detailed terse log of the **earlier retrieval series**. For the cross-session research
+> synthesis (later KG / AGENTS.md / clean-A/B / grep-wrapper series + the honesty-wall
+> finding) see root **`EXPERIMENTS.md`**; for live deploy state see **`CURRENT_STATE.md`**.
+
 Legend: ✅ done · 🔄 in progress · ☐ planned/queued · 💡 possible (not yet scheduled)
 Token numbers = E2E `semfs-codex` case 289 totalTokens. Baseline plain=143,837 · cloud=18,144.
 

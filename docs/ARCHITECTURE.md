@@ -53,6 +53,7 @@ Postgres, or a cloud service) so you are never locked into one tier.
 | **Review requirements / test strategy** | [`requirements-analysis.html`](requirements-analysis.html), [`test-strategy.html`](test-strategy.html) |
 | **Read decision records (spikes)** | [`spike3-embedder-decision.html`](spike3-embedder-decision.html), [`spike8-graph-decision.html`](spike8-graph-decision.html), [`codex-review-5-levels.html`](codex-review-5-levels.html) |
 | **Track milestone progress** | [`../progress.md`](../progress.md) |
+| **Understand the benchmark harness** | [`../benchmarks/workspace_bench/BENCH_ARCHITECTURE.md`](../benchmarks/workspace_bench/BENCH_ARCHITECTURE.md) + [`KNOBS.md`](../benchmarks/workspace_bench/KNOBS.md) |
 | **Contribute as an agent** | [`../CLAUDE.md`](../CLAUDE.md), [`../AGENTS.md`](../AGENTS.md) |
 
 ---
@@ -122,7 +123,7 @@ Two crates. All logic lives in `semfs-core`; the `semfs` binary is a thin dispat
 | **`semfs-core`** (lib) | `crates/semfs-core/src/` | Everything below |
 | `vfs` | `vfs/mod.rs` | `FileSystem` / `File` traits + `FileAttr`/`DirEntry`/`VfsError`. Pure semantics, no I/O. |
 | `mount` | `mount/mod.rs` | FUSE (Linux) / NFSv3-over-localhost (macOS) behind one API. Only place that knows the kernel. |
-| `cache` | `cache/{fs,file,db,graph_queue,hydration}.rs` | Local SQLite store; defines `LocalIndexer`. Passive — never calls the network itself. |
+| `cache` | `cache/{fs,file,db,graph_queue,hydration,graph_file,graph_fs}.rs` | Local SQLite store; defines `LocalIndexer`. Passive — never calls the network. Also materializes the **agent-facing surfaces** (§6): `graph_file` → `/kg/` artifacts, `graph_fs` → `/by-topic/` overlay; `file`/`db` → `.extracted.md` siblings. |
 | `backend` | `backend/{mod,sqlite_vec,pgvector,cloud,chunk,rank,graph}.rs` | `SemanticIndex` trait + concrete stores; chunking (L1), ranking (L5/L6/L7), entity graph (L7). |
 | `embed` | `embed/mod.rs` | `Embedder` trait: text→vector. Local (fastembed) / cloud (OpenAI/OpenRouter). A deterministic `StubEmbedder` is `#[cfg(test)]`-only — not a shipped backend. |
 | `rerank` | `rerank/mod.rs` | `Reranker` trait: cross-encoder rescoring (L5). Fail-open. |
@@ -131,6 +132,7 @@ Two crates. All logic lives in `semfs-core`; the `semfs` binary is a thin dispat
 | `daemon` | `daemon/{mod,client,ipc,protocol}.rs` | Daemon lifecycle + unix-socket IPC (the CLI ↔ daemon RPC). |
 | `api` | `api/mod.rs` | Typed Supermemory HTTP client (retries 5xx, surfaces 4xx). |
 | `config` | `config/mod.rs` | XDG paths + credentials; validates path components against traversal. |
+| `agent_hint` | `agent_hint.rs` | Builds the `AGENTS.md`/`CLAUDE.md` hint injected at mount (home-level + in-mount workspace-root) that teaches the agent to use `semfs grep`, `/kg/`, `.extracted.md` (§6). |
 
 ### CLI surface (`crates/semfs/src/cmd/`)
 
@@ -418,11 +420,87 @@ the chunker. There is no language-aware or AST-based splitting.
 
 > **Don't confuse this with storage "chunks."** The cache stores raw file bytes in fixed
 > **4 KB blocks** (`DEFAULT_CHUNK_SIZE`, `cache/db.rs:31`) for read-modify-write I/O — an
-> unrelated, byte-level concern. See §7.
+> unrelated, byte-level concern. See §8.
 
 ---
 
-## 6. Background sync (state)
+## 6. The agent-facing delivery layer (the "last mile")
+
+L1 (§5) turns a binary into searchable *text*; L7 builds the *graph*. **This section is how
+that text and graph actually reach the agent** — the surfaces semfs materializes inside the
+mount, and the hint that teaches the agent to use them. Everything here is gated by env knobs
+(full list: [`../benchmarks/workspace_bench/KNOBS.md`](../benchmarks/workspace_bench/KNOBS.md)).
+
+```mermaid
+flowchart TD
+    BIN["binary doc on the mount<br/>(.xlsx/.pdf/.docx)"]
+    CH["chunks.text<br/><small>(L1 extracted text, in the cache)</small>"]
+    BIN -->|"extract (L1)"| CH
+
+    CH -->|"SEMFS_GREP_INLINE=on (default)<br/>grep.rs:768,814 → Db::get_extracted_text"| GI["semfs grep result<br/>inlines the FULL extracted text<br/><small>(kills the format trap — no openpyxl)</small>"]
+    CH -->|"SEMFS_EXTRACT_SIBLING=on (opt-in)<br/>file.rs:332 → Db::upsert_extracted_sibling"| SIB["&lt;file&gt;.extracted.md sibling<br/><small>agent cat/head/sed on demand</small>"]
+
+    GRAPH["graph_* tables (L7)"] -->|"SEMFS_KG=on<br/>cache/graph_file.rs"| KG["/kg/ : KNOWLEDGE_GRAPH.md<br/>GRAPH_REPORT.md · graph.json"]
+    GRAPH -->|"SEMFS_GRAPH_FS=on<br/>cache/graph_fs.rs"| BT["/by-topic/&lt;community&gt;/<br/><small>Louvain clusters as folders</small>"]
+
+    HINT["agent_hint.rs<br/>render_block / render_workspace_root"] -->|"semfs mount writes"| AM["AGENTS.md / CLAUDE.md<br/>(home-level + in-mount root)"]
+    GI & SIB & KG & BT -. "advertised by" .- AM
+    AM --> AGENT(("agent<br/>codex / claude"))
+    GI & SIB & KG & BT --> AGENT
+
+    classDef knob fill:#efe,stroke:#3a3
+    class GI,SIB,KG,BT knob
+```
+
+### 6a. Extraction delivery — two paths out of `chunks.text` (the format-trap fix)
+
+An agent that finds an `.xlsx`/`.pdf` will, by reflex, shell out to `openpyxl`/`pandas`/
+`libreoffice` to parse it — the **format trap**, a major token sink. semfs already has the
+text (L1 put it in `chunks`); it delivers it two ways, **both reading `Db::get_extracted_text`
+(`db.rs` — stitches a file's chunks in `ord`)**:
+
+| path | knob | default | mechanism |
+|---|---|---|---|
+| **grep-inline** | `SEMFS_GREP_INLINE` | **on** | a binary hit in `semfs grep` inlines the *whole* extracted text (`grep.rs:814`). Text arrives *inside* the result the agent already asked for — zero discovery needed. |
+| **`.extracted.md` sibling** | `SEMFS_EXTRACT_SIBLING` | off | `flush()` materializes a read-only `<file>.extracted.md` next to the binary (`file.rs:332` → `db.rs:upsert_extracted_sibling`, which writes **only `fs_*` tables — never the search index**). The agent `cat`s a few lines on demand. |
+
+> The sibling path is a *pull* (the agent must know to `cat` it → needs the §6c hint);
+> grep-inline is a *push* (no hint needed). They are alternatives over the same source, so
+> you rarely enable both.
+
+### 6b. Knowledge-graph surfaces
+
+The L7 entity graph (`graph_*` tables) is exposed to the agent two ways:
+
+- **`SEMFS_KG=on`** → `cache/graph_file.rs` materializes a read-only **`/kg/`** folder inside
+  the mount: `KNOWLEDGE_GRAPH.md` (compact orientation: communities + dir map),
+  `GRAPH_REPORT.md` (god-nodes, typed relations, knowledge gaps), `graph.json` (full graph).
+  Regenerated on mount (`cache/fs.rs:refresh_knowledge_graph`).
+- **`SEMFS_GRAPH_FS=on`** → `cache/graph_fs.rs` overlays **`/by-topic/<community>/`**: Louvain
+  clusters presented as directories, so a reflexive `ls`/`find` becomes a bounded, topic-organized
+  walk instead of a flat 1452-file dump.
+
+These are **distinct knobs over the same tables** — `/kg/` is materialized artifacts; `/by-topic/`
+is a browsable tree. (This supersedes the older `/memories/*` framing in §5's L7 note.)
+
+### 6c. Hint injection — how the agent learns any of this exists
+
+A capability the agent isn't *told* about is invisible. `agent_hint.rs` writes the contract
+into **`AGENTS.md`/`CLAUDE.md`** at mount, two surfaces:
+
+- `render_block` → the **home-level** `~/.codex/AGENTS.md` / `~/.claude/CLAUDE.md` (a tagged block).
+- `render_workspace_root` → the **in-mount** workspace-root `AGENTS.md` (the robust path: any
+  agent that reads the working tree sees it regardless of `$HOME`).
+
+The hint text is **conditional on the active knobs** — with `SEMFS_KG=on` it adds the `/kg/`
+orientation section; with `SEMFS_GRAPH_FS=on` it adds the `/by-topic/` section. This is the
+**only** channel semfs uses to influence the agent: the *task prompt is never modified*
+(the honest-A/B rule the benchmark depends on — see
+[`../benchmarks/workspace_bench/BENCH_ARCHITECTURE.md`](../benchmarks/workspace_bench/BENCH_ARCHITECTURE.md) §1).
+
+---
+
+## 7. Background sync (state)
 
 The sync engine reconciles the local cache against a cloud backend across four loops; the
 push side has a small state machine per queued file:
@@ -447,7 +525,7 @@ worker (coalesced) · **E** inflight poller (tracks server-side processing).
 
 ---
 
-## 7. Glossary
+## 8. Glossary
 
 - **Container / tag** — a named bucket of memory; one mount serves one tag.
 - **Backend** — the storage tier behind the folder: `SqliteVecStore` (local), `PgVectorStore`
@@ -467,5 +545,5 @@ worker (coalesced) · **E** inflight poller (tracks server-side processing).
 ---
 
 *Maintaining this file: when you add a module, backend, or layer, update the code map (§2),
-the class diagram (§3), and the layer table (§5). Keep `path:line` anchors current — they are
-how a newcomer crosses from picture to code.*
+the class diagram (§3), the layer table (§5), and the agent-facing delivery layer (§6). Keep
+`path:line` anchors current — they are how a newcomer crosses from picture to code.*

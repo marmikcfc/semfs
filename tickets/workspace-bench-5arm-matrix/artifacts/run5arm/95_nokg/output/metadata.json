@@ -1,0 +1,99 @@
+{
+  "absolute_id": 95,
+  "persona": "Product Manager",
+  "task": "Based on `description_9.txt` and `description_12.txt`, sort out the system version iteration history. Then combine the relevant data in `description_15.txt` with the changes described in `description_22.txt`, generate a comprehensive follow-up iteration report, and save it to the desktop.",
+  "task_diff": "hard",
+  "output_files": [
+    "system_version_full_lifecycle_iteration_report.doc"
+  ],
+  "rubrics": [
+    "Verify the contents of the original document referenced by [system_version_full_lifecycle_iteration_report.doc] to ensure the accuracy of all data in the report",
+    "Check the full text of [system_version_full_lifecycle_iteration_report.doc] to confirm that the contents extracted from the original file are free of typos",
+    "Check [system_version_full_lifecycle_iteration_report.doc] to confirm that the integrated full-cycle iteration data is not missing key information",
+    "Check the full text of [system_version_full_lifecycle_iteration_report.doc] to confirm that there is no logical problem with the extracted iteration data and content expression",
+    "Are you sure that [system_version_full_lifecycle_iteration_report.doc] fully contains the iterative optimization direction and subsequent planning suggestions?",
+    "Are you sure [system_version_full_lifecycle_iteration_report.doc] fully covers the core content of the feature fixes and optimization improvements of each version?",
+    "Confirm that the basic capability optimization content in [system_version_full_lifecycle_iteration_report.doc] fully covers all dimensions",
+    "Does `system_version_full_lifecycle_iteration_report.doc` include a complete drafting note that accurately explains the basis and sources of the data?",
+    "Has the full structure of `system_version_full_lifecycle_iteration_report.doc` been checked to confirm that it is complete and that no core section is missing?",
+    "Does `system_version_full_lifecycle_iteration_report.doc` fully match the original files in terms of version numbers and release-owner information?",
+    "Has `system_version_full_lifecycle_iteration_report.doc` been checked to confirm that the release times of all versions are sorted accurately?",
+    "Does `system_version_full_lifecycle_iteration_report.doc` completely cover the descriptions of newly added features across all iteration versions?"
+  ],
+  "rubric_types": [
+    "Outcome Evaluation",
+    "Outcome Evaluation",
+    "Process Evaluation",
+    "Basic Evaluation",
+    "Basic Evaluation",
+    "Process Evaluation",
+    "Process Evaluation",
+    "Basic Evaluation",
+    "Outcome Evaluation",
+    "Process Evaluation",
+    "Basic Evaluation",
+    "Outcome Evaluation"
+  ],
+  "file_dep_graph": [
+    {
+      "from": "18fec6689633b536_description_9.txt",
+      "to": "b4418640fb00a12f_description_15.txt"
+    },
+    {
+      "from": "35ccb5991494324f_description_12.txt",
+      "to": "b4418640fb00a12f_description_15.txt"
+    },
+    {
+      "from": "18fec6689633b536_description_9.txt",
+      "to": "bec9bfa3d581a4ed_description_22.txt"
+    },
+    {
+      "from": "35ccb5991494324f_description_12.txt",
+      "to": "bec9bfa3d581a4ed_description_22.txt"
+    },
+    {
+      "from": "b4418640fb00a12f_description_15.txt",
+      "to": "bec9bfa3d581a4ed_description_22.txt"
+    },
+    {
+      "from": "18fec6689633b536_description_9.txt",
+      "to": "bec9bfa3d581a4ed_description_22.txt"
+    },
+    {
+      "from": "35ccb5991494324f_description_12.txt",
+      "to": "bec9bfa3d581a4ed_description_22.txt"
+    },
+    {
+      "from": "b4418640fb00a12f_description_15.txt",
+      "to": "bec9bfa3d581a4ed_description_22.txt"
+    }
+  ],
+  "data_manifest": [
+    {
+      "filename": "18fec6689633b536_description_9.txt",
+      "stored_relpath": "data/18fec6689633b536_18fec6689633b536_description_9.txt"
+    },
+    {
+      "filename": "35ccb5991494324f_description_12.txt",
+      "stored_relpath": "data/35ccb5991494324f_35ccb5991494324f_description_12.txt"
+    },
+    {
+      "filename": "b4418640fb00a12f_description_15.txt",
+      "stored_relpath": "data/b4418640fb00a12f_b4418640fb00a12f_description_15.txt"
+    },
+    {
+      "filename": "bec9bfa3d581a4ed_description_22.txt",
+      "stored_relpath": "data/bec9bfa3d581a4ed_bec9bfa3d581a4ed_description_22.txt"
+    }
+  ],
+  "tested_capabilities": [
+    "Workspace Exploration",
+    "Lineage Tracing",
+    "Semantic Content Relations Understanding"
+  ],
+  "id": "95",
+  "file_system": "产品人员",
+  "user_profit": "产品人员",
+  "job": "Product Manager",
+  "__metadata_path": "/srv/semfs-benchmark/Workspace-Bench/evaluation/tasks_lite/95/metadata.json"
+}
