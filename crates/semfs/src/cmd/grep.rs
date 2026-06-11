@@ -477,6 +477,70 @@ fn grep_total_cap() -> usize {
     }
 }
 
+/// E9(d) pilot — query-time caveman compression of large PROSE excerpts
+/// (`SEMFS_GREP_COMPRESS=on`, default off). STRUCTURED docs are exempt: a
+/// spreadsheet's extracted table must reach the agent verbatim (the dual-store
+/// rule); only connective prose compresses well. Fail-open everywhere. The
+/// OpenRouter call runs in THIS process — its tokens bill to semfs's key, not
+/// to the agent: the agent's context (and the benchmark's token metric) only
+/// ever sees the smaller excerpt. In/out sizes are logged for the experiment
+/// report so the semfs-side cost stays visible.
+fn compress_enabled() -> bool {
+    matches!(
+        std::env::var("SEMFS_GREP_COMPRESS").ok().as_deref(),
+        Some("on") | Some("1") | Some("true")
+    )
+}
+
+/// Minimum excerpt size worth a compression call (`SEMFS_GREP_COMPRESS_MIN`,
+/// default 4 KB — below that the clip and re-pay costs don't bite).
+fn compress_min_bytes() -> usize {
+    std::env::var("SEMFS_GREP_COMPRESS_MIN")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(4096)
+}
+
+/// Structured (table-shaped) sources whose extracted text must stay verbatim.
+fn is_spreadsheet_ext(filepath: &str) -> bool {
+    let lower = filepath.to_lowercase();
+    [".xlsx", ".xls", ".xlsm", ".csv", ".tsv"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+/// Compress `text` for inline render when eligible; `None` = render the
+/// original (ineligible, disabled, no key, or the LLM call failed).
+fn maybe_compress(filepath: &str, text: &str) -> Option<String> {
+    if !compress_enabled() || is_spreadsheet_ext(filepath) || text.len() < compress_min_bytes() {
+        return None;
+    }
+    let key = std::env::var("OPENROUTER_API_KEY").ok().filter(|k| !k.is_empty())?;
+    let model = std::env::var("SEMFS_COMPRESS_MODEL")
+        .unwrap_or_else(|_| "openai/gpt-4.1-mini".to_string());
+    let client =
+        semfs_core::llm::LlmClient::new(key, "https://openrouter.ai/api/v1".to_string(), model);
+    match semfs_core::llm::compress_excerpt(&client, text) {
+        Ok(c) if c.len() < text.len() => {
+            eprintln!(
+                "# compressed prose excerpt {} -> {} bytes (semfs-side LLM call; not on the agent's bill)",
+                text.len(),
+                c.len()
+            );
+            Some(c)
+        }
+        Ok(_) => None, // compression didn't shrink it — keep the original
+        Err(e) => {
+            eprintln!("# excerpt compression failed ({e}); rendering raw");
+            None
+        }
+    }
+}
+
+const COMPRESSED_MARKER: &str = "# ^ COMPRESSED RENDITION — telegraphic; numbers/names/dates \
+verbatim; open the file if you need the full prose.";
+
 const SNIPPET_BYTES: usize = 160;
 
 /// One-line path-tier snippet: first ~160 bytes on a char boundary, newlines
@@ -970,7 +1034,11 @@ pub async fn run(args: Args) -> Result<()> {
         // never opens or parses the binary. Skips the FUSE read entirely.
         if is_binary_ext(fp) {
             if let Some(text) = grep_db.as_ref().and_then(|db| db.get_extracted_text(fp)) {
-                let (capped, trunc) = cap_render(&text);
+                // E9(d): prose binaries (docx/pdf) may compress; spreadsheets are
+                // exempt inside maybe_compress (tables stay verbatim).
+                let compressed = maybe_compress(fp, &text);
+                let render_src = compressed.as_deref().unwrap_or(&text);
+                let (capped, trunc) = cap_render(render_src);
                 let lines = capped.lines().count().max(1);
                 let escaped = capped
                     .replace('\\', "\\\\")
@@ -978,7 +1046,11 @@ pub async fn run(args: Args) -> Result<()> {
                     .replace('\r', "\\r");
                 spent += fp.len() + escaped.len() + 24;
                 println!("{}:1-{}:{}", fp, lines, escaped);
-                if trunc {
+                if compressed.is_some() {
+                    // A compressed rendition is neither the verbatim whole file nor a
+                    // hard truncation — its own honest marker.
+                    println!("{}", COMPRESSED_MARKER);
+                } else if trunc {
                     println!(
                         "# ^ TRUNCATED — large file; first {} KB of extracted text shown. Open the file for the rest.",
                         grep_result_cap() / 1024
@@ -1045,7 +1117,10 @@ pub async fn run(args: Args) -> Result<()> {
         // Print the full file when promoted to inline; otherwise the matched chunk.
         // Cap the rendered text (a single huge inlined doc is the dominant token sink).
         let raw = inline_full.as_deref().unwrap_or(chunk);
-        let (capped, trunc) = cap_render(raw);
+        // E9(d): large prose (txt/md whole-file inlines, big chunks) may compress.
+        let compressed = maybe_compress(fp, raw);
+        let render_src = compressed.as_deref().unwrap_or(raw);
+        let (capped, trunc) = cap_render(render_src);
         let escaped = capped
             .replace('\\', "\\\\")
             .replace('\n', "\\n")
@@ -1061,7 +1136,9 @@ pub async fn run(args: Args) -> Result<()> {
         } else {
             println!("{}:{}", fp, escaped);
         }
-        if trunc {
+        if compressed.is_some() {
+            println!("{}", COMPRESSED_MARKER);
+        } else if trunc {
             // Truncated → the excerpt is NOT the whole file; tell the agent honestly.
             println!(
                 "# ^ TRUNCATED — large excerpt; first {} KB shown. Open the file for the rest.",
@@ -1120,6 +1197,25 @@ mod tests {
     #[test]
     fn confidence_high_on_single_hit() {
         assert!(confidence_line(0.42, None).contains("HIGH"));
+    }
+
+    #[test]
+    fn spreadsheets_are_exempt_from_compression() {
+        for fp in ["a/b.xlsx", "X.XLS", "data.csv", "t.tsv", "m.xlsm"] {
+            assert!(super::is_spreadsheet_ext(fp), "{fp}");
+        }
+        for fp in ["report.docx", "notes.txt", "doc.pdf", "readme.md"] {
+            assert!(!super::is_spreadsheet_ext(fp), "{fp}");
+        }
+    }
+
+    #[test]
+    fn compression_is_off_by_default_and_gated() {
+        // No env set in the test runner → disabled → always None, instantly.
+        assert!(super::maybe_compress("report.docx", &"x".repeat(10_000)).is_none());
+        // Spreadsheet exemption and size floor are pure logic, no network.
+        assert!(super::is_spreadsheet_ext("t.xlsx"));
+        assert!(super::compress_min_bytes() >= 1);
     }
 
     #[test]

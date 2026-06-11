@@ -36,6 +36,12 @@ impl LlmClient {
         self.chat(system, user, None, 256)
     }
 
+    /// [`complete`] with an explicit output-token budget (compression needs room
+    /// proportional to its input; 256 would truncate mid-document).
+    pub fn complete_n(&self, system: &str, user: &str, max_tokens: u32) -> anyhow::Result<String> {
+        self.chat(system, user, None, max_tokens)
+    }
+
     /// One-shot completion constrained to a JSON Schema via structured outputs
     /// (`response_format: json_schema`, `strict: true`). The provider constrains
     /// decoding to the schema, so the returned string is guaranteed valid JSON of
@@ -161,6 +167,29 @@ pub fn rewrite_query(client: &LlmClient, query: &str) -> anyhow::Result<String> 
     let out = out.trim().trim_matches('"').trim().to_string();
     if out.is_empty() {
         anyhow::bail!("empty rewrite");
+    }
+    Ok(out)
+}
+
+/// E9(d)/E15 pilot: caveman-style telegraphic compression of a PROSE excerpt
+/// before inline render. Connective prose is compressed; every number, date,
+/// amount, name, identifier, and table-like line is preserved VERBATIM (the
+/// format-trap guard). Callers fail-open to the original text on any error.
+/// The call runs in the semfs process: its tokens bill to semfs's key, never
+/// to the agent — the agent only ever receives the smaller excerpt.
+pub fn compress_excerpt(client: &LlmClient, text: &str) -> anyhow::Result<String> {
+    let system = "Compress the document text the user provides, telegraphic style: drop filler \
+        words, connective prose, pleasantries, and repetition. PRESERVE VERBATIM, never reword: \
+        every number, percentage, amount, date, version, product/person/file name, identifier, \
+        and any table-like or `key: value` line (copy such lines unchanged). Keep the content's \
+        original language(s) and its order. Target 40-60% of the original length. \
+        Output ONLY the compressed text — no preamble, no commentary.";
+    // Output budget proportional to input (~chars/3 ≈ tokens), clamped sane.
+    let max_tokens = ((text.len() / 3) as u32).clamp(512, 4096);
+    let out = client.complete_n(system, text, max_tokens)?;
+    let out = out.trim().to_string();
+    if out.is_empty() {
+        anyhow::bail!("empty compression");
     }
     Ok(out)
 }
