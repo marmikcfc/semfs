@@ -170,3 +170,52 @@ These live in ephemeral `/tmp` — a reboot loses them. **TODO: copy into
   `/home/ubuntu/.semfs_seed_env`. Same for any `--key` on daemon command lines.
 - Do **not** reboot the EC2 instance without explicit OK. Keep all seeds intact.
 - Mount cleanup: unmount specific tags (`semfs unmount <tag>`); never pattern-kill.
+
+---
+
+## 9. BOX STATE — 2026-06-11 night (the token-economy campaign)
+
+> Read with `tickets/workspace-bench-5arm-matrix/EXPERIMENT_MATRIX.md` (the campaign
+> report) and `RUN_MANIFEST.md` (provenance rules).
+
+### Deployed binary — ⚠ one known discrepancy
+`~/.local/bin/semfs` = md5 `711d028603ce4520b28cd0eb54fd387b`, built from the repo at the
+E9(d)-compression commit. It HAS: grep render cap (`SEMFS_GREP_RESULT_CAP`, 6KB default),
+E9 render modes (`SEMFS_GREP_RENDER_MODE`: inline/two-tier/paths), global budget
+(`SEMFS_GREP_TOTAL_CAP`, 10KB), query-time compression (`SEMFS_GREP_COMPRESS`, off),
+dual-store siblings, L7 KG-gating.
+**⚠ It PRE-DATES commits `81fc27d` (provenance-check removal) and `5ef7c28` (bitter-lesson
+de-tune): a FRESH import on this box renders the deprecated v3 hint.** Benchmark runs were
+unaffected (seeds bake their hints), but **rebuild before any new import**:
+`cd /srv/semfs-benchmark/semantic-filesystem && rsync from repo (or git pull on a real
+checkout) && cargo build --release --bin semfs && cp target/release/semfs ~/.local/bin/`.
+Backups: `semfs.pre-e9` (pre-render-modes), `semfs.prepatch`, `semfs.pre-extract.bak`.
+NOTE: `/srv/semfs-benchmark/semantic-filesystem` is an rsync COPY, not a git repo — sync
+from the GitHub repo (`feat/backend-agnostic-store`) before building.
+
+### Seeds (`~/.semfs/`) — hint versions matter
+| seed | hint | status |
+|---|---|---|
+| `chanpin-clean.db` | v1 (KG-first — deprecated) | the verified-clean base; COPY, never mount directly |
+| `chanpin-leanhint.db` | v2 (lean + honesty text) | historical (w-runs) |
+| `chanpin-leanhint2.db` | v3 (+ provenance check) | **DEPRECATED — coached; do not use** |
+| `chanpin-leanhint3.db` | **v4.1 (facts+costs only)** | **current — matches shipped default** |
+| `chanpin-sum.db` | — | summary-only; INVALID for xlsx cases except 44 (dual-store) |
+| `workspace-bench-chanpin.db` | — | cloud arm container |
+
+### Results + artifacts from tonight
+`/tmp/e8seq.jsonl` (E7/E8: w/wp/p ×9) · `/tmp/e9.jsonl` (E9 wave 1 ×5) · `/tmp/e9d.jsonl`
+(compression A/B ×4) · `/tmp/e95v4.jsonl` (clean-hint test ×4). Artifacts:
+`/srv/semfs-benchmark/matrix_artifacts/{e8seq,e9w1,e9d,e95v4}/<label>/<case>_<arm>/`.
+Drivers in `/tmp`: `run_case_e.sh` (the hardened single-cell driver — also bundled in the
+run-benchmark-suite skill), batch scripts `e8seq.sh`/`e9w1.sh`/`e9d.sh`/`e95v4.sh`,
+`rejudge.sh` + `recount.py` (post-hoc judge pass), `inspect_run.py` (trace+judge forensics),
+`build_leanhint{2,3}.py` (seed hint surgery), `/tmp/e6/` (clip-calibration probes).
+⚠ all `/tmp` content dies on reboot (standing TODO: git-track the drivers).
+
+### Standing cautions (new since §8)
+- Disk ≈ 9G free (guard aborts <6G) — clean old `matrix_artifacts` before big batches.
+- Judge: Seed-2.0-Lite had 429s + parse-fails all night; p1/e9b3 reproducibly unjudgeable;
+  **case 95 scores are a filename lottery (task names no output file; rubrics do)** — fix
+  the rubric/task before quoting any case-95 accuracy.
+- `cached_input=0` on ripbench; codex 0.133 clips tool output (~10KB safe, ~15KB cliff).
