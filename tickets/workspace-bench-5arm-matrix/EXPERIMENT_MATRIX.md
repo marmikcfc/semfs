@@ -80,6 +80,54 @@ case after p1). Verdict miscalibration found: RRF score compression ⇒ MIXED al
 HIGH stop-signal path is still untested → wave 2 = spread-normalized margin + COMPLETE-FILE
 gate.
 
+## Phase 5 — E9(d) query-time compression pilot (case 95, `matrix_artifacts/e9d/`)
+
+Shipped: `SEMFS_GREP_COMPRESS` (off default) — render-time caveman compression of prose
+≥4KB via OpenRouter, spreadsheets+siblings exempt, `COMPRESSED RENDITION` marker, cost on
+semfs's key (invisible to the agent's bill). **Smoke: render 158.7KB→62.5KB (−61%),
+25/25 salient numbers preserved.** Bench (×2×2, hint v3): CONFOUNDED — c1 11/12@105K
+(then-best local 95), x1/c2/x2 all 0/12; forensics → not compression (x2 never compressed
+and still zeroed): the **provenance check backfired** (agents declared findable named
+files missing) + judge filename strictness. Compression's behavioral test deferred to E15.
+
+## Phase 6 — the integrity de-tune (hint history closes)
+
+| hint | content | fate |
+|---|---|---|
+| v1 | "read kg/ FIRST" + "trust the excerpt, don't re-open" + honesty text | convicted by E5/RC3 (−58K/run) |
+| v2 (leanhint) | ONE grep → top hit → don't crawl + honesty text | frontier reached (78.4K) |
+| v3 (leanhint2) | v2 + PROVENANCE CHECK | won 289 (+2), zeroed 95 (backfire) |
+| **v4.1 (shipped, `5ef7c28`)** | **facts + costs ONLY** — tool mechanics, marker semantics, one cost note; zero policy, zero honesty coaching (user decision: honesty rubrics measure the AGENT; calibrated confidence belongs in the render, computed — bitter lesson) | **current default** |
+
+Seeds: leanhint2 DEPRECATED (coached); `chanpin-leanhint3.db` = v4.1.
+
+## Phase 7 — clean-hint test (case 95 ×4) + the case-95 benchmark bug
+
+v4_i1 206K/14/0 · **v4_i2 164K/17/12 — FIRST LOCAL PERFECT** · v4_p1 424K/32/0 ·
+v4_p2 163K/16/0. Three of four wrote real reports under the task-derived filename.
+**BUG PROVEN: the agent-visible task names no output file; the expected name lives only
+in judge-side `output_files`+rubrics → identical runs (same config, same filename)
+scored 0/12 and 12/12.** All case-95 scores campaign-wide carry this asterisk; the
+token/call axis stands. De-tune price on 95: 164–206K vs steered 105K (~1.5–2×) — the
+bounty for E9-wave-2 computed confidence. Paths mode is task-shaped: ±1K consistent on
+single-answer QA (289), crawls on N-file synthesis (95).
+
+## Historical run ledger (every quotable run, chronological)
+
+| phase | run | case | config | tokens | calls | score | judge |
+|---|---|---|---|---|---|---|---|
+| 0 | matrix 25 runs | 5×5 | see Phase 0 | plain 89K mean · semfs 2–5× | — | plain 46% | ⚠ infra-invalid local cells |
+| 1 | E1 ×2 | 289 | clean+SO=off, hint v1 | 111K/145K | — | 5–6/15 | ok |
+| 1 | E4′ cap | 289 | +grep cap 3KB | 76.8K/97.8K | 5/16 | 5/15 | ok |
+| 1 | leanhint | 289 | hint v2+cap | 78.4K | — | 5/15 | ok |
+| 3 | w1/w2/w3 | 289 | scout (v2) | 21.5K/169K/107K | 2/12/9 | 4/15 ×3 | re-judged clean |
+| 3 | wp1/wp2/wp3 | 289 | scout+v3 | 93.7K/21.7K/80.5K | 9/2/9 | 6/4/5 /15 | re-judged clean |
+| 3 | p1/p2/p3 | 289 | plain | 322K/118K/71.5K | 15/9/7 | ⊘/5/7 /15 | p1 unjudgeable |
+| 4 | e9b1-3 | 289 | two-tier | 22.5K/93.9K/22.5K | 2/10/2 | 4/5/⊘ | e9b3 unjudgeable |
+| 4 | e9c1-2 | 289 | paths | 85.5K/86.7K | 8/7 | 6/6 /15 | clean |
+| 5 | e9d c/x ×4 | 95 | inline ±compress (v3) | 105K/128K/75K/86K | 14/15/10/8 | 11/0/0/0 /12 | ⚠ lottery+backfire |
+| 7 | v4 i/p ×4 | 95 | clean hint v4.1 | 206K/424K/164K/163K | 14/32/17/16 | 0/0/12/0 | ⚠ lottery (proven) |
+
 ## Knob → layer reference (every knob that appeared, with its tested verdict)
 
 | knob | layer | values tested | verdict |
@@ -94,7 +142,8 @@ gate.
 | `SEMFS_DOC_RETURN_CAP` / `RETURN_MODE` | DELIVERY | various | **INERT on CLI path** (E4) — superseded by GREP_RESULT_CAP |
 | `SEMFS_GREP_RESULT_CAP` | DELIVERY | ∞ / 6KB / 3KB | 6KB: acc holds; 3KB: −1 acc; default 6KB shipped |
 | `SEMFS_GREP_TOTAL_CAP` | DELIVERY | ∞ / 10KB | global budget (E6: per-hit caps can sum past the ~15KB clip) — shipped default 10KB |
-| `SEMFS_GREP_RENDER_MODE` | DELIVERY | inline / two-tier / paths | paths = most consistent (86K/6/15 ×2); two-tier verdict needs recalibration |
-| hint v1 / v2 / v3 | AFFORDANCE | all | v1 (KG-first + trust-excerpt) = −58K/run harm; v3 shipped as default |
+| `SEMFS_GREP_RENDER_MODE` | DELIVERY | inline / two-tier / paths | TASK-SHAPED: paths = ±1K consistent on single-answer QA (289) but crawls on N-file synthesis (95: 32 calls); two-tier verdict needs spread-normalized recalibration (RRF squash) |
+| hint v1 / v2 / v3 / v4.1 | AFFORDANCE | all | v1 = −58K/run harm; v3's provenance check backfired (95) + was honesty-coaching (removed on principle); **v4.1 (facts+costs only) shipped** — costs ~1.5–2× tokens vs steered on 95, but produced the first local 12/12 with zero coaching |
 | `SEMFS_KG` / `SEMFS_GRAPH_FS` | AFFORDANCE | on/off matrix | both **off** for codex-class agents (H5); /by-topic/ = worst tokens in matrix |
-| judge re-run (`agent_as_a_judge --overwrite`) | JUDGE | — | required after 429s; p1 & e9b3 reproducibly unjudgeable → harden inputs |
+| `SEMFS_GREP_COMPRESS` (+`_MIN`, `SEMFS_COMPRESS_MODEL`) | DELIVERY | off / on | mechanism proven (smoke −61%, 25/25 facts); behavioral effect unmeasured under caps → E15 |
+| judge re-run (`agent_as_a_judge --overwrite`) | JUDGE | — | required after 429s; p1 & e9b3 reproducibly unjudgeable; case-95 = filename lottery (task names no file; rubrics do) → fix rubric/task before quoting 95 scores |
