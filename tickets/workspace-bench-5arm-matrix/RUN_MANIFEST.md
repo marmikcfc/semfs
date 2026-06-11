@@ -19,6 +19,7 @@ token number is NOT automatically "more efficient" — check whether the agent d
 | `e3_summary_ab/e_sum2.jsonl` | E3 summary-vs-raw A/B metrics (5 lines) |
 | `e3_summary_ab/runs/<label>/` | Surviving E3 traces: `44_raw`, `289_raw`, `44_sum_dualstore` |
 | `e3_summary_ab/corpus_403_stubs.txt` | The 3 corpus files that are 403 stubs |
+| `LEARNINGS.md` | **START HERE** — the compiled digest of the whole campaign (E1–E8 + shipped fixes) |
 | `RESULTS.md`, `ANALYSIS.md`, `HANDOFF.md` | Prior write-ups of the 5-arm matrix |
 | `TOKEN_ECONOMY.md` | First-principles cost equation + five-whys (incl. the codex-clip finding) |
 | `RESEARCH_NOTES_EXTERNAL.md` | How the field optimizes each component (PwC grep paper, Manus, SWE-grep, …) |
