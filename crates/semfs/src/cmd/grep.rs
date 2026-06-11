@@ -503,11 +503,14 @@ fn compress_min_bytes() -> usize {
 }
 
 /// Structured (table-shaped) sources whose extracted text must stay verbatim.
+/// Sees through the `.extracted.md` sibling suffix: `foo.xlsx.extracted.md` is
+/// still a spreadsheet's table and must not be compressed.
 fn is_spreadsheet_ext(filepath: &str) -> bool {
     let lower = filepath.to_lowercase();
+    let base = lower.strip_suffix(".extracted.md").unwrap_or(&lower);
     [".xlsx", ".xls", ".xlsm", ".csv", ".tsv"]
         .iter()
-        .any(|ext| lower.ends_with(ext))
+        .any(|ext| base.ends_with(ext))
 }
 
 /// Compress `text` for inline render when eligible; `None` = render the
@@ -997,14 +1000,21 @@ pub async fn run(args: Args) -> Result<()> {
         }
 
         if let Some(memory) = result.memory.as_deref() {
-            let (capped, trunc) = cap_render(memory);
+            // The daemon serves LOCAL hits through `memory` too (full document /
+            // extracted text), not just cloud — so the E9(d) compression hook
+            // must live here as well as on the direct-path sites below.
+            let compressed = maybe_compress(fp, memory);
+            let render_src = compressed.as_deref().unwrap_or(memory);
+            let (capped, trunc) = cap_render(render_src);
             let escaped = capped
                 .replace('\\', "\\\\")
                 .replace('\n', "\\n")
                 .replace('\r', "\\r");
             spent += fp.len() + escaped.len() + 24;
             println!("{}:{}", fp, escaped);
-            if trunc {
+            if compressed.is_some() {
+                println!("{}", COMPRESSED_MARKER);
+            } else if trunc {
                 println!(
                     "# ^ TRUNCATED — large file; first {} KB of extracted text shown. Open the file for the rest.",
                     grep_result_cap() / 1024
@@ -1201,10 +1211,23 @@ mod tests {
 
     #[test]
     fn spreadsheets_are_exempt_from_compression() {
-        for fp in ["a/b.xlsx", "X.XLS", "data.csv", "t.tsv", "m.xlsm"] {
+        for fp in [
+            "a/b.xlsx",
+            "X.XLS",
+            "data.csv",
+            "t.tsv",
+            "m.xlsm",
+            "a/b.xlsx.extracted.md", // sibling of a spreadsheet = still a table
+        ] {
             assert!(super::is_spreadsheet_ext(fp), "{fp}");
         }
-        for fp in ["report.docx", "notes.txt", "doc.pdf", "readme.md"] {
+        for fp in [
+            "report.docx",
+            "notes.txt",
+            "doc.pdf",
+            "readme.md",
+            "slides.pptx.extracted.md", // prose sibling — compressible
+        ] {
             assert!(!super::is_spreadsheet_ext(fp), "{fp}");
         }
     }
