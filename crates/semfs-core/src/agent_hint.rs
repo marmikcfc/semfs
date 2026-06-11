@@ -112,14 +112,14 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
              \u{0020} needs whole-workspace orientation; for any specific question go straight to\n\
              \u{0020} `semfs grep` — do not read kg/ first.\n\
              {graph_fs_line}\
-             - To FIND content, run ONE semantic search and read its top result:\n"
+             - To FIND content, semantic search is available:\n"
         )
     } else {
         format!(
             "It answers semantic search over its contents.\n\
              \n\
              {graph_fs_line}\
-             - To FIND content, run ONE semantic search and read its top result:\n"
+             - To FIND content, semantic search is available:\n"
         )
     };
     format!(
@@ -130,13 +130,12 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
          \n\
          \u{0020}   semfs grep \"<2-4 key terms, in the corpus language>\" {path_str}/\n\
          \n\
-         \u{0020} It returns ranked excerpts. The top hit is usually the file you need: the\n\
-         \u{0020} result names WHICH file, the excerpt shows its content. A line marked\n\
-         \u{0020} `# ^ COMPLETE FILE` is that file's entire content — use it directly. A line\n\
-         \u{0020} marked `# ^ TRUNCATED` means more exists: open THAT one file with a normal\n\
-         \u{0020} read (cat / sed -n) when you need exact values. Do NOT crawl with\n\
-         \u{0020} find/os.walk/rg and do NOT open many files \"to be safe\" — one grep plus\n\
-         \u{0020} the top hit keeps your context small and is almost always enough.\n\
+         \u{0020} It returns ranked excerpts: each result names WHICH file and shows its\n\
+         \u{0020} content. A line marked `# ^ COMPLETE FILE` is that file's entire content.\n\
+         \u{0020} A line marked `# ^ TRUNCATED` means more exists — open that file with a\n\
+         \u{0020} normal read (cat / sed -n) for the rest. Cost note: a broad crawl\n\
+         \u{0020} (find / os.walk / rg over the tree) or opening many files costs far more\n\
+         \u{0020} context than a focused search plus the reads you actually need.\n\
          Files outside this directory behave normally — this rule is scoped to that path.\n\
          <!-- semfs:delivery=home-level -->\n\
          {end}\n"
@@ -188,17 +187,16 @@ pub fn render_workspace_root() -> String {
          \n\
          {kg_section}\
          {graph_section}\
-         To FIND content, run ONE semantic search and read its top result:\n\
+         To FIND content, semantic search is available:\n\
          \n\
          \u{0020}   semfs grep \"<2-4 key terms, in the corpus language>\" .\n\
          \n\
-         It returns ranked excerpts. The top hit is usually the file you need: the\n\
-         result names WHICH file, the excerpt shows its content. A line marked\n\
-         `# ^ COMPLETE FILE` is that file's entire content — use it directly. A line\n\
-         marked `# ^ TRUNCATED` means more exists: open THAT one file with a normal\n\
-         read (cat / sed -n) when you need exact values. Do NOT crawl with\n\
-         find/os.walk/rg and do NOT open many files \"to be safe\" — one grep plus the\n\
-         top hit keeps your context small and is almost always enough.\n\
+         It returns ranked excerpts: each result names WHICH file and shows its\n\
+         content. A line marked `# ^ COMPLETE FILE` is that file's entire content. A\n\
+         line marked `# ^ TRUNCATED` means more exists — open that file with a normal\n\
+         read (cat / sed -n) for the rest. Cost note: a broad crawl (find / os.walk /\n\
+         rg over the tree) or opening many files costs far more context than a focused\n\
+         search plus the reads you actually need.\n\
          <!-- semfs:delivery=workspace-root -->\n"
     )
 }
