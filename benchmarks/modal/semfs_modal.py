@@ -39,8 +39,11 @@ app = modal.App("semfs-bench")
 data_volume = modal.Volume.from_name("semfs-bench-data", create_if_missing=True)
 VOL = "/data"  # volume mountpoint: /data/{seeds,corpus,models,wb,codex}
 
+# Ubuntu 24.04 (glibc 2.39): the prebuilt ONNX-runtime static lib linked by
+# fastembed/ort needs glibc >= 2.38 (__isoc23_* symbols) — debian bullseye's
+# 2.31 fails at link time.
 image = (
-    modal.Image.debian_slim(python_version="3.11")
+    modal.Image.from_registry("ubuntu:24.04", add_python="3.11")
     .apt_install("git", "curl", "build-essential", "pkg-config", "libssl-dev",
                  "rsync", "openssh-client", "ca-certificates", "sqlite3")
     # Rust toolchain + semfs build from the pinned ref. Cached until ref/code changes.
