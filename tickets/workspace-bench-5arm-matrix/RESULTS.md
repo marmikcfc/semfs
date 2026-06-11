@@ -176,3 +176,41 @@ sites). Original source backed up at `/tmp/grep.rs.bak` on the box; rebuild with
 - n=1 per cell; ±30% token / ±1-point variance — repeat before quoting.
 - The environment is pathologically fragile (4 independent infra bugs found this
   session) — which is itself the strongest confirmation of the ANALYSIS thesis.
+
+---
+
+# ADDENDUM — E6 + E7/E8 (289 cell) executed, 2026-06-11 evening
+
+Artifacts: `matrix_artifacts/e8seq/` on the box; results `/tmp/e8seq.jsonl`.
+Full narrative: [`hypotheses.html`](hypotheses.html) §retrial, [`mechanics.html`](mechanics.html) §07.
+
+**E6 (codex 0.133.0 clip, measured):** ≤10 KB passes whole · cliff ~15 KB · overflow keeps
+only ~0.6K+0.6K tokens head+tail (notice is token-denominated) · NO 256-line cap on this
+build. 6 KB grep cap sits safely inside the window.
+
+**E7/E8 (case 289, scout = clean + SO=off + cap6K + rlim5 + leanhint; W′ = + provenance
+check; all judge-degraded runs re-judged offline):**
+
+| run | arm | tokens | calls | score (re-judged) |
+|---|---|---|---|---|
+| w1/w2/w3 | scout | 21,473 / 168,779 / 107,211 | 2/12/9 | 4/15 ×3 clean |
+| wp1/wp2/wp3 | scout+W′ | 93,746 / 21,743 / 80,484 | 9/2/9 | **6/15** / 4/15 / 5/15 |
+| p1/p2/p3 | plain | 322,421 / 117,603 / 71,525 | 15/9/7 | ⊘(unjudgeable) / 5/15 / 7/15 |
+
+**Verdict:** token axis won distribution-vs-distribution (scout-class mean 82K vs plain
+171K, −52%; floor band 21K ×2; zero scout runs near plain's 322K pathology). Accuracy:
+W′ recovered exactly the two 403-cluster rubrics (4→6/15, rubric-diff verified) = plain's
+clean mean (5,7→6.0); hint compliance ~2/3 (wp2 skipped the check → 4/15); call-count
+bimodal (2 vs 9–12) — the agent's verify instinct is the one unsolved turn source.
+p1 is reproducibly unjudgeable (322K trace overflows the judge) — judge hardening needed
+or the bar silently drops its own worst runs.
+
+**Shipped:** commit `eae0980` — grep cap (6KB default + TRUNCATED markers), scout hint +
+provenance check as DEFAULT renders (agent_hint.rs), dual-store siblings, L7 KG-gating.
+Fresh installs now get the validated configuration; no seed surgery needed (hint renders
+at import). Tests 326+51 green.
+
+**Next:** E9 stop-signal/two-tier render (attacks the verify-instinct turns — now highest
+leverage) · global render budget (per-hit cap can sum past the clip: 5×6KB>15KB) · E8
+remaining cases (pre-registered ≥3/5 condition) · E11 discovery-stressed + cross-lingual
+cases · judge input caps.

@@ -277,10 +277,50 @@ footer b{color:var(--dim)}
   </div>
 </section>
 
+<!-- 7. TURN-COST PLAYBOOK -->
+<section>
+  <div class="wrap">
+    <h2><span class="n">07</span> How we save turn cost — the playbook as code</h2>
+    <p class="lede">Updated after the full evening: 6 scout-class runs + 3 plain bars. Each avoided turn is worth <b>(scaffold + accumulated history)</b> — on this task ≈10–15K tokens per late turn. Five mechanisms are shipped (commit <span style="color:var(--cyan)">eae0980</span>); the sixth is the open frontier.</p>
+
+    <div class="code reveal"><div class="bar"><span>turn_savings.py — every mechanism, its status, its measured worth</span><span class="tag">shipped + frontier</span></div><pre><span class="c"># 1. NEVER COMMAND A READ                      [shipped · deterministic]</span>
+hint.remove(<span class="s">"read kg/KNOWLEDGE_GRAPH.md FIRST"</span>)
+<span class="c">#    worth: ~58K/run (35.7K turn-1 read + 22.4K crawl cascade)</span>
+<span class="c">#    result: 0 KG reads, 0 full-tree crawls in all 6 scout-class runs</span>
+
+<span class="c"># 2. MAKE TURN 1 TERMINAL-GRADE                [shipped · probabilistic]</span>
+render = <span class="f">rank</span>(hits)[:<span class="n">5</span>]                       <span class="c"># answer rows inline,</span>
+<span class="k">assert</span> <span class="f">size</span>(render) &lt; CLIP_WINDOW             <span class="c"># nothing silently gutted</span>
+<span class="c">#    when codex trusts it: search → write = 2 calls, 21K tokens (hit 2/6 runs)</span>
+
+<span class="c"># 3. ESCAPE HATCH OPEN BUT UNNECESSARY         [shipped · deterministic]</span>
+SEMFS_SEARCH_ONLY = <span class="s">"off"</span>                     <span class="c"># the real tree stays readable</span>
+<span class="c">#    kills the spiral CLASS: zero 45-min timeouts / 23-call flails since</span>
+
+<span class="c"># 4. CLOSE DEAD-ENDS EARLY (provenance check)  [shipped · ~2/3 compliance]</span>
+<span class="k">for</span> f <span class="k">in</span> task.named_sources: <span class="f">peek</span>(f, <span class="n">400</span>)    <span class="c"># see the 403 ONCE → stop hunting</span>
+<span class="c">#    w2 burned 6 grep variants hunting data that does not exist;</span>
+<span class="c">#    wp1 peeked, reported, scored 6/15 (+2 rubrics) at 94K</span>
+
+<span class="c"># 5. PAY BYTES ONCE, HONESTLY                  [shipped · deterministic]</span>
+<span class="k">if</span> capped: render += <span class="s">"# ^ TRUNCATED — open the file for the rest"</span>
+<span class="c">#    a silently-gutted blob breeds re-query turns; an honest marker</span>
+<span class="c">#    converts them into ONE targeted read</span>
+
+<span class="c"># 6. THE FRONTIER: STOP SIGNAL IN THE RENDER   [E9 · next]</span>
+render += <span class="s">f"# confidence: {agreement(vector,fts,rerank)} — "</span> \
+          <span class="s">f"{'no further search needed' if high else 'verify by reading'}"</span>
+<span class="c">#    the residual 2-vs-9-call coin flip is codex's verify instinct;</span>
+<span class="c">#    a static hint can't pin it — per-query confidence might</span></pre></div>
+
+    <div class="callout green"><b>Net effect, measured (case 289):</b> plain 71–322K tokens / 7–15 calls (mean 171K) → scout-class 21–169K / 2–12 calls (mean 82K, −52%), with W′ accuracy at plain's clean mean (6/15). The deterministic mechanisms moved the whole distribution down; the remaining spread is the agent's own policy — mechanism #6's job.</div>
+  </div>
+</section>
+
 <footer>
   <div class="wrap">
     <b>Sources:</b> traces in artifacts/e8seq/ (box) · E6 probes /tmp/e6/run{A,B,CD}.jsonl (box) · TOKEN_ECONOMY.md · EXPERIMENTS_NEXT.md · openai/codex#6426<br>
-    <b>Caveats:</b> w1 is n=1 — call-count variance is the documented killer of one-run wins; clip numbers are for codex 0.133.0 with this config and may move between versions.<br>
+    <b>Caveats:</b> single-case (289) evening; n=6 scout-class / n=3 plain; all scores re-judged clean except p1 (reproducibly unjudgeable); clip numbers are codex 0.133.0-specific.<br>
     ← back to the <a href="hypotheses.html">full case file</a>
   </div>
 </footer>
