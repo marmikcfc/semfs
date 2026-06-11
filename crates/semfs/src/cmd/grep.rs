@@ -439,6 +439,90 @@ fn cap_render(s: &str) -> (String, bool) {
     (s[..end].to_string(), true)
 }
 
+/// E9 delivery modes (`SEMFS_GREP_RENDER_MODE`):
+/// - `inline` (default): every hit gets a full capped excerpt — current behavior.
+/// - `two-tier`: ONLY the top hit gets the full excerpt + a confidence verdict;
+///   hits 2..N render as path + one-line snippet. Smallest payload that still
+///   answers; the verdict line is the stop-signal against re-query loops.
+/// - `paths`: all hits as path + one-line snippet (pure pointer delivery).
+#[derive(Clone, Copy, PartialEq)]
+enum RenderMode {
+    Inline,
+    TwoTier,
+    Paths,
+}
+
+fn render_mode() -> RenderMode {
+    match std::env::var("SEMFS_GREP_RENDER_MODE").ok().as_deref() {
+        Some("two-tier") | Some("two_tier") | Some("twotier") => RenderMode::TwoTier,
+        Some("paths") | Some("path") => RenderMode::Paths,
+        _ => RenderMode::Inline,
+    }
+}
+
+/// Global render budget across ALL hits. The per-hit cap alone can sum past the
+/// agent harness's tool-output clip (RESULT_LIMIT × 6 KB > the ~15 KB codex
+/// cliff measured in E6) — and overflow there is catastrophic: the harness keeps
+/// ~1 K tokens head+tail and silently drops the middle-ranked hits. Once the
+/// budget is spent, remaining hits render as path + snippet with an honest note.
+/// `SEMFS_GREP_TOTAL_CAP` (bytes; 0 disables; unset → 10 KB).
+fn grep_total_cap() -> usize {
+    match std::env::var("SEMFS_GREP_TOTAL_CAP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        Some(0) => usize::MAX,
+        Some(n) => n,
+        None => 10 * 1024,
+    }
+}
+
+const SNIPPET_BYTES: usize = 160;
+
+/// One-line path-tier snippet: first ~160 bytes on a char boundary, newlines
+/// flattened — enough to identify the hit, cheap enough to never matter.
+fn snippet_line(text: &str) -> String {
+    let mut end = SNIPPET_BYTES.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut s = text[..end].replace(['\n', '\r'], " ");
+    if end < text.len() {
+        s.push('…');
+    }
+    s
+}
+
+/// The stop-signal: a confidence verdict derived from the ranked similarity
+/// scores. Relative margin only — score SCALES are backend-dependent (RRF vs
+/// cosine vs cloud), so absolute thresholds would lie; the top-vs-second gap is
+/// comparable everywhere. Both branches prescribe a bounded next action: the
+/// re-query loop (same question, new wording, ×5) is the failure mode this line
+/// exists to stop — measured as the 2-vs-12-call bimodality in the E8 runs.
+fn confidence_line(top: f64, second: Option<f64>) -> String {
+    match second {
+        None => "# confidence: HIGH — single match. The excerpt above is the matched \
+                 content; answer from it. Do not re-search."
+            .to_string(),
+        Some(s) => {
+            let denom = top.abs().max(f64::EPSILON);
+            let margin = (top - s) / denom;
+            if margin >= 0.15 {
+                format!(
+                    "# confidence: HIGH — top hit outranks #2 by {:.0}%. Answer from the \
+                     excerpt above; open this ONE file only if you need values beyond it. \
+                     Do not re-search with new wording.",
+                    margin * 100.0
+                )
+            } else {
+                "# confidence: MIXED — top results score closely. Open the top 1-2 files \
+                 listed to confirm, then answer. Do not re-search with new wording."
+                    .to_string()
+            }
+        }
+    }
+}
+
 fn line_range_in_file(file_content: &str, chunk: &str) -> Option<(usize, usize)> {
     if chunk.is_empty() {
         return None;
@@ -807,11 +891,46 @@ pub async fn run(args: Args) -> Result<()> {
     // so the whole grep pays at most one timeout, never hangs.
     let mut mount_reads_ok = true;
 
+    let mode = render_mode();
+    let total_cap = grep_total_cap();
+    // Bytes already printed as hit content (excerpts + snippets). When `spent`
+    // crosses `total_cap`, remaining hits demote to path-tier (see grep_total_cap).
+    let mut spent: usize = 0;
+    let mut budget_note_printed = false;
+    let top_sim = hits.first().map(|h| h.similarity);
+    let second_sim = hits.get(1).map(|h| h.similarity);
+
     for (i, result) in hits.iter().enumerate() {
         if i > 0 {
             println!();
         }
         let fp = result.filepath.as_deref().unwrap_or("(unknown)");
+
+        // Tier decision: does this hit get a full excerpt or just path + snippet?
+        let full_tier = match mode {
+            RenderMode::Inline => true,
+            RenderMode::TwoTier => i == 0,
+            RenderMode::Paths => false,
+        };
+        let over_budget = spent >= total_cap;
+        if !full_tier || (over_budget && i > 0) {
+            if over_budget && !budget_note_printed && mode == RenderMode::Inline {
+                println!(
+                    "# (render budget reached — remaining hits as path + snippet; \
+                     open a listed file or grep narrower)"
+                );
+                budget_note_printed = true;
+            }
+            let text = result
+                .memory
+                .as_deref()
+                .or(result.chunk.as_deref())
+                .unwrap_or("");
+            let snip = snippet_line(text);
+            spent += fp.len() + snip.len() + 2;
+            println!("{}:{}", fp, snip);
+            continue;
+        }
 
         if let Some(memory) = result.memory.as_deref() {
             let (capped, trunc) = cap_render(memory);
@@ -819,6 +938,7 @@ pub async fn run(args: Args) -> Result<()> {
                 .replace('\\', "\\\\")
                 .replace('\n', "\\n")
                 .replace('\r', "\\r");
+            spent += fp.len() + escaped.len() + 24;
             println!("{}:{}", fp, escaped);
             if trunc {
                 println!(
@@ -841,6 +961,7 @@ pub async fn run(args: Args) -> Result<()> {
                 .replace('\\', "\\\\")
                 .replace('\n', "\\n")
                 .replace('\r', "\\r");
+            spent += fp.len() + escaped.len() + 24;
             println!("{}:{}", fp, escaped);
             continue;
         }
@@ -855,6 +976,7 @@ pub async fn run(args: Args) -> Result<()> {
                     .replace('\\', "\\\\")
                     .replace('\n', "\\n")
                     .replace('\r', "\\r");
+                spent += fp.len() + escaped.len() + 24;
                 println!("{}:1-{}:{}", fp, lines, escaped);
                 if trunc {
                     println!(
@@ -928,6 +1050,7 @@ pub async fn run(args: Args) -> Result<()> {
             .replace('\\', "\\\\")
             .replace('\n', "\\n")
             .replace('\r', "\\r");
+        spent += fp.len() + escaped.len() + 24;
 
         if let Some((start, end)) = line_range {
             if start == end {
@@ -953,16 +1076,61 @@ pub async fn run(args: Args) -> Result<()> {
         }
     }
 
+    // E9 stop-signal: in two-tier mode, close the render with a confidence
+    // verdict derived from the ranked scores. Placed last so it survives the
+    // harness's head+tail clip and is the final thing the agent reads.
+    if mode == RenderMode::TwoTier {
+        if let Some(top) = top_sim {
+            println!();
+            println!("{}", confidence_line(top, second_sim));
+        }
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        line_range_in_file, present_excerpt, read_file_timed, ReadOutcome,
-        SMALL_FILE_INLINE_BYTES,
+        confidence_line, line_range_in_file, present_excerpt, read_file_timed, snippet_line,
+        ReadOutcome, RenderMode, SMALL_FILE_INLINE_BYTES,
     };
     use std::time::Duration;
+
+    #[test]
+    fn render_mode_defaults_to_inline() {
+        // No env mutation here (parallel tests) — exercise the parser via match arms.
+        assert!(matches!(super::render_mode(), RenderMode::Inline | RenderMode::TwoTier | RenderMode::Paths));
+    }
+
+    #[test]
+    fn confidence_high_on_clear_margin() {
+        let line = confidence_line(0.80, Some(0.50));
+        assert!(line.contains("HIGH"), "{line}");
+        assert!(line.contains("38%") || line.contains("37%"), "{line}");
+    }
+
+    #[test]
+    fn confidence_mixed_on_close_scores() {
+        let line = confidence_line(0.80, Some(0.78));
+        assert!(line.contains("MIXED"), "{line}");
+        assert!(line.contains("Do not re-search"), "{line}");
+    }
+
+    #[test]
+    fn confidence_high_on_single_hit() {
+        assert!(confidence_line(0.42, None).contains("HIGH"));
+    }
+
+    #[test]
+    fn snippet_flattens_newlines_and_caps() {
+        let s = snippet_line("line one\nline two\r\nrest");
+        assert!(!s.contains('\n') && !s.contains('\r'));
+        let long = "x".repeat(500);
+        let s = snippet_line(&long);
+        assert!(s.len() <= 170, "len={}", s.len());
+        assert!(s.ends_with('…'));
+    }
 
     #[test]
     fn present_excerpt_marks_complete_when_chunk_covers_file() {
