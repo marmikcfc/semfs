@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "constraint-based-creativity": {
+      "source": "lyndonkl/claude",
+      "sourceType": "github",
+      "skillPath": "skills/constraint-based-creativity/SKILL.md",
+      "computedHash": "a5d062f9cc7037aff33b2ab1638a483aa985855e726f2c345b88b26967da99dc"
+    },
     "thinking-archetypes": {
       "source": "tjboudreaux/cc-thinking-skills",
       "sourceType": "github",

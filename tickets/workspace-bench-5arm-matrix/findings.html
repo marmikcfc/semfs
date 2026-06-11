@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>WB 5-arm: why "semfs loses" was wrong</title>
+<style>
+  :root{--bg:#0d1117;--card:#161b22;--ink:#e6edf3;--mut:#8b949e;--acc:#58a6ff;--good:#3fb950;--bad:#f85149;--warn:#d29922;--line:#30363d}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:30px;line-height:1.2;margin:0 0 6px}
+  h2{font-size:22px;margin:40px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{font-size:17px;margin:24px 0 8px;color:var(--acc)}
+  .sub{color:var(--mut);font-size:18px;margin:0 0 24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:20px;margin-right:6px}
+  .p-good{background:rgba(63,185,80,.15);color:var(--good)}
+  .p-bad{background:rgba(248,81,73,.15);color:var(--bad)}
+  .p-warn{background:rgba(210,153,34,.15);color:var(--warn)}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+  th{background:#1c2230;color:var(--mut);font-weight:600}
+  td.n{font-variant-numeric:tabular-nums;text-align:right}
+  .win{color:var(--good);font-weight:600}.lose{color:var(--bad)}.mid{color:var(--warn)}
+  code{background:#1c2230;padding:1px 6px;border-radius:5px;font-size:13px;color:#ffa657}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:14px 0}
+  .node{flex:1;min-width:120px;background:#1c2230;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;cursor:pointer;transition:.2s}
+  .node:hover{border-color:var(--acc);transform:translateY(-2px)}
+  .node b{color:var(--acc)}
+  .arrow{align-self:center;color:var(--mut);font-size:20px}
+  details{margin:8px 0;background:#1c2230;border:1px solid var(--line);border-radius:8px;padding:0 14px}
+  summary{cursor:pointer;padding:12px 0;font-weight:600}
+  details[open]{padding-bottom:12px}
+  .eli5{border-left:3px solid var(--good);padding-left:14px;margin:10px 0;color:#c9d1d9}
+  .expert{border-left:3px solid var(--acc);padding-left:14px;margin:10px 0;color:#c9d1d9;font-size:14px}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0}
+  .kpi div{flex:1;min-width:150px;background:#1c2230;border:1px solid var(--line);border-radius:8px;padding:14px;text-align:center}
+  .kpi .big{font-size:26px;font-weight:700}
+  .mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>The Workspace-Bench "semfs loses" result was wrong</h1>
+  <p class="sub">It didn't measure retrieval quality. It measured an agent flailing against broken infrastructure.</p>
+
+  <div class="kpi">
+    <div><div class="big lose">timeout / 0&nbsp;of&nbsp;15</div><div class="mut">case 289, original (broken infra)</div></div>
+    <div><div class="big" style="color:var(--acc)">→</div><div class="mut">same task, same agent, clean infra</div></div>
+    <div><div class="big win">130s / 6&nbsp;of&nbsp;15</div><div class="mut">matches the plain baseline</div></div>
+  </div>
+
+  <h2>1. The one-sentence story</h2>
+  <div class="card">
+    <div class="eli5"><b>ELI5.</b> We have a tool (semfs) that lets an AI "search by meaning" instead of guessing filenames. A benchmark said the tool made the AI <i>worse</i>. But the tool's engine was actually broken during the test — like blaming a race car for losing when its fuel line was cut. Fix the fuel line, and it keeps up.</div>
+    <div class="expert"><b>Expert.</b> The 5-arm matrix attributed a 3–14%-accuracy / 2–5×-token deficit to semfs retrieval. A trace audit + clean-infra reruns show 13/15 local runs hit hard infra faults (malformed DB, 50s search timeouts → 0-result cloud fallback). With a verified-clean seed + a health-gated driver, the local arm recovers to plain-competitive accuracy. The residual loss is on <i>tokens</i>, and it traces to one product mis-feature, not retrieval.</div>
+  </div>
+
+  <h2>2. What actually happens on a run (click a stage)</h2>
+  <div class="flow">
+    <div class="node" onclick="show('t')"><b>TASK</b><br>zh/en prompt</div>
+    <div class="arrow">→</div>
+    <div class="node" onclick="show('i')"><b>INDEX</b><br>gemma-q4 chunks</div>
+    <div class="arrow">→</div>
+    <div class="node" onclick="show('s')"><b>SEARCH</b><br>vec+FTS → rerank</div>
+    <div class="arrow">→</div>
+    <div class="node" onclick="show('d')"><b>DELIVERY</b><br>FUSE mount + hint</div>
+    <div class="arrow">→</div>
+    <div class="node" onclick="show('a')"><b>AGENT</b><br>codex GPT-5.4</div>
+  </div>
+  <div id="flowdesc" class="card mut">Click a stage above to see where it broke.</div>
+
+  <h2>3. Four independent infra bugs — each could cause the "loss"</h2>
+  <details><summary><span class="pill p-bad">F1</span> Disk-full corruption</summary>
+    The box ran at 93–95% disk. <code>chunks</code> has a <code>last_accessed_at</code> column → <b>search performs writes</b>. A write under ENOSPC tears a page → <code>database disk image is malformed</code>. The canonical seed's <code>quick_check</code> was always OK, so corruption was a <i>runtime</i> event in the working copy. <b>Fix:</b> disk guard + <code>quick_check</code> health-gate on every fresh copy.</details>
+  <details><summary><span class="pill p-bad">F4</span> 716 contamination sidecars (estimated as "6")</summary>
+    The "clean" seed carried <b>716</b> <code>&lt;file&gt;.semfs-error.txt</code> twins (HTTP-402 "out of credits" from a failed cloud ingest) across the whole corpus + a baked <code>model_output/</code>. <code>find</code>/<code>ls</code> surfaced an error-twin for nearly every source file → the agent concludes the data is inaccessible and gives up or fabricates. <b>Fix:</b> rebuilt the seed via daemon FUSE <code>rm</code> (never raw SQL — desyncs ffts/vchunks).</details>
+  <details><summary><span class="pill p-bad">F-cache</span> Embedder pollutes the corpus → mount hang</summary>
+    The adapter runs <code>semfs mount</code> with cwd = the workdir, so fastembed cached <b>898MB of model blobs</b> into <code>$WORKDIR/.fastembed_cache</code>. An unscoped import then tries to <i>re-index 898MB of model files</i> → the mount hangs. <b>Fix:</b> strip it before each mount.</details>
+  <details><summary><span class="pill p-bad">F-daemon</span> Daemon survives unmount → vec0 corruption</summary>
+    <code>semfs unmount</code> removes the mount but leaves <code>daemon-inner</code> holding the old DB mmap'd. The next run's <code>cp</code> overwrites the file underneath it → <code>Error opening vector blob</code> + constraint failures. <b>Fix:</b> kill <code>daemon-inner</code> before the fresh copy.</details>
+
+  <h2>4. The hypotheses, tested</h2>
+  <table>
+    <tr><th>#</th><th>Hypothesis</th><th>Verdict</th></tr>
+    <tr><td>H1</td><td>≥half the deficit is infra failure, not retrieval</td><td class="win">CONFIRMED — 289 timeout/0 → 130s/6</td></tr>
+    <tr><td>H2</td><td><code>SEARCH_ONLY=on</code> causes the catastrophic 0s (no fallback)</td><td class="win">CONFIRMED — on flails &gt;30min; off finishes 114s</td></tr>
+    <tr><td>H3</td><td>Index quality (summaries) is the accuracy lever</td><td class="mid">SUPPORTED — raw chunks 8/12 vs cloud-summaries 12/12</td></tr>
+    <tr><td>H4</td><td>Token cost is delivery form, not search</td><td class="mid">PARTIAL — compaction trades tokens↔accuracy, no free lunch</td></tr>
+    <tr><td>H5</td><td>The 61KB KG file is net-negative</td><td class="win">CONFIRMED — 35K KG read is the #1 token sink</td></tr>
+  </table>
+
+  <h2>5. Clean-nokg vs plain (per case)</h2>
+  <table>
+    <tr><th>case</th><th class="n">plain tok</th><th class="n">plain acc</th><th class="n">clean-nokg tok</th><th class="n">acc</th><th>verdict</th></tr>
+    <tr><td>289</td><td class="n">79K</td><td class="n">6/15</td><td class="n">111–145K</td><td class="n">5–6/15</td><td class="lose">acc match, +tokens</td></tr>
+    <tr><td>95</td><td class="n">86K</td><td class="n">11/12</td><td class="n">255K</td><td class="n">8/12</td><td class="lose">worse both</td></tr>
+    <tr><td>15</td><td class="n">184K</td><td class="n">6/16</td><td class="n">85K (compact)</td><td class="n">2/16</td><td class="mid">−tokens, accuracy starved</td></tr>
+  </table>
+
+  <h2>6. The residual token sink (and the one lever left)</h2>
+  <div class="card">
+    Case 289's 111K breaks down as <b>35K reading <code>kg/KNOWLEDGE_GRAPH.md</code></b> + <b>22K os.walk</b> + ~2K real work. The seed's <code>AGENTS.md</code> commands "read kg/KNOWLEDGE_GRAPH.md FIRST" → the agent obeys, greps <i>scoped to kg/</i> (useless), then crawls. A clean simple grep returns the exact answer file as the top hit. The KG hint is the root cause — and it can't be removed from the existing seed (read-only <code>/kg/</code>; clearing <code>graph_*</code> triggers a hanging re-import).
+    <div class="expert" style="margin-top:12px"><b>The structural fix tried:</b> a fresh seed with <code>SEMFS_KG=off</code>. Result: <span class="pill p-bad">BLOCKED</span> — fresh seeding is impractical on the 16GB box (~13 files/min → ~3h; half-indexed 259/2212 files, missing 289's answer file).</div>
+  </div>
+
+  <h2>7. The deeper token bug — and why no config can win</h2>
+  <div class="card">
+    A controlled A/B on the SAME query proved the documented delivery knobs are <b>inert on the agent's <code>semfs grep</code> CLI</b>:
+    <table style="margin-top:8px">
+      <tr><th><code>semfs grep</code> config</th><th class="n">output chars</th></tr>
+      <tr><td>CAPPED — RESULT_LIMIT=3, DOC_CAP=2048, snippet</td><td class="n lose">372,321</td></tr>
+      <tr><td>DEFAULT</td><td class="n">316,425</td></tr>
+    </table>
+    A broad query returns <b>~300K uncapped chars regardless of the caps</b> — this, not just the KG, is why every semfs arm cost 2–5× plain's tokens. <b>A clean win is blocked at the code layer</b> (uncapped grep + a compiled-in hint), not the config layer.
+    <div class="expert" style="margin-top:12px"><b>Product fixes to make local semfs win:</b> (1) make <code>semfs grep</code> honor <code>RESULT_LIMIT</code>/<code>DOC_RETURN_CAP</code>/<code>RETURN_MODE</code> on the CLI path; (2) rewrite the injected hint to "grep → read the single top hit → don't crawl → skip kg/"; (3) ship a pre-built KG-off seed.</div>
+  </div>
+
+  <h2>8. The fix — implemented, and the first sub-plain run <span class="pill p-good">CODE FIX</span></h2>
+  <div class="card">
+    Patched <code>crates/semfs/src/cmd/grep.rs</code> to <b>cap the per-hit rendered text</b> (new knob <code>SEMFS_GREP_RESULT_CAP</code>, default 6 KB) at all three render sites, with an honest <code>TRUNCATED</code> marker. Built incrementally (52 s) + deployed.
+    <table style="margin-top:8px">
+      <tr><th>289 / clean-nokg</th><th class="n">tokens</th><th class="n">acc</th></tr>
+      <tr><td>plain (bar)</td><td class="n">79,007</td><td class="n">6/15</td></tr>
+      <tr><td>pre-fix (uncapped grep)</td><td class="n lose">111–145K</td><td class="n">5–6</td></tr>
+      <tr><td>patched, cap=6KB rlim=8</td><td class="n">122K</td><td class="n">6/15</td></tr>
+      <tr><td><b>patched, cap=3KB rlim=3</b></td><td class="n win">76,812</td><td class="n">5/15</td></tr>
+    </table>
+    The fix is the <b>first thing to drop a local arm's tokens below plain</b> (76.8 K &lt; 79 K). It's variance-limited: converging runs win (~5 calls), but the agent still sometimes over-explores (os.walk, 19–32 calls) — that residual is the compiled-in <code>AGENTS.md</code> hint (fix #2), the remaining lever.
+  </div>
+
+  <p class="mut" style="margin-top:40px;font-size:13px">Generated 2026-06-11 from the E1–E5 reruns. Companions: <code>ANALYSIS.md</code> (hypotheses), <code>RESULTS.md</code> (data), <code>rcas/2026-06-11-wb-5arm-infra-failure-not-retrieval.md</code>.</p>
+</div>
+<script>
+  var D={
+    t:"<b>TASK</b> — a zh/en business prompt (e.g. 'extract the top-10 best-selling products'). Plain codex and semfs get the IDENTICAL prompt (clean A/B).",
+    i:"<b>INDEX</b> — local gemma-q4 embeddings over text chunks in a SQLite+vec0 DB. <span style='color:#f85149'>BROKEN: the seed carried 716 error-sidecars; disk-full tore pages during search-writes.</span>",
+    s:"<b>SEARCH</b> — vector + full-text retrieval, RRF-fused, cross-encoder reranked. <span style='color:#f85149'>BROKEN: timed out (50s) → silent cloud fallback → 0 results.</span>",
+    d:"<b>DELIVERY</b> — a FUSE mount serves results inline + injects an AGENTS.md hint. <span style='color:#d29922'>MIS-FEATURE: the hint says 'read kg/KNOWLEDGE_GRAPH.md FIRST' (35K) + 'trust the excerpt, don't re-open'.</span>",
+    a:"<b>AGENT</b> — codex/GPT-5.4, single turn, cache=0 (every turn re-pays full context → turn-count is the token driver). It obeyed the hint and flailed against the broken infra."
+  };
+  function show(k){document.getElementById('flowdesc').innerHTML=D[k];document.getElementById('flowdesc').classList.remove('mut');}
+</script>
+</body>
+</html>

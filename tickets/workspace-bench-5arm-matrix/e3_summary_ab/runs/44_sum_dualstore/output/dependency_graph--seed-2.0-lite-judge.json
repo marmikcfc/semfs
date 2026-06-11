@@ -1,0 +1,8 @@
+{
+  "taskDir": "/srv/semfs-benchmark/Workspace-Bench/evaluation/output/SEMFSCodex--GPT-5.4--Smoke-SEMFS/44",
+  "agentKind": "unknown",
+  "createdAt": "2026-06-11T06:53:04.056710+00:00",
+  "nodes": [],
+  "edges": [],
+  "evalModel": "seed-2.0-lite-judge"
+}

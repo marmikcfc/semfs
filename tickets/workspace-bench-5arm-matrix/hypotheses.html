@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CASE FILE WB-5ARM — The Token Economy Hypotheses</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,900&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Spectral:ital,wght@0,300;0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f4eee0;
+  --paper-dark:#ece4d2;
+  --ink:#1c1812;
+  --ink-soft:#4a4334;
+  --ink-faint:#8a8068;
+  --red:#b8341f;
+  --red-soft:rgba(184,52,31,.08);
+  --green:#2e6b4a;
+  --green-soft:rgba(46,107,74,.09);
+  --blue:#2b4f8a;
+  --blue-soft:rgba(43,79,138,.08);
+  --amber:#b07d18;
+  --amber-soft:rgba(176,125,24,.12);
+  --rule:rgba(28,24,18,.22);
+  --rule-soft:rgba(28,24,18,.1);
+  --mono:'IBM Plex Mono',monospace;
+  --serif:'Spectral',serif;
+  --display:'Fraunces',serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--serif);
+  font-size:17px;
+  line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+/* paper grain */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:1000;opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+a{color:var(--blue)}
+.wrap{max-width:1060px;margin:0 auto;padding:0 28px}
+.mono{font-family:var(--mono)}
+
+/* ============ MASTHEAD ============ */
+header{
+  border-bottom:3px double var(--rule);
+  padding:46px 0 30px;position:relative;overflow:hidden;
+}
+.case-row{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+.case-meta{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft)}
+.case-meta b{color:var(--ink)}
+h1{
+  font-family:var(--display);font-weight:900;font-optical-sizing:auto;
+  font-size:clamp(38px,6vw,72px);line-height:.98;letter-spacing:-.015em;margin:18px 0 14px;
+}
+h1 .thin{font-weight:300;font-style:italic}
+.subtitle{font-size:19px;color:var(--ink-soft);max-width:62ch;font-weight:300}
+.subtitle b{font-weight:500;color:var(--ink)}
+.stamp{
+  font-family:var(--mono);font-weight:600;letter-spacing:.18em;text-transform:uppercase;
+  border:3px solid currentColor;border-radius:6px;padding:7px 16px;font-size:13px;
+  transform:rotate(-7deg);display:inline-block;opacity:.9;
+  mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='r'%3E%3CfeTurbulence baseFrequency='0.18' numOctaves='3'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.9 0.05'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23r)'/%3E%3C/svg%3E");
+  mask-size:130px;
+}
+.stamp.red{color:var(--red)}
+.stamp.green{color:var(--green)}
+.stamp.grey{color:var(--ink-faint)}
+.stamp.big{font-size:16px;padding:10px 22px}
+.header-stamps{display:flex;flex-direction:column;gap:14px;align-items:flex-end}
+@keyframes stampIn{0%{transform:rotate(-7deg) scale(2.4);opacity:0}60%{transform:rotate(-7deg) scale(.94);opacity:1}100%{transform:rotate(-7deg) scale(1)}}
+.header-stamps .stamp{animation:stampIn .5s cubic-bezier(.2,.9,.3,1.2) both}
+.header-stamps .stamp:nth-child(2){animation-delay:.35s}
+
+/* ============ LEVEL NAV ============ */
+nav{
+  position:sticky;top:0;z-index:50;background:var(--paper);
+  border-bottom:1px solid var(--rule);box-shadow:0 1px 0 rgba(28,24,18,.04);
+}
+.nav-inner{display:flex;gap:0;overflow-x:auto}
+.nav-inner a{
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-soft);text-decoration:none;padding:14px 18px;border-right:1px solid var(--rule-soft);
+  white-space:nowrap;transition:all .2s;border-bottom:3px solid transparent;
+}
+.nav-inner a b{display:block;font-size:13px;color:var(--ink);letter-spacing:.02em;text-transform:none;font-weight:600}
+.nav-inner a:hover{background:var(--paper-dark)}
+.nav-inner a.active{border-bottom-color:var(--red);background:var(--paper-dark)}
+
+/* ============ SECTIONS ============ */
+section{padding:72px 0 30px;border-bottom:1px dashed var(--rule)}
+.level-tag{
+  font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--paper);background:var(--ink);display:inline-block;padding:5px 12px;margin-bottom:14px;
+}
+.level-tag.red{background:var(--red)}
+h2{font-family:var(--display);font-weight:900;font-size:clamp(28px,4vw,44px);line-height:1.05;margin-bottom:8px;letter-spacing:-.01em}
+.deck{font-size:19px;font-weight:300;color:var(--ink-soft);max-width:64ch;margin-bottom:36px}
+.deck b{font-weight:500;color:var(--ink)}
+h3{font-family:var(--display);font-weight:600;font-size:22px;margin:42px 0 12px}
+p{max-width:72ch;margin-bottom:14px}
+p.note{font-size:14.5px;color:var(--ink-soft);border-left:3px solid var(--amber);padding-left:14px;background:var(--amber-soft);padding:10px 14px;max-width:72ch}
+
+.reveal{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}
+.reveal.vis{opacity:1;transform:none}
+
+/* ============ ELI5 panel ============ */
+.fable{
+  display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--rule);
+  background:#fbf7ec;margin:26px 0;
+}
+.fable>div{padding:26px 28px}
+.fable>div:first-child{border-right:1px dashed var(--rule)}
+.fable h4{font-family:var(--display);font-weight:600;font-size:18px;margin-bottom:10px}
+.fable .who{font-family:var(--mono);font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--red);margin-bottom:6px;display:block}
+.fable p{font-size:15.5px}
+@media(max-width:760px){.fable{grid-template-columns:1fr}.fable>div:first-child{border-right:none;border-bottom:1px dashed var(--rule)}}
+
+.rule-card{border:1px solid var(--rule);background:#fbf7ec;padding:22px 26px;margin:18px 0}
+.rule-card .mono-label{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--red);display:block;margin-bottom:8px}
+
+/* ============ SCOREBOARD ============ */
+table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:13.5px;margin:20px 0}
+caption{font-family:var(--mono);font-size:11px;letter-spacing:.15em;text-transform:uppercase;text-align:left;color:var(--ink-faint);padding-bottom:8px}
+th{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);font-weight:600;text-align:left;border-bottom:2px solid var(--ink);padding:8px 12px}
+td{padding:9px 12px;border-bottom:1px solid var(--rule-soft);transition:background .15s}
+tr:hover td{background:var(--paper-dark)}
+tr.win td{background:var(--green-soft)}
+tr.win td:first-child{position:relative}
+tr.win td:first-child::before{content:"★";color:var(--green);margin-right:6px}
+td.bad{color:var(--red);font-weight:600}
+td.good{color:var(--green);font-weight:600}
+.tnum{font-variant-numeric:tabular-nums}
+
+/* ============ PIPELINE DIAGRAM ============ */
+.pipeline{display:flex;align-items:stretch;gap:10px;margin:30px 0;flex-wrap:wrap}
+.pipe-box{
+  border:2px solid var(--ink);padding:14px 16px;flex:1;min-width:130px;background:#fbf7ec;
+  position:relative;
+}
+.pipe-box.shaded{background:var(--red-soft);border-style:dashed;border-color:var(--red)}
+.pipe-box h5{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+.pipe-box p{font-size:13px;line-height:1.45;color:var(--ink-soft);margin:0}
+.pipe-arrow{align-self:center;font-family:var(--mono);font-size:20px;color:var(--ink-faint)}
+.pipe-note{font-family:var(--mono);font-size:11.5px;color:var(--red);margin-top:8px;border-top:1px dashed var(--rule);padding-top:12px}
+
+/* ============ HYPOTHESIS CARDS ============ */
+.hcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin:30px 0}
+.hcard{
+  border:1px solid var(--rule);background:#fbf7ec;cursor:pointer;position:relative;
+  transition:transform .2s ease,box-shadow .2s ease;
+}
+.hcard:hover{transform:translateY(-3px);box-shadow:4px 6px 0 rgba(28,24,18,.12)}
+.hcard .hd{padding:18px 20px 14px;border-bottom:1px dashed var(--rule);display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.hcard .hid{font-family:var(--display);font-weight:900;font-size:30px;line-height:1}
+.hcard .hclaim{font-size:14.5px;color:var(--ink-soft);padding:14px 20px;font-style:italic}
+.hcard .verdict{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;border:2px solid currentColor;padding:4px 10px;border-radius:4px;transform:rotate(3deg);white-space:nowrap}
+.hcard .body{max-height:0;overflow:hidden;transition:max-height .45s ease}
+.hcard.open .body{max-height:600px}
+.hcard .body-inner{padding:0 20px 20px;font-size:14px;border-top:1px dashed var(--rule);padding-top:14px;margin:0 0}
+.hcard .body-inner .ev{font-family:var(--mono);font-size:12px;background:var(--paper-dark);padding:10px 12px;margin:10px 0;border-left:3px solid var(--ink)}
+.hcard .toggle-hint{font-family:var(--mono);font-size:10px;color:var(--ink-faint);text-align:right;padding:0 20px 12px;letter-spacing:.1em;text-transform:uppercase}
+.hcard.open .toggle-hint .open-txt{display:none}
+.hcard:not(.open) .toggle-hint .close-txt{display:none}
+
+/* ============ EXHIBIT ============ */
+.exhibit{
+  border:2px solid var(--ink);margin:34px 0;background:#fbf7ec;position:relative;
+}
+.exhibit .ex-label{
+  position:absolute;top:-14px;left:22px;background:var(--ink);color:var(--paper);
+  font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;padding:5px 14px;
+}
+.exhibit-inner{padding:30px 28px 24px}
+.exhibit .big-stat{display:flex;gap:36px;flex-wrap:wrap;margin:14px 0 16px}
+.exhibit .stat .n{font-family:var(--display);font-weight:900;font-size:clamp(30px,4.5vw,52px);line-height:1}
+.exhibit .stat .l{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);margin-top:6px}
+.exhibit .stat .n.red{color:var(--red)}
+.exhibit .stat .n.green{color:var(--green)}
+
+/* ============ EQUATION ============ */
+.equation{
+  font-family:var(--mono);font-size:clamp(15px,2.4vw,21px);background:var(--ink);color:var(--paper);
+  padding:26px 28px;margin:26px 0;overflow-x:auto;line-height:1.9;
+}
+.equation .hl{color:#e8b04b}
+.equation .dim{opacity:.55;font-size:.78em}
+.law{display:flex;gap:14px;margin:14px 0;align-items:baseline}
+.law .ln{font-family:var(--display);font-weight:900;font-size:26px;color:var(--red);min-width:34px}
+.law p{margin:0;font-size:15.5px}
+
+/* ============ SIMULATOR ============ */
+.sim{
+  border:2px solid var(--ink);background:#fbf7ec;padding:28px;margin:36px 0;
+}
+.sim h4{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;margin-bottom:4px;color:var(--red)}
+.sim .sim-sub{font-size:14px;color:var(--ink-soft);margin-bottom:20px}
+.sim-controls{display:flex;gap:38px;flex-wrap:wrap;margin-bottom:22px}
+.sim-controls label{font-family:var(--mono);font-size:12px;display:block;letter-spacing:.06em;color:var(--ink-soft)}
+.sim-controls .val{font-weight:600;color:var(--ink);font-size:14px}
+input[type=range]{width:220px;accent-color:var(--red);margin-top:8px}
+.bars{display:flex;align-items:flex-end;gap:6px;height:190px;border-bottom:2px solid var(--ink);padding:0 4px;margin-bottom:6px}
+.bar{flex:1;display:flex;flex-direction:column-reverse;min-width:16px;transition:height .3s ease}
+.bar .seg{transition:height .3s ease}
+.seg.scaffold{background:repeating-linear-gradient(45deg,#c9bfa6,#c9bfa6 4px,#bdb298 4px,#bdb298 8px)}
+.seg.probe{background:#7e9c8c}
+.seg.bigread{background:var(--red)}
+.bar-labels{display:flex;gap:6px;padding:0 4px;margin-bottom:18px}
+.bar-labels span{flex:1;text-align:center;font-family:var(--mono);font-size:10px;color:var(--ink-faint);min-width:16px}
+.sim-total{display:flex;gap:34px;flex-wrap:wrap;align-items:baseline}
+.sim-total .t .n{font-family:var(--display);font-weight:900;font-size:38px;line-height:1}
+.sim-total .t .l{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft)}
+.legend{display:flex;gap:22px;margin-top:16px;flex-wrap:wrap}
+.legend span{font-family:var(--mono);font-size:11px;display:flex;align-items:center;gap:7px;color:var(--ink-soft)}
+.legend i{width:14px;height:14px;display:inline-block;border:1px solid var(--rule)}
+.legend i.s1{background:repeating-linear-gradient(45deg,#c9bfa6,#c9bfa6 4px,#bdb298 4px,#bdb298 8px)}
+.legend i.s2{background:#7e9c8c}
+.legend i.s3{background:var(--red)}
+
+/* ============ OPINIONS ============ */
+.opinion{
+  border:1px solid var(--rule);background:#fbf7ec;margin:16px 0;position:relative;overflow:hidden;
+}
+.opinion.descoped{opacity:.62}
+.op-head{display:flex;align-items:center;gap:18px;padding:18px 22px;cursor:pointer;flex-wrap:wrap}
+.op-id{font-family:var(--display);font-weight:900;font-size:24px;min-width:52px}
+.op-claim{flex:1;font-size:15.5px;font-weight:500;min-width:230px}
+.cred{min-width:190px}
+.cred .cred-track{height:10px;background:var(--paper-dark);border:1px solid var(--rule);position:relative}
+.cred .cred-fill{height:100%;background:var(--ink);width:0;transition:width 1s cubic-bezier(.2,.7,.3,1)}
+.cred .cred-num{font-family:var(--mono);font-size:11px;color:var(--ink-soft);margin-top:4px;letter-spacing:.08em}
+.op-body{max-height:0;overflow:hidden;transition:max-height .5s ease;font-size:14px}
+.opinion.open .op-body{max-height:2200px}
+.op-body-inner{padding:0 22px 20px;border-top:1px dashed var(--rule);padding-top:14px;margin:0 22px 0;padding-left:0;padding-right:0}
+.op-body-inner{margin:0 22px}
+.falsifier{font-family:var(--mono);font-size:12.5px;background:var(--red-soft);border-left:3px solid var(--red);padding:10px 12px;margin-top:10px}
+.falsifier b{color:var(--red);letter-spacing:.1em;font-size:10.5px;text-transform:uppercase;display:block;margin-bottom:4px}
+.op-tag{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;border:1.5px solid currentColor;padding:3px 8px;border-radius:3px}
+.op-tag.grey{color:var(--ink-faint)}
+.op-tag.red{color:var(--red)}
+
+/* ============ CREDENCE METHODOLOGY ============ */
+.cal-box{border:2px solid var(--ink);background:#fbf7ec;padding:26px 28px;margin:26px 0 38px;position:relative}
+.cal-box .ex-label{position:absolute;top:-14px;left:22px;background:var(--ink);color:var(--paper);font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;padding:5px 14px}
+.cal-scale{display:flex;margin:18px 0 6px;border:1px solid var(--rule);height:46px}
+.cal-scale>div{flex:1;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-align:center;padding:4px;border-right:1px dashed var(--rule);line-height:1.3}
+.cal-scale>div:last-child{border-right:none}
+.cal-scale .b1{background:rgba(28,24,18,.05)}
+.cal-scale .b2{background:var(--amber-soft)}
+.cal-scale .b3{background:var(--green-soft)}
+.cal-scale .b4{background:rgba(46,107,74,.2)}
+.cal-ticks{display:flex;font-family:var(--mono);font-size:10px;color:var(--ink-faint);margin-bottom:16px}
+.cal-ticks span{flex:1}
+.ladder{font-size:13.5px;margin:12px 0}
+.ladder li{margin:6px 0 6px 20px}
+.ladder .lt{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);margin-right:6px}
+.why{margin:12px 0 4px}
+.why .w{font-size:13.5px;padding:10px 13px;border-left:3px solid var(--rule);margin:8px 0;background:var(--paper-dark)}
+.why .w b{font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;display:block;margin-bottom:4px}
+.why .w.hold{border-color:var(--blue);background:var(--blue-soft)}
+.why .w.hold b{color:var(--blue)}
+.why .w.floor{border-color:var(--green);background:var(--green-soft)}
+.why .w.floor b{color:var(--green)}
+.why .w.ceil{border-color:var(--amber);background:var(--amber-soft)}
+.why .w.ceil b{color:var(--amber)}
+.cred-math{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);background:var(--paper-dark);border:1px dashed var(--rule);padding:8px 12px;margin-top:10px;letter-spacing:.02em}
+.cred-math b{color:var(--ink)}
+
+/* ============ EXPERIMENTS / TREE ============ */
+.tree{margin:34px 0;display:flex;flex-direction:column;align-items:center;gap:0}
+.tree-node{
+  border:2px solid var(--ink);background:#fbf7ec;padding:14px 20px;max-width:560px;width:100%;
+  position:relative;
+}
+.tree-node.headline{border-width:3px;background:var(--amber-soft)}
+.tree-node h5{font-family:var(--mono);font-size:13px;letter-spacing:.08em;margin-bottom:4px}
+.tree-node h5 .eid{color:var(--red);font-weight:600}
+.tree-node p{font-size:13px;color:var(--ink-soft);margin:0}
+.tree-link{width:2px;height:26px;background:var(--ink)}
+.tree-split{display:flex;gap:18px;width:100%;max-width:760px;justify-content:center}
+.tree-split>div{flex:1;display:flex;flex-direction:column;align-items:center}
+.tree-branch-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;padding:3px 10px;margin:6px 0;border-radius:3px}
+.tree-branch-label.win{color:var(--green);border:1.5px solid var(--green)}
+.tree-branch-label.miss{color:var(--red);border:1.5px solid var(--red)}
+.exp-detail{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:16px;margin:26px 0}
+.exp-card{border:1px solid var(--rule);background:#fbf7ec;padding:18px 20px;position:relative}
+.exp-card.descoped{opacity:.55}
+.exp-card .eid{font-family:var(--mono);font-weight:600;font-size:13px;color:var(--red);letter-spacing:.06em}
+.exp-card h5{font-family:var(--display);font-weight:600;font-size:17px;margin:4px 0 8px}
+.exp-card p{font-size:13.5px;color:var(--ink-soft);margin-bottom:8px}
+.exp-card .pred{font-family:var(--mono);font-size:11.5px;background:var(--green-soft);border-left:3px solid var(--green);padding:8px 10px;margin-top:8px}
+.exp-card .kill{font-family:var(--mono);font-size:11.5px;background:var(--red-soft);border-left:3px solid var(--red);padding:8px 10px;margin-top:8px}
+.exp-card .pred b,.exp-card .kill b{font-size:10px;letter-spacing:.12em;text-transform:uppercase;display:block;margin-bottom:3px}
+.exp-card .pred b{color:var(--green)}
+.exp-card .kill b{color:var(--red)}
+.exp-card .corner-stamp{position:absolute;top:12px;right:12px}
+.exp-card .corner-stamp .stamp{font-size:9.5px;padding:4px 9px}
+.cost-tag{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);letter-spacing:.06em}
+
+/* field evidence strip */
+.field{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:24px 0}
+.field-card{border:1px solid var(--rule);padding:16px 18px;background:#fbf7ec}
+.field-card .src{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);display:block;margin-bottom:6px}
+.field-card .stat{font-family:var(--display);font-weight:900;font-size:26px;line-height:1.1}
+.field-card p{font-size:12.5px;color:var(--ink-soft);margin:6px 0 0}
+
+footer{padding:46px 0 70px;font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);line-height:2}
+footer b{color:var(--ink-soft)}
+.redline{color:var(--red);font-weight:500}
+.kbd{font-family:var(--mono);font-size:.85em;background:var(--paper-dark);border:1px solid var(--rule);padding:1px 6px;border-radius:3px;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<!-- ==================== MASTHEAD ==================== -->
+<header>
+  <div class="wrap">
+    <div class="case-row">
+      <div>
+        <div class="case-meta">CASE FILE <b>WB-5ARM</b> · OPENED 2026-06-10 · LAST AMENDED 2026-06-11 · TICKET <b>tickets/workspace-bench-5arm-matrix/</b></div>
+        <h1>The Token Economy<br><span class="thin">on trial.</span></h1>
+        <p class="subtitle">A complete, from-scratch account of every hypothesis in the semfs × Workspace-Bench investigation: the original verdict (<b>"semfs loses"</b>), the forensic evidence that overturned it, the physics of where tokens actually go, and the experiments that will settle what remains. <b>Read top to bottom: each level assumes only the one before it.</b></p>
+      </div>
+      <div class="header-stamps">
+        <span class="stamp red big">VERDICT OVERTURNED</span>
+        <span class="stamp green">RETRIAL SCHEDULED · E6–E14</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ==================== NAV ==================== -->
+<nav>
+  <div class="wrap nav-inner">
+    <a href="#l1"><span>Level 1</span><b>The Story</b></a>
+    <a href="#l2"><span>Level 2</span><b>The Experiment</b></a>
+    <a href="#l3"><span>Level 3</span><b>H1–H5 on Trial</b></a>
+    <a href="#l4"><span>Level 4</span><b>Token Physics</b></a>
+    <a href="#l5"><span>Level 5</span><b>Opinions &amp; Next Experiments</b></a>
+  </div>
+</nav>
+
+<!-- ==================== LEVEL 1 ==================== -->
+<section id="l1">
+  <div class="wrap">
+    <span class="level-tag">Level 1 · Explain it like I'm five</span>
+    <h2>An intern, a librarian, and a very strange pay rule</h2>
+    <p class="deck">Forget software for a minute. Here is the whole case as a story about reading.</p>
+
+    <div class="fable reveal">
+      <div>
+        <span class="who">The intern (the agent, codex/GPT-5.4)</span>
+        <h4>Works alone in a room of 1,452 documents</h4>
+        <p>We give an AI intern a task like <i>"find this quarter's depreciation numbers and write a report."</i> The intern can open files, search, and write — but every action costs money, measured in <b>tokens</b> (roughly: pieces of words read or written).</p>
+      </div>
+      <div>
+        <span class="who">The strange pay rule (no prompt cache)</span>
+        <h4>Before every action, the intern re-reads its entire notebook</h4>
+        <p>This intern has no memory between actions. Every single time it does anything, it first re-reads <i>everything it has seen so far</i> — and we pay for every re-read. So one careless early decision (opening a huge useless file first) gets paid for <b>again and again, on every later step</b>.</p>
+      </div>
+    </div>
+
+    <div class="fable reveal">
+      <div>
+        <span class="who">The librarian (semfs)</span>
+        <h4>Our product: a smart filing system</h4>
+        <p><b>semfs</b> mounts the documents through a smart layer: it can search by meaning (not just exact words), it converts unreadable spreadsheets into readable text, and it leaves the intern a note (<span class="kbd">AGENTS.md</span>) explaining how to use it.</p>
+      </div>
+      <div>
+        <span class="who">The question on trial</span>
+        <h4>Does hiring the librarian save money?</h4>
+        <p>Hypothesis: <i>with the librarian, the intern reads less junk, finds things faster, and the bill goes down — without the work getting worse.</i> The first trial said <b>no — the intern did better alone</b>. This case file is about why that verdict was wrong, what's actually true, and what we test next.</p>
+      </div>
+    </div>
+
+    <div class="rule-card reveal">
+      <span class="mono-label">The one sentence to remember</span>
+      <p style="font-family:var(--display);font-size:21px;font-weight:600;max-width:none;margin:0">The bill is not decided by how smart the search is. It's decided by <span class="redline">how the intern behaves</span> — how many actions it takes, how big each thing it reads is, and <i>how early</i> it reads the big things.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== LEVEL 2 ==================== -->
+<section id="l2">
+  <div class="wrap">
+    <span class="level-tag">Level 2 · The experiment</span>
+    <h2>Five arms, five cases, one scoreboard — and a plot twist</h2>
+    <p class="deck">We ran the same five office tasks ("cases") under five configurations ("arms"), each adding exactly one capability. <b>The task prompt was byte-identical everywhere</b> — semfs could only help through the product itself, never through a better prompt.</p>
+
+    <h3>The machine under test</h3>
+    <div class="pipeline reveal">
+      <div class="pipe-box"><h5>Task</h5><p>A realistic office job (zh/en): consolidate spreadsheets, write reports, answer QA.</p></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-box shaded"><h5>Index</h5><p>What got embedded: raw cell chunks (local) vs LLM summaries (cloud).</p></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-box shaded"><h5>Search</h5><p>Query rewrite → vector + keyword fusion → reranker. <span class="kbd">semfs grep</span>.</p></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-box shaded"><h5>Delivery</h5><p>How results reach the agent: inline excerpts, file tree, <span class="kbd">/kg/</span> graph files, the AGENTS.md hint.</p></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-box"><h5>Agent</h5><p>codex / GPT-5.4, single session, <b>zero prompt cache</b>.</p></div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-box"><h5>Judge</h5><p>An LLM grades the deliverable against a fixed rubric (e.g. 6/15 points).</p></div>
+    </div>
+    <p class="note">The shaded boxes are the semfs stack. The <b>plain</b> arm bypasses all three — the agent just uses <span class="kbd">find</span>/<span class="kbd">grep</span>/<span class="kbd">sed</span> on real files. That's the baseline to beat.</p>
+
+    <h3>The original scoreboard (2026-06-10)</h3>
+    <table class="reveal">
+      <caption>Aggregate over 5 cases · accuracy = Σ rubric points passed / total · tokens = mean per run</caption>
+      <thead><tr><th>Arm</th><th>What it adds</th><th>Accuracy</th><th>Mean tokens</th><th>Reading</th></tr></thead>
+      <tbody>
+        <tr class="win"><td>plain</td><td>nothing (baseline)</td><td class="good tnum">46%</td><td class="good tnum">89K</td><td>best on BOTH axes</td></tr>
+        <tr><td>cloud</td><td>server-side search + summaries</td><td class="tnum">27%</td><td class="tnum">93K</td><td>token-neutral; won case 95 outright</td></tr>
+        <tr><td>gfs_off</td><td>local search + /kg/ files</td><td class="tnum">10%</td><td class="bad tnum">178K</td><td>2× tokens</td></tr>
+        <tr><td>gfs_on</td><td>+ browsable /by-topic/ overlay</td><td class="tnum">14%</td><td class="bad tnum">471K</td><td>worst tokens — invites crawling</td></tr>
+        <tr><td>nokg</td><td>local search alone</td><td class="bad tnum">3%</td><td class="bad tnum">247K</td><td>one 45-min timeout</td></tr>
+      </tbody>
+    </table>
+
+    <div class="exhibit reveal">
+      <span class="ex-label">The plot twist</span>
+      <div class="exhibit-inner">
+        <p style="max-width:none">Reading the 25 raw traces — not the scores — showed that <b>13 of 15 local-arm runs were fighting a broken machine</b>, not doing retrieval: corrupted databases (<span class="kbd">database disk image is malformed</span>), 50-second search timeouts, a silent fallback that returned 0 results, and <b>716 garbage error-files baked into the "clean" seed</b> that convinced the agent the workspace had no data.</p>
+        <div class="big-stat">
+          <div class="stat"><div class="n red">13/15</div><div class="l">local runs hit hard infra failure</div></div>
+          <div class="stat"><div class="n red">716</div><div class="l">contamination files in the "clean" seed</div></div>
+          <div class="stat"><div class="n green">0</div><div class="l">infra errors in plain &amp; cloud runs</div></div>
+        </div>
+        <p style="max-width:none">So the original scoreboard didn't measure <i>"is semfs retrieval good"</i> — it measured <i>"how does an agent behave when its tools are secretly broken."</i> That realization produced five formal hypotheses, H1–H5, each with a pre-declared prediction and a way to be proven wrong. <b>That's Level 3.</b></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== LEVEL 3 ==================== -->
+<section id="l3">
+  <div class="wrap">
+    <span class="level-tag">Level 3 · The first trial</span>
+    <h2>Five hypotheses, tested on a clean machine</h2>
+    <p class="deck">Each hypothesis (H) was paired with an experiment (E1–E5) on rebuilt, health-gated infrastructure. <b>Click each card</b> for the prediction, the evidence, and the verdict. Target throughout: beat plain's <span class="kbd">46% @ 89K</span> on at least one axis without losing the other.</p>
+
+    <div class="hcards">
+      <div class="hcard reveal" data-h>
+        <div class="hd"><div><div class="hid">H1</div><div class="mono" style="font-size:11px;letter-spacing:.1em;color:var(--ink-faint)">E1 · INFRA-CLEAN RERUN</div></div><span class="verdict" style="color:var(--green)">CONFIRMED</span></div>
+        <div class="hclaim">"At least half the local accuracy deficit is infrastructure failure, not retrieval quality."</div>
+        <div class="body"><div class="body-inner">
+          <p><b>Prediction:</b> with a healthy database and no silent cloud-fallback, the catastrophic scores recover.</p>
+          <div class="ev">case 289/nokg: timeout · 0/15 · 2024s &nbsp;→&nbsp; 114–130s · 5–6/15 (plain = 6/15)</div>
+          <p><b>What it means:</b> on clean infra, local semfs <i>matches plain on accuracy</i>. Four independent infra bugs were found and fixed — disk-full page-tears (search <i>writes</i> to the db!), the 716-file contamination, an embedder caching 898MB of model blobs into the corpus, and a daemon holding stale db handles. Any one of them alone could fake the original result.</p>
+        </div></div>
+        <div class="toggle-hint"><span class="open-txt">▸ open evidence</span><span class="close-txt">▾ close</span></div>
+      </div>
+
+      <div class="hcard reveal" data-h>
+        <div class="hd"><div><div class="hid">H2</div><div class="mono" style="font-size:11px;letter-spacing:.1em;color:var(--ink-faint)">E2 · SEARCH_ONLY A/B</div></div><span class="verdict" style="color:var(--green)">CONFIRMED</span></div>
+        <div class="hclaim">"Hiding the file tree (SEARCH_ONLY=on) causes the catastrophic zero-scores."</div>
+        <div class="body"><div class="body-inner">
+          <p><b>Prediction:</b> with the tree visible, no semfs run collapses below plain.</p>
+          <div class="ev">SEARCH_ONLY=on (clean seed): flailed &gt;30 min toward timeout · =off: finished in 114s</div>
+          <p><b>What it means:</b> when search underdelivers, the visible file tree is the agent's only escape hatch. Removing it deletes the system's <i>balancing feedback loop</i> — search degrades → agent retries → context grows → cost spirals. <span class="kbd">SEARCH_ONLY=off</span> is now the "never lose catastrophically" default.</p>
+        </div></div>
+        <div class="toggle-hint"><span class="open-txt">▸ open evidence</span><span class="close-txt">▾ close</span></div>
+      </div>
+
+      <div class="hcard reveal" data-h>
+        <div class="hd"><div><div class="hid">H3</div><div class="mono" style="font-size:11px;letter-spacing:.1em;color:var(--ink-faint)">E3 · SUMMARIES VS RAW</div></div><span class="verdict" style="color:var(--amber)">UNTESTABLE HERE</span></div>
+        <div class="hclaim">"Index quality — LLM summaries instead of raw cell chunks — is the accuracy lever."</div>
+        <div class="body"><div class="body-inner">
+          <p><b>What happened:</b> the first A/B was invalidated — the summary seed had silently <i>discarded the raw tables</i>, so the agent literally couldn't read the spreadsheets (0/16 was "files unreadable," not "summaries bad"). A <b>dual-store fix</b> was built: search on the summary, answer from the raw table.</p>
+          <div class="ev">Valid test (case 44): dual-store 2/16 vs raw 4/16 — token-neutral, both read identical tables → noise on a low-ceiling case</div>
+          <p><b>The structural finding:</b> summaries only help when the agent must <i>search</i> for an unnamed answer file among many. <b>No current WB case has that shape</b> (44 names its files, 289's data is missing, 95 is txt, 15/44 have rubric ceilings). The lever is real (cloud's summary-indexed arm scored 12/12 on case 95) but this benchmark can't measure it → needs new cases (E11).</p>
+        </div></div>
+        <div class="toggle-hint"><span class="open-txt">▸ open evidence</span><span class="close-txt">▾ close</span></div>
+      </div>
+
+      <div class="hcard reveal" data-h>
+        <div class="hd"><div><div class="hid">H4</div><div class="mono" style="font-size:11px;letter-spacing:.1em;color:var(--ink-faint)">E4 · DELIVERY FORM</div></div><span class="verdict" style="color:var(--green)">CONFIRMED — VIA A CODE FIX</span></div>
+        <div class="hclaim">"Token cost is the delivery form (how much each search call dumps into context), not search itself."</div>
+        <div class="body"><div class="body-inner">
+          <p><b>The smoking gun:</b> every documented cap knob was <i>inert</i> on the agent's CLI path — a single broad <span class="kbd">semfs grep</span> returned ~300K characters no matter what. This is why every semfs arm cost 2–5× plain.</p>
+          <div class="ev">Fix: SEMFS_GREP_RESULT_CAP (per-hit render cap, honest TRUNCATED marker)<br>289: cap=3KB → <b>76.8K tokens &lt; plain's 79K</b> — the first local arm ever to beat plain on tokens</div>
+          <p><b>The catch:</b> the win is real but inconsistent — a second run made 16 calls instead of 5 (agent crawling) and landed at 97.8K. The remaining variance is <i>behavior</i>, which points at H5.</p>
+        </div></div>
+        <div class="toggle-hint"><span class="open-txt">▸ open evidence</span><span class="close-txt">▾ close</span></div>
+      </div>
+
+      <div class="hcard reveal" data-h>
+        <div class="hd"><div><div class="hid">H5</div><div class="mono" style="font-size:11px;letter-spacing:.1em;color:var(--ink-faint)">E5 · KG ABLATION</div></div><span class="verdict" style="color:var(--green)">CONFIRMED (NEGATIVE)</span></div>
+        <div class="hclaim">"The knowledge graph pays only as a tiny digest; the 61KB graph file and /by-topic/ crawl are net-negative."</div>
+        <div class="body"><div class="body-inner">
+          <p><b>The cascade, measured:</b> the seed's baked-in note commands <i>"read kg/KNOWLEDGE_GRAPH.md FIRST."</i> The agent obeys (35.7K tokens), then greps <i>inside</i> kg/ (gets 138 useless characters), loses confidence, and crawls the whole tree with os.walk (22.4K more) — while a plain one-line grep returns the exact answer file as the #1 hit.</p>
+          <div class="ev">289 token breakdown: 35.7K KG read + 22.4K os.walk + ~2K actual work<br>/by-topic/ arm: 471K mean tokens — worst in the matrix, zero accuracy payoff</div>
+          <p><b>What it means:</b> a ~2KB instruction file outweighed the entire retrieval pipeline. The KG can't even be removed from the existing seed (read-only, and rebuilding takes ~3h on the box) — which is itself a product bug.</p>
+        </div></div>
+        <div class="toggle-hint"><span class="open-txt">▸ open evidence</span><span class="close-txt">▾ close</span></div>
+      </div>
+
+      <div class="hcard reveal" style="background:var(--paper-dark);border-style:dashed">
+        <div class="hd"><div><div class="hid" style="color:var(--ink-faint)">Σ</div><div class="mono" style="font-size:11px;letter-spacing:.1em;color:var(--ink-faint)">WHERE THE FIRST TRIAL LEFT US</div></div><span class="verdict" style="color:var(--ink-soft)">SCORE: PARITY</span></div>
+        <div class="hclaim" style="font-style:normal">Clean infra → <b>accuracy parity with plain</b> (289: 6=6 · 44: 2=2). The grep-cap fix → first token win (76.8K vs 79K), but inconsistent. The wall: agent behavior, driven by a baked, read-only hint. A lean-hint seed (swapped via <span class="kbd">fs_data</span>) reached <b>78.4K/5 vs plain 79K/6</b> — at the frontier, not past it.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== LEVEL 4 ==================== -->
+<section id="l4">
+  <div class="wrap">
+    <span class="level-tag red">Level 4 · First principles</span>
+    <h2>The physics of where tokens go</h2>
+    <p class="deck">Strip away every convention and ask what the bill is <b>made of</b>. With no prompt cache, every action re-pays the whole accumulated context. That single fact generates three laws — and one hidden mechanism nobody had noticed.</p>
+
+    <div class="equation reveal">
+TotalTokens ≈ <span class="hl">T·S</span> + Σₛ <span class="hl">(T−s)·oₛ</span> + G<br>
+<span class="dim">T = number of actions (turns) · S = scaffold re-read every turn (prompt + hint)<br>
+oₛ = what action s put into context · (T−s) = how many times it gets re-paid · G = generated output</span>
+    </div>
+
+    <div class="law reveal"><div class="ln">I.</div><p><b>Turn count multiplies everything.</b> Every extra action re-pays the scaffold and all history. The 5-call run cost 76.8K; the same config making 16 calls cost 97.8K.</p></div>
+    <div class="law reveal"><div class="ln">II.</div><p><b>Early big reads are the most expensive reads.</b> A read at turn s is re-paid (T−s) times. The hint-commanded 35.7K KG read happens at <i>turn 1</i> — the single worst position in the whole run.</p></div>
+    <div class="law reveal"><div class="ln">III.</div><p><b>Even the winner is wasteful.</b> Decomposing plain's 79K on case 289: its first two <span class="kbd">find</span> probes returned ~40K characters that get re-paid on every later turn — <b>~60–70% of plain's bill is plain re-reading its own discovery probes</b>. The theoretical floor (1 search → 1 read → 1 write) is ~17–22K. Everyone is ≥3.5× above it.</p></div>
+
+    <!-- SIMULATOR -->
+    <div class="sim reveal">
+      <h4>Interactive · Exhibit B — the re-pay machine</h4>
+      <p class="sim-sub">Each bar is one turn's <b>input bill</b> (everything re-read before acting). Drag the big read (think: the 9K-token KG file) earlier or later, and change how many turns the agent takes. Watch what Law I and Law II do to the total.</p>
+      <div class="sim-controls">
+        <div>
+          <label>Turn the big read happens: <span class="val" id="posVal">1</span></label>
+          <input type="range" id="posSlider" min="1" max="8" value="1" step="1">
+        </div>
+        <div>
+          <label>Total turns the agent takes: <span class="val" id="turnVal">8</span></label>
+          <input type="range" id="turnSlider" min="3" max="16" value="8" step="1">
+        </div>
+      </div>
+      <div class="bars" id="bars"></div>
+      <div class="bar-labels" id="barLabels"></div>
+      <div class="sim-total">
+        <div class="t"><div class="n tnum" id="totalTok">—</div><div class="l">total input tokens</div></div>
+        <div class="t"><div class="n tnum" id="repayTok" style="color:var(--red)">—</div><div class="l">spent re-paying the big read</div></div>
+        <div class="t"><div class="n tnum" id="deltaTok" style="color:var(--green)">—</div><div class="l">saved vs worst case</div></div>
+      </div>
+      <div class="legend">
+        <span><i class="s1"></i> scaffold (re-read every turn)</span>
+        <span><i class="s2"></i> accumulated small probes</span>
+        <span><i class="s3"></i> the big read, re-paid every turn after it</span>
+      </div>
+    </div>
+
+    <!-- CLIP EXHIBIT -->
+    <div class="exhibit reveal">
+      <span class="ex-label">Exhibit A · A hidden mechanism, discovered 2026-06-11</span>
+      <div class="exhibit-inner">
+        <p style="max-width:none">While verifying the equation against real traces, the numbers refused to add up. The <i>winning</i> cloud run on case 95 emitted a staggering amount of tool output — yet billed a fraction of what the equation predicts:</p>
+        <div class="big-stat">
+          <div class="stat"><div class="n red">830,726</div><div class="l">chars of tool output emitted (one grep: 510,402)</div></div>
+          <div class="stat"><div class="n">→</div><div class="l"></div></div>
+          <div class="stat"><div class="n green">138,268</div><div class="l">input tokens actually billed</div></div>
+        </div>
+        <p style="max-width:none"><b>Conclusion: the codex harness silently truncates tool output before the model ever sees it.</b> There is an uncontrolled clipping layer between <span class="kbd">semfs grep</span> and the agent — and it clips <i>blindly</i>, possibly cutting the ranked list or the answer row. This reframes the grep-cap fix entirely: its value isn't "fewer bytes," it's <span class="redline">choosing which bytes survive</span> instead of letting the harness choose at random. The clip's threshold and shape are unmeasured — which is why experiment <b>E6</b> runs before everything else.</p>
+      </div>
+    </div>
+
+    <h3>The field agrees (external evidence, gathered via Reddit / X / web)</h3>
+    <div class="field reveal">
+      <div class="field-card"><span class="src">PwC · arXiv 2605.15184</span><div class="stat">93.1% → 55.2%</div><p>Same data, same retriever: codex accuracy collapses when results are delivered as files instead of inline. <b>The harness reshapes search more than the search engine does.</b></p></div>
+      <div class="field-card"><span class="src">Cognition · SWE-grep</span><div class="stat">&gt;60%</div><p>of an agent's first turn is spent on context retrieval (Devin/Windsurf telemetry). Discovery is the sink.</p></div>
+      <div class="field-card"><span class="src">GrepAI benchmark</span><div class="stat">−97%</div><p>discovery-phase input tokens when semantic search replaces grep-exploration (51K → 1.3K) on a 155K-line repo.</p></div>
+      <div class="field-card"><span class="src">Firetiger / Anthropic MCP</span><div class="stat">−98.7%</div><p>when agents slice stored tool results instead of receiving blobs. Nobody serious ships uncapped output.</p></div>
+    </div>
+    <p class="note"><b>Scope decision (2026-06-11):</b> this investigation now targets <b>input tokens only</b>. Prompt caching is automatic at the API layer and output-stream compression ("caveman") is a ≤8% side quest — both are parked, not disputed.</p>
+  </div>
+</section>
+
+<!-- ==================== LEVEL 5 ==================== -->
+<section id="l5">
+  <div class="wrap">
+    <span class="level-tag red">Level 5 · Expert</span>
+    <h2>Eight opinions, held at gunpoint</h2>
+    <p class="deck">Each conviction below carries an explicit <b>credence</b> (how sure we are, as a number) and a <b>falsifier</b> (the concrete observation that would kill it). An opinion without a falsifier isn't an opinion — it's an identity. <b>Click each one to see the full case: the evidence, why the number isn't higher, and why it isn't lower.</b></p>
+
+    <div class="cal-box reveal">
+      <span class="ex-label">Methodology · How every credence was set</span>
+      <p style="max-width:none;font-size:15px">A credence is not a vibe — it's set by a repeatable procedure: <b>start from the strength of the best evidence, then subtract explicit discounts.</b> Two opinions with the same number should be wrong equally often.</p>
+      <ol class="ladder">
+        <li><span class="lt">Rung 4 — strongest</span><b>Causal intervention:</b> we changed one thing and the metric moved (e.g. the grep-cap patch). Starts ~90.</li>
+        <li><span class="lt">Rung 3</span><b>Direct trace attribution:</b> the cost is read line-by-line out of the artifact (e.g. 35.7K KG read at turn 1). Starts ~85.</li>
+        <li><span class="lt">Rung 2</span><b>Structural argument:</b> checkable reasoning about the system (e.g. "no WB case requires semantic search" — verifiable by reading the 5 tasks). Starts ~75.</li>
+        <li><span class="lt">Rung 1 — weakest</span><b>External analogy:</b> someone else's benchmark on someone else's corpus (PwC, GrepAI, Manus). Corroborates; never carries a number alone. Starts ~60.</li>
+      </ol>
+      <p style="max-width:none;font-size:15px">Then the discounts, each applied explicitly: <b>small-n</b> (every cell here is n=1–3; ±30% token / ±1-point swings are documented — subtract 5–15), <b>unmeasured confounder</b> (e.g. the codex clip layer — subtract 5–10), <b>agent-compliance uncertainty</b> (codex may ignore instructions — subtract 5–10), and the <b>motivated-reasoning discount</b>: where being right flatters our product or our past work (marked <i>identity-fused</i>), the number is pushed down on purpose, because that's exactly where self-deception lives.</p>
+      <div class="cal-scale">
+        <div class="b1">50–60<br>educated bet — structural argument only, or heavy bias discount</div>
+        <div class="b2">60–75<br>verified mechanism, but the conjunction / arena is untested</div>
+        <div class="b3">75–85<br>repeated direct evidence, one open confounder</div>
+        <div class="b4">85+<br>multiple independent lines converge (capped &lt;90 while n&lt;3)</div>
+      </div>
+      <div class="cal-ticks"><span>50%</span><span style="text-align:center">←&nbsp;coin flip side&nbsp;·&nbsp;conviction side&nbsp;→</span><span style="text-align:right">90%</span></div>
+    </div>
+
+    <div id="opinions">
+      <div class="opinion reveal" data-cred="85">
+        <div class="op-head"><div class="op-id">O1</div><div class="op-claim">Delivery form — what each search call puts into context — is the #1 token lever. Not retrieval quality. Not the KG.</div><div class="cred"><div class="cred-track"><div class="cred-fill"></div></div><div class="cred-num">credence ~85%</div></div></div>
+        <div class="op-body"><div class="op-body-inner">
+          <p><b>The claim, unpacked:</b> of everything semfs can change — embedder, reranker, KG, hints, output style — the payload each <span class="kbd">semfs grep</span> call injects into context (its size, <i>which</i> bytes, and at what turn) moves the token bill the most.</p>
+          <div class="why">
+            <div class="w hold"><b>Why we hold it (Rung 4: causal intervention)</b>We patched exactly one thing — a per-hit render cap — and case 289 fell from 111–145K to 76.8K, the first sub-plain run in the project's history. Before the patch, a single broad grep was returning 142,733 characters, and the documented cap knobs were provably inert (capped 372K chars ≈ uncapped 316K). The field independently converged on the same lever (Firetiger artifacts, Anthropic code-exec −98.7%).</div>
+            <div class="w ceil"><b>Why not higher than 85</b>Two open holes. (1) The codex clip layer (Exhibit A) is unmeasured — if the harness already truncates aggressively, part of our "savings" was being captured by blind clipping anyway, and the cap's marginal value shrinks. (2) Run 2 of the same config made 16 calls instead of 5 and lost the win — behavior variance can swamp payload effects, which is O2's territory.</div>
+            <div class="w floor"><b>Why not lower</b>The intervention is the strongest evidence type we have anywhere in this case file, and it replicated directionally at two cap settings (6KB: tokens fall, accuracy holds; 3KB: tokens fall below plain, −1 point). Dismissing it would require explaining away a direct A/B.</div>
+          </div>
+          <div class="cred-math"><b>Setting the number:</b> Rung 4 start ≈ 90 − 5 (clip confounder) ≈ <b>85</b>. No identity discount: delivery being the lever neither flatters nor indicts any prior investment.</div>
+          <div class="falsifier"><b>Killed if</b>E8 (n=3, hint fixed) shows capped vs uncapped delivery within ±10% on tokens — that would crown the hint (O2) as #1 instead.</div>
+        </div></div>
+      </div>
+
+      <div class="opinion reveal" data-cred="80">
+        <div class="op-head"><div class="op-id">O2</div><div class="op-claim">The ~2KB agent hint outweighs the entire Rust retrieval pipeline. <span class="op-tag red">identity-fused — audited</span></div><div class="cred"><div class="cred-track"><div class="cred-fill"></div></div><div class="cred-num">credence ~80%</div></div></div>
+        <div class="op-body"><div class="op-body-inner">
+          <p><b>The claim, unpacked:</b> the injected <span class="kbd">AGENTS.md</span> note — roughly 2KB of prose — determines the agent's turn count, read order, and crawl behavior, and those three things <i>are</i> the cost function. A better hint buys more than a better embedder.</p>
+          <div class="why">
+            <div class="w hold"><b>Why we hold it (Rung 3: trace attribution + one intervention)</b>The causal chain is verified link by link in the traces: hint says "read kg/ FIRST" → agent burns 35.7K tokens at turn 1 → greps <i>scoped to kg/</i> and gets 138 useless chars → confidence collapses → 22.4K os.walk crawl. That's 58K+/run of directly attributed waste. The intervention exists too: the lean-hint seed (fs_data swap) reached 78.4K vs plain's 79K. Externally, PwC measured a 38-point accuracy swing from harness text alone, on identical data.</div>
+            <div class="w ceil"><b>Why not higher than 80</b>Compliance is the soft spot: even under the lean hint the agent still os.walked in ~2 of several runs — instructions bend behavior, they don't bind it. And we have a documented counterexample in this very project: Claude Code ignored the semfs grep hint entirely. Hint-obedience is agent-specific. Plus the standing identity discount — "the text file matters more than my pipeline" is also a flattering story in reverse (it makes the fix look easy), so it gets the same skepticism.</div>
+            <div class="w floor"><b>Why not lower</b>The 58K cascade isn't a correlation — each step is a specific line in a specific trace, and the lean-hint intervention moved the total exactly the way the chain predicts.</div>
+          </div>
+          <div class="cred-math"><b>Setting the number:</b> Rung 3 start ≈ 85 − 5 (compliance uncertainty, n=1–2 on the intervention) ≈ <b>80</b>. Identity-fused flag noted; the discount is folded into the compliance subtraction.</div>
+          <div class="falsifier"><b>Killed if</b>E7's hint ladder (n=3) shows &lt;10% token spread between hint variants on the same seed and binary. Pre-commit: effort moves to silent affordances (E13) instead.</div>
+        </div></div>
+      </div>
+
+      <div class="opinion reveal" data-cred="60">
+        <div class="op-head"><div class="op-id">O3</div><div class="op-claim">The full "scout stack" beats plain on tokens at accuracy parity on ≥3 of 5 cases.</div><div class="cred"><div class="cred-track"><div class="cred-fill"></div></div><div class="cred-num">credence ~60% — deliberately modest</div></div></div>
+        <div class="op-body"><div class="op-body-inner">
+          <p><b>The claim, unpacked:</b> combine everything proven so far — clean infra (H1) + visible tree (H2) + capped grep (H4) + lean hint (O2) + suppressed KG (H5/O7) — and the stack wins tokens at accuracy parity on at least 3 of the 5 cases. This is a <i>prediction</i>, not a finding: it's the one opinion whose job is to be bet on.</p>
+          <div class="why">
+            <div class="w hold"><b>Why we hold it (components all verified, individually)</b>Each ingredient has its own evidence: accuracy parity on clean infra (289: 6=6, 44: 2=2), the 76.8K token win, the 78.4K lean-hint run. The mechanism math backs it: plain wastes ~50K re-paying its own discovery probes — that margin exists to be captured by a 1-call search.</div>
+            <div class="w ceil"><b>Why not higher than 60</b>Three honest brakes. (1) Only the <i>conjunction</i> is untested, and conjunctions fail in ways components don't. (2) The direct evidence is n=2 with one win and one miss — literally a coin flip so far. (3) PwC's finding implies grep is near-optimal on a corpus this small and well-named, so the capturable margin may be thinner than the math suggests. Also: this is the product's headline claim — maximum motivated-reasoning risk — so it takes the full identity discount.</div>
+            <div class="w floor"><b>Why not lower</b>Calling it below ~55 would mean betting <i>against</i> a stack whose every part has already moved the metric in the predicted direction. The miss run (97.8K) still landed within 25% of plain, not at the old 2–5× catastrophe.</div>
+          </div>
+          <div class="cred-math"><b>Setting the number:</b> Rung 2–3 mix ≈ 75 − 10 (untested conjunction, n=2 coin-flip) − 5 (identity: headline claim) ≈ <b>60</b>. Deliberately the most-discounted number on the page.</div>
+          <div class="falsifier"><b>Killed if</b>E8 (5 cases × n=3) yields fewer than 2/5 both-axes wins. Pre-committed consequence: stop optimizing this benchmark's token axis and execute O8's pivot. The kill condition was registered <i>before</i> the run on purpose — it can't be renegotiated after seeing the data.</div>
+        </div></div>
+      </div>
+
+      <div class="opinion reveal" data-cred="75">
+        <div class="op-head"><div class="op-id">O4</div><div class="op-claim">Summaries are an accuracy lever only — and the current benchmark structurally cannot measure them.</div><div class="cred"><div class="cred-track"><div class="cred-fill"></div></div><div class="cred-num">credence ~75%</div></div></div>
+        <div class="op-body"><div class="op-body-inner">
+          <p><b>The claim, unpacked:</b> two halves. (a) LLM summaries in the index improve <i>finding</i>, not <i>reading</i> — so they lift accuracy on search-bound tasks and do nothing for tokens. (b) None of the five current cases is search-bound, so running summary A/Bs here measures noise.</p>
+          <div class="why">
+            <div class="w hold"><b>Why we hold it (Rung 2: structural argument, checkable)</b>Go read the five tasks — that's the whole audit: case 44 <i>names</i> its source files (no search needed), 289's sources are 403-stub corpses (nothing can find what isn't there), 95 is plain-text, 15 and 44 sit under rubric ceilings. The one valid A/B ever run (44, dual-store) came out token-neutral with both arms reading <i>identical</i> raw tables — exactly what the theory predicts when search isn't the bottleneck. And the mechanism RCA verified the plumbing end-to-end: summary chunk embedded, raw table preserved in the sibling.</div>
+            <div class="w ceil"><b>Why not higher than 75</b>Cloud's 12/12 on case 95 — the single best score in the matrix — came from an index with summary-quality excerpts. We attribute it to coverage+inline-form, but we can't fully decompose it (cloud's raw scores aren't archived). A local full-coverage summaries run on 95/175 could surprise us in either direction. A structural argument is only as good as our reading of the cases.</div>
+            <div class="w floor"><b>Why not lower</b>The argument is independently checkable in ten minutes, and its one testable consequence so far (44's token-neutral tie) came true.</div>
+          </div>
+          <div class="cred-math"><b>Setting the number:</b> Rung 2 start ≈ 75 ± 0 — no identity discount (this opinion mildly <i>deflates</i> our own summary investment, so motivated reasoning pushes against it, not for it). <b>75</b>.</div>
+          <div class="falsifier"><b>Killed if</b>E11's discovery-stressed cases show the summary arm ≤ the raw arm on accuracy. Half-killed if a local full-coverage summaries run wins 95 ≥11/12 AND 175 &gt;0 — that would mean summaries are a today-lever on existing cases, not just new ones.</div>
+        </div></div>
+      </div>
+
+      <div class="opinion reveal descoped" data-cred="70">
+        <div class="op-head"><div class="op-id">O5</div><div class="op-claim">The cache-blind token metric distorts the production story. <span class="op-tag grey">PARKED — input-tokens-only focus; API caching is automatic</span></div><div class="cred"><div class="cred-track"><div class="cred-fill"></div></div><div class="cred-num">credence ~70% · not under test</div></div></div>
+        <div class="op-body"><div class="op-body-inner">
+          <p><b>The claim, unpacked:</b> every WB run shows <span class="kbd">cached_input=0</span>, so the benchmark bills repeated context at full price — but production APIs cache automatically, discounting repeats ~10×. Rankings computed on raw tokens may not be rankings of real cost.</p>
+          <div class="why">
+            <div class="w hold"><b>Why 70 (Rung 1 + arithmetic)</b>The 10× price gap is solid external evidence (Manus production numbers), and the arithmetic of which arms benefit (high-turn arms with repetitive context) is straightforward. But whether re-pricing actually <i>flips any ordering in our data</i> was never computed — that's the unverified half, and it's worth a full 15–20 points.</div>
+          </div>
+          <div class="cred-math"><b>Why parked:</b> the 2026-06-11 scope decision — focus on input tokens; caching is automatic at the API layer, so there is nothing for semfs to engineer. The opinion stays on file at 70, untested by choice, not by refutation.</div>
+        </div></div>
+      </div>
+
+      <div class="opinion reveal descoped" data-cred="70">
+        <div class="op-head"><div class="op-id">O6</div><div class="op-claim">Output-side compression ("caveman") is a ≤8% lever here. <span class="op-tag grey">PARKED — targets output tokens, out of scope</span></div><div class="cred"><div class="cred-track"><div class="cred-fill"></div></div><div class="cred-num">credence ~70% · not under test</div></div></div>
+        <div class="op-body"><div class="op-body-inner">
+          <p><b>The claim, unpacked:</b> making the agent <i>write</i> tersely ("caveman" style) can't move WB numbers much, because the agent barely writes.</p>
+          <div class="why">
+            <div class="w hold"><b>Why 70 (Rung 3: measured, small-n)</b>Read straight from the traces: output streams are 1.0–3.0K tokens against 78–138K of input — 2–4% of volume. Even at output's 4–5× per-token price, the ceiling is single-digit percent. Corroborated externally: codex is already terse compared to Claude.</div>
+            <div class="w ceil"><b>Why not higher</b>One blind spot keeps it from 85: reasoning tokens may be billed as output without appearing in the message text — if so, the output stream is bigger than the traces show, and the lever grows. Only an E12 A/B would expose that.</div>
+          </div>
+          <div class="cred-math"><b>Why parked:</b> targets the output stream; current focus is input tokens only. The caveman ticket survives as product polish, unscheduled.</div>
+        </div></div>
+      </div>
+
+      <div class="opinion reveal" data-cred="85">
+        <div class="op-head"><div class="op-id">O7</div><div class="op-claim">KG and /by-topic/ as agent-facing surfaces are net-negative for codex-class agents. Kill them, or gate behind a ≤4KB digest. <span class="op-tag red">identity-fused — audited</span></div><div class="cred"><div class="cred-track"><div class="cred-fill"></div></div><div class="cred-num">credence ~85%</div></div></div>
+        <div class="op-body"><div class="op-body-inner">
+          <p><b>The claim, unpacked:</b> the knowledge graph and the browsable <span class="kbd">/by-topic/</span> overlay, <i>as surfaces shown to this class of agent</i>, cost tokens and buy nothing. Either remove them from agent view or shrink the KG to a ≤4KB orientation digest. (This says nothing about KG value for humans or multi-session memory.)</p>
+          <div class="why">
+            <div class="w hold"><b>Why we hold it (Rung 3: every run, one direction)</b>This is the most internally consistent finding in the case file. The /by-topic/ arm is the worst token performer in the matrix (471K mean, 666K worst, 12–24 calls — browsable surfaces <i>invite</i> crawling). The KG read is 35.7K at turn 1, the most expensive possible position under Law II. Accuracy payoff across all 25 original runs plus every E-run: zero. And H5's prediction held under the clean-infra retest.</div>
+            <div class="w ceil"><b>Why not higher than 85</b>Two fairness clauses. (1) This benchmark is the KG's worst case by construction — single-shot tasks on a small corpus where orientation is free; its claimed value (unfamiliar large corpora, persistent multi-session agents) was never tested. (2) One awkward data point: gfs_on <i>tied</i> plain's accuracy on 289 (6/15) — at 4.6× the tokens, but a tie. Also identity-fused: the KG was a major engineering investment (T2/T3 work), so the temptation runs <i>toward</i> rescuing it — the audit pushed the number up-down-neutral: the evidence is simply lopsided.</div>
+            <div class="w floor"><b>Why not lower</b>n is larger here than anywhere else — every arm, every case, both the broken and clean environments agree.</div>
+          </div>
+          <div class="cred-math"><b>Setting the number:</b> Rung 3 start ≈ 85 + consistency bonus − untested-favorable-conditions discount ≈ <b>85</b> (capped: n&lt;3 per cell still applies).</div>
+          <div class="falsifier"><b>Rehabilitated if</b>E7c's ≤4KB digest arm beats no-KG on tokens or accuracy — that would save KG-as-digest while still burying KG-as-61KB-file.</div>
+        </div></div>
+      </div>
+
+      <div class="opinion reveal" data-cred="70">
+        <div class="op-head"><div class="op-id">O8</div><div class="op-claim">This benchmark is the wrong arena. semfs's winnable ground is format-trap corpora, cross-lingual retrieval, and discovery-stressed tasks. <span class="op-tag red">the uncomfortable one</span></div><div class="cred"><div class="cred-track"><div class="cred-fill"></div></div><div class="cred-num">credence ~70%</div></div></div>
+        <div class="op-body"><div class="op-body-inner">
+          <p><b>The claim, unpacked:</b> WB-chanpin is structurally grep's home turf — 1,452 well-named files, answers sitting in clean text. Winning here by ±5% proves little; semfs's product story should be fought where grep <i>cannot follow</i>: binary formats, cross-lingual queries, and corpora where the answer file can't be guessed from its name.</p>
+          <div class="why">
+            <div class="w hold"><b>Why we hold it (convergence of three independent lines)</b>(1) The corpus anatomy: plain's winning trick is literally <span class="kbd">find | grep -Ei '折旧|depreci'</span> — filename semantics carry the task. (2) External: PwC found grep beating vector retrieval across harnesses on exactly this kind of ground. (3) semfs's wins that <i>are</i> proven happened off this ground: the format-trap fix (−80% tokens, shipped), cross-lingual reranking (rank #417→#1, shipped), and the original codex affordance test (−75%).</div>
+            <div class="w ceil"><b>Why not higher than 70 — the big discount</b>This opinion gets the harshest motivated-reasoning treatment on the page, because "the benchmark is unfair" is the most flattering possible conclusion for a losing product — it's what a sore loser would say, word for word. So: it is forbidden from activating by argument alone. It only takes effect through E8's pre-registered kill condition. Also genuinely uncertain: real customer workspaces may look more like WB than like our ideal corpus.</div>
+            <div class="w floor"><b>Why not lower</b>Two of the three alternative arenas aren't speculation — they're shipped mechanisms with measured wins. The claim isn't "semfs would win somewhere"; it's "semfs has already won twice, elsewhere."</div>
+          </div>
+          <div class="cred-math"><b>Setting the number:</b> convergent Rung 2+3 evidence ≈ 80 − 10 (maximum identity discount: self-serving conclusion) ≈ <b>70</b>. Activation gated on E8, not on this page's prose.</div>
+          <div class="falsifier"><b>Killed if</b>E8 wins consistently anyway (semfs takes hostile ground — arena complaint moot), or if E11's discovery-stressed cases show no semfs edge either (the problem would be deeper than arena choice).</div>
+        </div></div>
+      </div>
+    </div>
+
+    <h3>The retrial: experiments E6–E14</h3>
+    <p class="deck" style="margin-bottom:10px">Ordered so that each cheap measurement de-confounds the expensive runs after it. Two are stamped out of scope by the input-tokens-only decision.</p>
+
+    <div class="tree reveal">
+      <div class="tree-node"><h5><span class="eid">E6</span> · CALIBRATE THE CODEX CLIP <span class="cost-tag">~30 min · no code</span></h5><p>Feed controlled tool outputs (1K→1M chars, ASCII + CJK); find where the harness truncates. Sets the grep cap just under the clip → semfs chooses the surviving bytes.</p></div>
+      <div class="tree-link"></div>
+      <div class="tree-node"><h5><span class="eid">E7</span> · HINT SURGERY LADDER <span class="cost-tag">~1 evening · n=3</span></h5><p>Three hints on cases 289+15: current KG-first vs lean "grep → read top hit → don't crawl" vs <b>no hint at all</b> (never measured). Plus E7c: KG as a ≤4KB digest. The fs_data-swap mechanism already works.</p></div>
+      <div class="tree-link"></div>
+      <div class="tree-node headline"><h5><span class="eid">E8</span> · THE SCOUT STACK — HEADLINE RUN <span class="cost-tag">~1 day · 5 cases × n=3</span></h5><p>Clean infra + SEARCH_ONLY=off + E6's cap + E7's hint + E7c's KG verdict. Prediction: ≥3/5 cases under plain's tokens at accuracy ≥ plain−1; 289 lands ≤70K.</p></div>
+      <div class="tree-split">
+        <div>
+          <span class="tree-branch-label win">WIN ≥3/5</span>
+          <div class="tree-link"></div>
+          <div class="tree-node"><h5><span class="eid">E9</span> → <span class="eid">E14</span></h5><p>Refine delivery (inline vs two-tier vs path-first duel), then build <span class="kbd">semfs slice</span> — the stored-result + precise-retrieval tool that makes small payloads safe. Chase the ~20K floor.</p></div>
+        </div>
+        <div>
+          <span class="tree-branch-label miss">MISS &lt;2/5</span>
+          <div class="tree-link"></div>
+          <div class="tree-node"><h5><span class="eid">E11</span> · CHANGE ARENAS (O8)</h5><p>Author 3–5 discovery-stressed cases (unnamed answer files among ~200 similar spreadsheets, ≥1 cross-lingual). The only valid summary test — and grep cannot follow semfs there.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="exp-detail">
+      <div class="exp-card reveal"><span class="eid">E6</span><h5>Clip calibration — ✅ RUN 2026-06-11</h5><p>Marker-file probes on the box (codex 0.133.0): 5.4KB/300-line and 9.8KB files passed <b>whole</b> (no 256-line cap on this build); 15.5KB got a boundary notice; 49KB collapsed to ~1.2K visible tokens, head+tail, with a token-denominated notice ("…11050 tokens truncated…").</p><div class="pred"><b>Measured</b>pass-through ≈ ≤10KB safe · cliff ~15KB+ · overflow keeps only ~0.5K+0.5K tokens — catastrophic, not graceful · answer content must lead</div><div class="kill"><b>Verdict on the prediction</b>half right: a clip exists and is brutal past the cliff — but the 6KB grep cap sits safely INSIDE the window, so it stays</div></div>
+      <div class="exp-card reveal"><span class="eid">E7</span><h5>Hint ladder + KG digest</h5><p>H-current / H-scout / H-zero, n=3, cases 289+15. The zero-hint arm de-confounds every other experiment.</p><div class="pred"><b>Prediction</b>H-scout cuts ≥25% tokens at parity accuracy</div><div class="kill"><b>Killed if</b>&lt;10% spread across hints → behavior isn't instruction-driven; pivot to affordances (E13)</div></div>
+      <div class="exp-card reveal"><span class="eid">E8</span><h5>Scout stack (headline)</h5><p>The conjunction test of every proven component. The only experiment with a pre-registered strategy-level kill condition.</p><div class="pred"><b>Prediction (~60%)</b>≥3/5 cases: tokens &lt; plain, accuracy ≥ plain−1</div><div class="kill"><b>Killed if</b>&lt;2/5 → stop optimizing WB-chanpin; execute O8 via E11</div></div>
+      <div class="exp-card reveal"><span class="eid">E9</span><h5>Delivery duel</h5><p>Inline-6KB vs two-tier (top hit ~800B + stop-signal + paths) vs path-first-1KB. PwC warns path-only risks the file-based collapse.</p><div class="pred"><b>Prediction</b>two-tier wins tokens at parity; path-first drops a point on exact-value cases</div></div>
+      <div class="exp-card reveal descoped"><span class="eid">E10</span><h5>Cache-adjusted re-scoring</h5><p>Re-price archived runs under cache-discounted pricing.</p><div class="corner-stamp"><span class="stamp grey">DESCOPED</span></div><div class="kill"><b>Why parked</b>input-tokens-only focus; API caching is automatic — nothing to engineer</div></div>
+      <div class="exp-card reveal"><span class="eid">E11</span><h5>Discovery-stressed cases</h5><p>New cases where the answer file is unnamed among ~200 siblings; ≥1 cross-lingual (zh task ↔ en files). Runs regardless of E8 — it's the strategic test.</p><div class="pred"><b>Prediction</b>plain degrades hard; summary arm +≥2 rubric points; cross-lingual = clean both-axes semfs win</div></div>
+      <div class="exp-card reveal descoped"><span class="eid">E12</span><h5>Caveman output A/B</h5><p>Terse-output hint directive.</p><div class="corner-stamp"><span class="stamp grey">DESCOPED</span></div><div class="kill"><b>Why parked</b>targets output tokens — out of scope for now</div></div>
+      <div class="exp-card reveal"><span class="eid">E13</span><h5>≤1KB workspace map</h5><p>Tiny "where things live" map injected at mount. A pure trade: +1KB scaffold to delete ~2 discovery turns. Works even if hints underperform.</p><div class="pred"><b>Prediction</b>discovery probes drop 4–8 → 1–2</div></div>
+      <div class="exp-card reveal"><span class="eid">E14</span><h5><span class="kbd">semfs slice</span> (artifact pattern)</h5><p>Grep stores the full ranked result, returns ≤1KB + an ID; the agent slices precisely. The only real code investment — gated on E9.</p><div class="pred"><b>Prediction</b>search(1KB) → slice(2KB) → write ≈ 25–30K tokens: the first floor-adjacent run</div></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>SOURCES IN THIS TICKET</b> — RUN_MANIFEST.md (provenance · read first) · ANALYSIS.md (H1–H5 design) · RESULTS.md (E1–E5 outcomes) · TOKEN_ECONOMY.md (the equation, Level 4) · RESEARCH_NOTES_EXTERNAL.md (field evidence) · OPINIONS.md (O1–O8 in full) · EXPERIMENTS_NEXT.md (E6–E14 specs) · constraint-based-creativity.md (ideation record)<br>
+    <b>RCAs</b> — rcas/2026-06-11-wb-5arm-infra-failure-not-retrieval.md · rcas/2026-06-11-summary-seed-drops-extracted-md.md<br>
+    <span class="redline">Numbers quoted at n=1–3 carry ±30% token / ±1-point variance. Trust ordinal patterns; quote a cell only with repeats.</span>
+  </div>
+</footer>
+
+<script>
+/* ---------- reveal on scroll ---------- */
+const io = new IntersectionObserver(es=>{
+  es.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('vis'); io.unobserve(e.target);} });
+},{threshold:.12});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+
+/* ---------- active nav ---------- */
+const sections=[...document.querySelectorAll('section')];
+const navLinks=[...document.querySelectorAll('.nav-inner a')];
+const navIO=new IntersectionObserver(es=>{
+  es.forEach(e=>{
+    if(e.isIntersecting){
+      navLinks.forEach(a=>a.classList.toggle('active',a.getAttribute('href')==='#'+e.target.id));
+    }
+  });
+},{rootMargin:'-30% 0px -60% 0px'});
+sections.forEach(s=>navIO.observe(s));
+
+/* ---------- hypothesis cards ---------- */
+document.querySelectorAll('.hcard[data-h]').forEach(c=>{
+  c.addEventListener('click',()=>c.classList.toggle('open'));
+});
+
+/* ---------- opinions: credence bars + expand ---------- */
+const opIO=new IntersectionObserver(es=>{
+  es.forEach(e=>{
+    if(e.isIntersecting){
+      const fill=e.target.querySelector('.cred-fill');
+      if(fill) fill.style.width=e.target.dataset.cred+'%';
+      opIO.unobserve(e.target);
+    }
+  });
+},{threshold:.4});
+document.querySelectorAll('.opinion').forEach(o=>{
+  opIO.observe(o);
+  o.querySelector('.op-head').addEventListener('click',()=>o.classList.toggle('open'));
+});
+
+/* ---------- the re-pay simulator ---------- */
+const S=3, PROBE=2, BIG=9;           // K-tokens: scaffold, small probe output, big read
+const bars=document.getElementById('bars');
+const barLabels=document.getElementById('barLabels');
+const posSlider=document.getElementById('posSlider');
+const turnSlider=document.getElementById('turnSlider');
+const MAXBAR=80;                      // K-tokens mapped to full bar height
+
+function simulate(){
+  const T=+turnSlider.value;
+  posSlider.max=T;
+  if(+posSlider.value>T) posSlider.value=T;
+  const k=+posSlider.value;
+  document.getElementById('posVal').textContent=k;
+  document.getElementById('turnVal').textContent=T;
+
+  let total=0, repay=0;
+  bars.innerHTML=''; barLabels.innerHTML='';
+  for(let t=1;t<=T;t++){
+    // context entering turn t = scaffold + all outputs from turns < t
+    let probes=0, big=0;
+    for(let s=1;s<t;s++){ if(s===k) big+=BIG; else probes+=PROBE; }
+    const turnBill=S+probes+big;
+    total+=turnBill; repay+=big;
+    const bar=document.createElement('div'); bar.className='bar';
+    bar.style.height=Math.min(100,(turnBill/MAXBAR)*100)+'%';
+    const mk=(cls,v)=>{const d=document.createElement('div');d.className='seg '+cls;d.style.height=(v/turnBill*100)+'%';return d;};
+    bar.appendChild(mk('scaffold',S));
+    if(probes)bar.appendChild(mk('probe',probes));
+    if(big)bar.appendChild(mk('bigread',big));
+    bar.title=`turn ${t}: ${turnBill}K input (${big?big+'K re-paying the big read':'no big read yet'})`;
+    bars.appendChild(bar);
+    const lb=document.createElement('span');lb.textContent=t;barLabels.appendChild(lb);
+  }
+  // worst case for comparison: big read at turn 1, same T
+  let worst=0;
+  for(let t=1;t<=T;t++){let p=0,b=0;for(let s=1;s<t;s++){if(s===1)b+=BIG;else p+=PROBE;}worst+=S+p+b;}
+  document.getElementById('totalTok').textContent=total+'K';
+  document.getElementById('repayTok').textContent=repay+'K';
+  document.getElementById('deltaTok').textContent='−'+(worst-total)+'K';
+}
+posSlider.addEventListener('input',simulate);
+turnSlider.addEventListener('input',simulate);
+simulate();
+</script>
+</body>
+</html>

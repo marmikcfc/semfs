@@ -205,6 +205,11 @@ MATRIX_RESULTS=/tmp/x.jsonl MATRIX_ART=/srv/.../x \
 
 ## 10. Open follow-ups
 
+> **2026-06-11 update:** the follow-ups below were executed as E1–E5 (see `RESULTS.md`).
+> The next round is specified in **[`EXPERIMENTS_NEXT.md`](EXPERIMENTS_NEXT.md)** (E6–E14),
+> grounded in [`TOKEN_ECONOMY.md`](TOKEN_ECONOMY.md), [`OPINIONS.md`](OPINIONS.md), and
+> [`RESEARCH_NOTES_EXTERNAL.md`](RESEARCH_NOTES_EXTERNAL.md).
+
 0. **🔴 `SEARCH_ONLY=off` arm (highest priority)** — case 95 showed `SEARCH_ONLY=on` hides the
    file tree and destroys file-enumeration tasks (0/12 vs plain 11/12). Re-run with
    `SEMFS_SEARCH_ONLY=off` so `ls`/`os.walk` see the real tree; semfs grep still available. This

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MECHANICS — how w1 won the token axis, in pseudocode</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e1216;
+  --bg2:#131922;
+  --panel:#161e28;
+  --ink:#d8e2e6;
+  --dim:#7e8e96;
+  --faint:#4a5a64;
+  --green:#7ce38b;
+  --amber:#ffc55c;
+  --red:#ff7a6e;
+  --cyan:#79d2e6;
+  --violet:#c0a8f0;
+  --rule:#243240;
+  --mono:'JetBrains Mono',monospace;
+  --serif:'Instrument Serif',serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:14.5px;line-height:1.7;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:999;
+  background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,0,0,.07) 2px 4px);opacity:.5}
+.wrap{max-width:980px;margin:0 auto;padding:0 26px}
+a{color:var(--cyan)}
+
+header{padding:54px 0 34px;border-bottom:1px solid var(--rule)}
+.crumb{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint)}
+.crumb b{color:var(--amber)}
+h1{font-family:var(--serif);font-weight:400;font-size:clamp(34px,5.4vw,58px);line-height:1.04;margin:16px 0 12px;color:#fff}
+h1 em{color:var(--green);font-style:italic}
+.sub{color:var(--dim);max-width:70ch;font-size:14px}
+.sub b{color:var(--ink)}
+
+section{padding:54px 0 18px;border-bottom:1px dashed var(--rule)}
+h2{font-family:var(--serif);font-weight:400;font-size:clamp(24px,3.4vw,36px);color:#fff;margin-bottom:6px}
+h2 .n{color:var(--amber);font-family:var(--mono);font-size:.55em;vertical-align:super;letter-spacing:.1em}
+.lede{color:var(--dim);max-width:72ch;margin-bottom:26px;font-size:14px}
+.lede b{color:var(--ink)}
+p{max-width:76ch;margin:12px 0;color:var(--dim);font-size:13.5px}
+p b{color:var(--ink)}
+
+/* code blocks */
+.code{
+  background:var(--panel);border:1px solid var(--rule);border-radius:6px;
+  margin:20px 0;overflow-x:auto;position:relative;
+}
+.code .bar{display:flex;justify-content:space-between;align-items:center;
+  padding:8px 16px;border-bottom:1px solid var(--rule);font-size:10.5px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.code .bar .tag{color:var(--amber)}
+.code pre{padding:18px 20px;font-size:13px;line-height:1.75;font-family:var(--mono)}
+.k{color:var(--violet)}          /* keyword */
+.f{color:var(--cyan)}            /* function */
+.s{color:var(--green)}           /* string */
+.n{color:var(--amber)}           /* number */
+.c{color:var(--faint);font-style:italic}  /* comment */
+.hl-line{background:rgba(255,197,92,.07);display:inline-block;width:100%;border-left:2px solid var(--amber);margin-left:-20px;padding-left:18px}
+.bad-line{background:rgba(255,122,110,.08);display:inline-block;width:100%;border-left:2px solid var(--red);margin-left:-20px;padding-left:18px}
+.good-line{background:rgba(124,227,139,.08);display:inline-block;width:100%;border-left:2px solid var(--green);margin-left:-20px;padding-left:18px}
+
+.callout{border-left:3px solid var(--amber);background:rgba(255,197,92,.06);padding:12px 16px;margin:18px 0;font-size:13px;color:var(--dim);max-width:78ch}
+.callout b{color:var(--amber)}
+.callout.red{border-color:var(--red);background:rgba(255,122,110,.06)}
+.callout.red b{color:var(--red)}
+.callout.green{border-color:var(--green);background:rgba(124,227,139,.06)}
+.callout.green b{color:var(--green)}
+
+table{border-collapse:collapse;margin:18px 0;font-size:12.5px;width:100%}
+th{text-align:left;color:var(--faint);font-weight:500;letter-spacing:.1em;text-transform:uppercase;font-size:10.5px;border-bottom:1px solid var(--rule);padding:7px 12px}
+td{padding:7px 12px;border-bottom:1px solid rgba(36,50,64,.5);color:var(--dim)}
+td.g{color:var(--green)} td.r{color:var(--red)} td.a{color:var(--amber)}
+tr:hover td{background:rgba(121,210,230,.04)}
+
+/* clip playground */
+.play{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:22px;margin:26px 0}
+.play h4{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--amber);margin-bottom:14px}
+.play label{font-size:12px;color:var(--dim)}
+.play input[type=range]{width:min(420px,80%);accent-color:var(--amber);display:block;margin:10px 0 16px}
+.gauge{display:flex;height:34px;border:1px solid var(--rule);border-radius:4px;overflow:hidden;margin-bottom:12px;max-width:640px}
+.gauge>div{transition:width .25s ease}
+.g-head{background:rgba(124,227,139,.55)}
+.g-cut{background:repeating-linear-gradient(45deg,rgba(255,122,110,.5),rgba(255,122,110,.5) 6px,rgba(255,122,110,.25) 6px,rgba(255,122,110,.25) 12px)}
+.g-tail{background:rgba(124,227,139,.55)}
+.play .verdict{font-size:13px;color:var(--ink)}
+.play .verdict b{font-size:15px}
+.v-pass{color:var(--green)} .v-edge{color:var(--amber)} .v-gut{color:var(--red)}
+
+footer{padding:40px 0 70px;color:var(--faint);font-size:11.5px;line-height:2}
+footer b{color:var(--dim)}
+.reveal{opacity:0;transform:translateY(14px);transition:opacity .55s ease,transform .55s ease}
+.reveal.vis{opacity:1;transform:none}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="crumb">CASE FILE WB-5ARM · TECHNICAL APPENDIX · companion to <a href="hypotheses.html">hypotheses.html</a> · run <b>w1 / case 289</b> · 2026-06-11</div>
+    <h1>How w1 spent <em>21,473</em> tokens<br>where plain spent 79,007 — in pseudocode</h1>
+    <p class="sub">Everything below is the real mechanics of the run, written as Python pseudocode. Two ideas carry the whole result: <b>delete turns</b> (each turn re-pays all context) and <b>keep the one real payload inside the harness clip window</b> (which experiment E6 measured this morning).</p>
+  </div>
+</header>
+
+<!-- 1. THE BILL -->
+<section>
+  <div class="wrap">
+    <h2><span class="n">01</span> What a "turn" costs — the loop that generates the bill</h2>
+    <p class="lede">The agent (codex/GPT-5.4) runs a loop. With <b>cached_input = 0</b> on this endpoint, the model re-reads <i>everything accumulated so far</i> on every iteration — and we are billed for every re-read.</p>
+
+    <div class="code reveal"><div class="bar"><span>the agent loop, honestly priced</span><span class="tag">cost model</span></div><pre><span class="k">def</span> <span class="f">agent_session</span>(task):
+    context = [SCAFFOLD, task]            <span class="c"># S ≈ 3K tokens — re-sent EVERY turn</span>
+    bill = <span class="n">0</span>
+    <span class="k">while not</span> done:
+<span class="hl-line">        bill += <span class="f">tokens</span>(context)           <span class="c"># ← the whole history, re-paid, every turn</span></span>
+        action = <span class="f">llm</span>(context)             <span class="c"># model decides the next tool call</span>
+        out    = <span class="f">run_tool</span>(action)         <span class="c"># find / cat / semfs grep / write ...</span>
+        context += [action, <span class="f">clip</span>(out)]    <span class="c"># appended FOREVER (clip() is §03)</span>
+    <span class="k">return</span> bill
+
+<span class="c"># Consequence (Law II): a tool output of size o, emitted at turn s,</span>
+<span class="c"># is re-paid on every later turn:</span>
+<span class="c">#     cost(o) = o × (T − s)        ← early big outputs are the most expensive</span></pre></div>
+
+    <div class="callout"><b>So "deleting a turn"</b> doesn't just save that turn's action — it deletes one full re-read of the scaffold <i>plus every byte of history</i>. Turn count is the multiplier on everything else.</div>
+  </div>
+</section>
+
+<!-- 2. PLAIN vs W1 -->
+<section>
+  <div class="wrap">
+    <h2><span class="n">02</span> The same task, two traces — where the 57.5K difference lives</h2>
+    <p class="lede">Case 289: build a Top-10 product list (title · transaction amount · conversion rate) from a 1,452-file Chinese e-commerce workspace. Both traces below are real; sizes are chars of tool output.</p>
+
+    <div class="code reveal"><div class="bar"><span>plain — 7 calls, 79,007 tokens</span><span class="tag">baseline</span></div><pre>trace_plain = [
+<span class="bad-line">  (<span class="s">"find . -maxdepth 3 -type f | head -200"</span>,        <span class="n">16_651</span>),  <span class="c"># t1 — re-paid 6×</span></span>
+<span class="bad-line">  (<span class="s">"find . | grep -iE 'best|selling|销量|热销|…'"</span>,    <span class="n">23_205</span>),  <span class="c"># t2 — re-paid 5×</span></span>
+  (<span class="s">"find . | grep -i 'best_selling_product'"</span>,            <span class="n">79</span>),  <span class="c"># t3 — narrows in</span>
+  (<span class="s">"find desktop/fashion_ecommerce … && file …"</span>,      <span class="n">1_317</span>),  <span class="c"># t4</span>
+  (<span class="s">"python: pandas.read_excel(top10_status…)"</span>,          <span class="n">324</span>),  <span class="c"># t5 — hits the 403 stub!</span>
+  (<span class="s">"sed -n '1,220p' top10_product_status_table.xlsx"</span>,   <span class="n">321</span>),  <span class="c"># t6 — SEES '403 Forbidden'</span>
+  (<span class="s">"cp source.txt model_output/…list.txt"</span>,              <span class="n">560</span>),  <span class="c"># t7 — deliverable</span>
+]
+<span class="c"># ~60–70% of plain's 79K = re-paying turns 1–2's 40K chars of find-output</span>
+<span class="c"># on the five turns that follow. plain pays for its own exploration, with interest.</span></pre></div>
+
+    <div class="code reveal"><div class="bar"><span>w1 scout stack — 2 calls, 21,473 tokens</span><span class="tag">this morning</span></div><pre>trace_w1 = [
+<span class="good-line">  (<span class="s">"semfs grep 'best selling product title transaction amount conversion rate' ."</span>,</span>
+<span class="good-line">                                                       <span class="n">13_244</span>),  <span class="c"># t1 — ranked hits, ANSWER ROWS INLINE</span></span>
+<span class="good-line">  (<span class="s">"cat &gt; model_output/best_selling_…list.txt &lt;&lt;EOF …"</span>, <span class="n">97</span>),  <span class="c"># t2 — write deliverable</span></span>
+]
+<span class="c"># deleted vs plain:        deleted vs the OLD semfs arms:</span>
+<span class="c">#   2 fat find probes        the 35.7K kg/KNOWLEDGE_GRAPH.md read  (lean hint)</span>
+<span class="c">#   3 narrowing probes       the 22.4K os.walk crawl               (lean hint)</span>
+<span class="c">#   file re-reads            re-grep retry spirals                 (healthy infra)</span></pre></div>
+
+    <table class="reveal">
+      <thead><tr><th>component of the bill</th><th>plain</th><th>w1</th><th>mechanism</th></tr></thead>
+      <tbody>
+        <tr><td>turns × scaffold (T·S)</td><td>7 × ~3K ≈ 21K</td><td class="g">2 × ~3K ≈ 6K</td><td>turn deletion</td></tr>
+        <tr><td>early outputs re-paid Σ(T−s)·oₛ</td><td class="r">~50K (two find probes × 5–6 re-pays)</td><td class="g">~8K (one 13.2KB grep, re-paid once)</td><td>1 search replaces discovery</td></tr>
+        <tr><td>behavior tax (KG read + crawl)</td><td>0</td><td class="g">0 (was ~58K on old semfs arms)</td><td>lean hint</td></tr>
+        <tr><td><b>total input</b></td><td class="a"><b>77,966</b></td><td class="g"><b>20,754</b></td><td>floor band ≈ 17–22K</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 3. THE CLIP -->
+<section>
+  <div class="wrap">
+    <h2><span class="n">03</span> The harness clip — the layer nobody tells you about</h2>
+    <p class="lede">Between every tool and the model sits codex's truncation layer. The semfs render is <b>not</b> what the model reads — <code style="color:var(--cyan)">clip(out)</code> is. Reverse-engineered from this morning's probes (codex 0.133.0):</p>
+
+    <div class="code reveal"><div class="bar"><span>inside codex, between tool and model (reconstructed)</span><span class="tag">measured behavior</span></div><pre><span class="k">def</span> <span class="f">clip</span>(tool_output):
+    <span class="k">if</span> <span class="f">size</span>(tool_output) &lt;= SAFE_BUDGET:          <span class="c"># measured: ≤ ~10 KB passes WHOLE</span>
+        <span class="k">return</span> tool_output                        <span class="c"># (9.8 KB / 200 lines: untouched)</span>
+                                                      <span class="c"># (~15 KB: boundary notice appears)</span>
+<span class="bad-line">    <span class="k">return</span> ( <span class="f">head</span>(tool_output, ≈<span class="n">600</span> tokens)       <span class="c"># overflow is CATASTROPHIC:</span></span>
+<span class="bad-line">           + <span class="s">f"…{n} tokens truncated…"</span>              <span class="c">#   49 KB in → ~1.2K tokens out</span></span>
+<span class="bad-line">           + <span class="f">tail</span>(tool_output, ≈<span class="n">600</span> tokens) )      <span class="c">#   the MIDDLE is silently gone</span></span>
+
+<span class="c"># NOT a 256-line cap on this build — a 300-line/5.4KB file passed whole.</span>
+<span class="c"># The notice is token-denominated ("…11050 tokens truncated…").</span></pre></div>
+
+    <div class="play reveal">
+      <h4>clip() playground — drag the payload size</h4>
+      <label>semfs grep render size: <b id="psize" style="color:var(--ink)">13.2 KB</b></label>
+      <input type="range" id="pslider" min="1" max="60" step="0.5" value="13.2">
+      <div class="gauge"><div class="g-head" id="ghead"></div><div class="g-cut" id="gcut"></div><div class="g-tail" id="gtail"></div></div>
+      <div class="verdict" id="pverdict"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. E6 -->
+<section>
+  <div class="wrap">
+    <h2><span class="n">04</span> E6 — how we measured the clip without reading codex's source</h2>
+    <p class="lede">The trick: make the <b>model itself report which bytes survived</b>. Feed it a file of numbered marker lines, ask it to read the file with one command and report the first marker it saw, the last, and the missing range. The gap in the numbers IS the clip, measured from the inside.</p>
+
+    <div class="code reveal"><div class="bar"><span>the E6 probe (ran on the box this morning, /tmp/e6/)</span><span class="tag">experiment</span></div><pre><span class="k">def</span> <span class="f">probe</span>(n_lines, line_bytes):
+    <span class="f">write_file</span>(<span class="s">"markers.txt"</span>,
+               [<span class="s">f"MARKER-{i:04d} "</span> + <span class="s">"x"</span>*(line_bytes-<span class="n">13</span>) <span class="k">for</span> i <span class="k">in</span> <span class="f">range</span>(<span class="n">1</span>, n_lines+<span class="n">1</span>)])
+    <span class="k">return</span> <span class="f">codex_exec</span>(<span class="s">"cat markers.txt — then report ONE line: "</span>
+                      <span class="s">"FIRST=&lt;n&gt; LAST=&lt;n&gt; MISSING=&lt;range|NONE&gt; TRUNC=&lt;notice|NONE&gt;"</span>)
+
+<span class="f">probe</span>(<span class="n">300</span>,  <span class="n">18</span>)   <span class="c">#  5.4 KB → FIRST=1 LAST=300  MISSING=NONE      ⇒ no 256-line cap</span>
+<span class="f">probe</span>(<span class="n">200</span>,  <span class="n">49</span>)   <span class="c">#  9.8 KB → all 200 visible                     ⇒ ≤10 KB is safe</span>
+<span class="f">probe</span>(<span class="n">330</span>,  <span class="n">47</span>)   <span class="c"># 15.5 KB → boundary truncation notice          ⇒ the cliff starts</span>
+<span class="f">probe</span>(<span class="n">1000</span>, <span class="n">49</span>)   <span class="c"># 49 KB  → FIRST=1 LAST=1000 MISSING=50–951     ⇒ head+tail window,</span>
+                  <span class="c">#          TRUNC="…11050 tokens truncated…"       ~1.2K tokens survive</span></pre></div>
+
+    <div class="callout green"><b>Why this matters for w1:</b> the scout stack's grep render came out at 13.2 KB — inside the safe window. The model saw <i>every ranked hit and every answer row</i>. Under the OLD uncapped render (~300 KB), clip() would have gutted it to ~1.2K tokens of head+tail, the agent would have lost confidence, and the crawl spiral would have started — which is precisely the 247–700K-token disasters in the original matrix.</div>
+  </div>
+</section>
+
+<!-- 5. ENSURING THE WINDOW -->
+<section>
+  <div class="wrap">
+    <h2><span class="n">05</span> How semfs keeps the payload inside the window</h2>
+    <p class="lede">The fix shipped on 2026-06-11 in <code style="color:var(--cyan)">crates/semfs/src/cmd/grep.rs</code>: a per-hit render cap with an honest marker, knob <code style="color:var(--cyan)">SEMFS_GREP_RESULT_CAP</code>.</p>
+
+    <div class="code reveal"><div class="bar"><span>grep.rs render path (pseudocode of the actual patch)</span><span class="tag">shipped</span></div><pre><span class="k">def</span> <span class="f">render_grep_results</span>(hits,
+                        RESULT_LIMIT    = <span class="n">5</span>,      <span class="c"># env SEMFS_RESULT_LIMIT</span>
+                        GREP_RESULT_CAP = <span class="n">6144</span>):  <span class="c"># env SEMFS_GREP_RESULT_CAP (bytes/hit)</span>
+    out = []
+    <span class="k">for</span> hit <span class="k">in</span> hits[:RESULT_LIMIT]:               <span class="c"># ranked by vector+FTS fusion + rerank</span>
+        text = hit.extracted_text                  <span class="c"># for xlsx: the readable table,</span>
+                                                   <span class="c">#   not binary bytes (format-trap fix)</span>
+        <span class="k">if</span> <span class="f">len</span>(text) &gt; GREP_RESULT_CAP:
+<span class="good-line">            text = text[:GREP_RESULT_CAP] + <span class="s">"\n[TRUNCATED — open the file for the rest]"</span></span>
+        out.append(<span class="s">f"#{hit.rank} {hit.path}\n{text}"</span>)
+    <span class="k">return</span> <span class="s">"\n"</span>.join(out)
+<span class="c"># w1 actual: 5 hits → 13,244 bytes total → passed clip() whole.</span></pre></div>
+
+    <div class="callout red"><b>Known sharp edge (found writing this page):</b> the guarantee is <i>per-hit</i>, not global. Worst case is RESULT_LIMIT × CAP = 5 × 6 KB = 30 KB — past the ~15 KB cliff. w1 passed because real hits are smaller than the cap. The robust fix is a <b>global render budget</b> (cap_total ≈ 10 KB, answer-bearing top hit funded first) — logged as a refinement for E9's two-tier arm.</div>
+
+    <p>Belt-and-suspenders, the full containment stack:</p>
+    <div class="code reveal"><div class="bar"><span>the scout stack, as config</span><span class="tag">w-arm env</span></div><pre>SCOUT_STACK = {
+  <span class="s">"CANON"</span>:                <span class="s">"chanpin-leanhint.db"</span>,  <span class="c"># hint: 1 grep → read top hit → no kg/, no crawl</span>
+  <span class="s">"SEMFS_SEARCH_ONLY"</span>:    <span class="s">"off"</span>,   <span class="c"># H2: tree stays visible — the escape hatch</span>
+  <span class="s">"SEMFS_GREP_RESULT_CAP"</span>:<span class="n">6144</span>,    <span class="c"># §05: per-hit render cap (E6-validated)</span>
+  <span class="s">"SEMFS_RESULT_LIMIT"</span>:   <span class="n">5</span>,       <span class="c"># fewer, better hits</span>
+  <span class="s">"SEMFS_KG"</span>:             <span class="s">"off"</span>,   <span class="c"># H5: no graph surfaces to crawl</span>
+  <span class="s">"SEMFS_GRAPH_FS"</span>:       <span class="s">"off"</span>,
+}</pre></div>
+  </div>
+</section>
+
+<!-- 6. THE GAP -->
+<section>
+  <div class="wrap">
+    <h2><span class="n">06</span> The open accuracy gap — efficiency hides corruption</h2>
+    <p class="lede">w1 scored 4/15 vs plain's 6/15. The two missing points are the <b>403 cluster</b>: rubrics that reward noticing that a task-named source file is a corrupted HTTP-403 HTML stub. Plain trips over the stub (turns 5–6 of its trace) and reports it. w1 was too efficient to ever touch it.</p>
+
+    <div class="code reveal"><div class="bar"><span>staged fix W′ — one paragraph added to the hint (chanpin-leanhint2.db)</span><span class="tag">staged, not yet run</span></div><pre><span class="c"># the behavior the current hint accidentally suppresses, restored generically:</span>
+<span class="k">for</span> f <span class="k">in</span> task.named_source_files:        <span class="c"># files the TASK STATEMENT names</span>
+    peek = <span class="f">read</span>(f, first_bytes=<span class="n">400</span>)       <span class="c"># head -c 400 — costs ~100 tokens each</span>
+    <span class="k">if</span> <span class="f">looks_like_error_page</span>(peek):       <span class="c"># "403 Forbidden", HTML-not-Excel, …</span>
+        deliverable.<span class="f">note</span>(<span class="s">f"{f}: inaccessible — {peek.error}"</span>)   <span class="c"># report, don't fabricate</span>
+
+<span class="c"># Generic provenance hygiene, not a benchmark-specific hack: it's what plain</span>
+<span class="c"># does by accident. Cost: ~3 reads × ~100 tokens on this case. The earlier</span>
+<span class="c"># 'integrity banner' (the PRODUCT injecting rubric text) stays dead — this</span>
+<span class="c"># instructs the AGENT to look, which any careful analyst would do.</span></pre></div>
+
+    <p><b>Decision pending w2/w3:</b> if accuracy variance closes the gap naturally, ship as-is; if the 4/15 replicates, swap in the W′ hint and rerun. Either way the token axis already sits in the 17–22K floor band predicted by §01's arithmetic.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>Sources:</b> traces in artifacts/e8seq/ (box) · E6 probes /tmp/e6/run{A,B,CD}.jsonl (box) · TOKEN_ECONOMY.md · EXPERIMENTS_NEXT.md · openai/codex#6426<br>
+    <b>Caveats:</b> w1 is n=1 — call-count variance is the documented killer of one-run wins; clip numbers are for codex 0.133.0 with this config and may move between versions.<br>
+    ← back to the <a href="hypotheses.html">full case file</a>
+  </div>
+</footer>
+
+<script>
+const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}})},{threshold:.1});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+
+/* clip playground */
+const slider=document.getElementById('pslider');
+function upd(){
+  const kb=parseFloat(slider.value);
+  document.getElementById('psize').textContent=kb.toFixed(1)+' KB';
+  const head=document.getElementById('ghead'),cut=document.getElementById('gcut'),tail=document.getElementById('gtail');
+  const v=document.getElementById('pverdict');
+  if(kb<=10){
+    head.style.width='100%';cut.style.width='0';tail.style.width='0';
+    v.innerHTML='<b class="v-pass">PASSES WHOLE</b> — the model sees every byte. (measured: 9.8 KB untouched)';
+  }else if(kb<=15.5){
+    head.style.width='92%';cut.style.width='8%';tail.style.width='0';
+    v.innerHTML='<b class="v-edge">BOUNDARY</b> — a truncation notice appears; content mostly intact. (measured at 15.5 KB)';
+  }else{
+    const surv=Math.max(6,(5/kb)*100/2);
+    head.style.width=surv+'%';tail.style.width=surv+'%';cut.style.width=(100-2*surv)+'%';
+    const lost=Math.round((1-(5/kb))*100);
+    v.innerHTML='<b class="v-gut">GUTTED</b> — head+tail only (~0.6K tokens each side); ~'+lost+'% of the payload, including the middle-ranked hits, silently never reaches the model. (measured: 49 KB → "…11050 tokens truncated…")';
+  }
+}
+slider.addEventListener('input',upd);upd();
+</script>
+</body>
+</html>

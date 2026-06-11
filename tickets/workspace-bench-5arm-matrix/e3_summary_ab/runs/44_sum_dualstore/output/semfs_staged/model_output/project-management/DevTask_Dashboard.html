@@ -1,0 +1,3252 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>Development Task Dashboard</title>
+<style>
+:root{--bg:#f8fafc;--card:#ffffff;--ink:#0f172a;--muted:#475569;--line:#e2e8f0;--blue:#2563eb;--violet:#7c3aed;--teal:#0f766e;--amber:#d97706;--red:#dc2626;--green:#16a34a;}
+*{box-sizing:border-box} body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:linear-gradient(180deg,#eef4ff,#f8fafc 28%);color:var(--ink)}
+.container{max-width:1500px;margin:0 auto;padding:24px}
+.hero{background:linear-gradient(135deg,#0f172a,#1d4ed8 60%,#14b8a6);color:#fff;border-radius:22px;padding:28px 30px;box-shadow:0 18px 50px rgba(15,23,42,.18)}
+.hero h1{margin:0 0 8px;font-size:34px} .hero p{margin:0;color:rgba(255,255,255,.86);max-width:900px;line-height:1.5}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:18px;margin-top:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 8px 22px rgba(15,23,42,.05)}
+.kpi{grid-column:span 3} .wide{grid-column:span 6} .full{grid-column:1/-1}
+.card h3{margin:0 0 10px;font-size:16px} .sub{color:var(--muted);font-size:13px}
+.big{font-size:34px;font-weight:800;margin:8px 0 0}
+.mini-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px}
+.mini{padding:12px;border-radius:14px;background:#f8fafc;border:1px solid var(--line)}
+.mini strong{display:block;font-size:22px}
+.stackbar{display:flex;height:18px;border-radius:999px;overflow:hidden;background:#e5e7eb;margin-top:10px}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:12px;color:var(--muted)} .legend span::before{content:'';display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.list{display:grid;gap:10px;margin-top:10px} .item{display:flex;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fbfdff}
+.item b{font-size:14px} .item span{color:var(--muted);font-size:12px}
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px}
+table{width:100%;border-collapse:collapse;font-size:13px;background:#fff} th,td{padding:10px 12px;border-bottom:1px solid #eef2f7;text-align:left;vertical-align:top;white-space:nowrap} th{position:sticky;top:0;background:#f8fafc;z-index:1}
+tr:hover td{background:#f8fbff}
+.badge{display:inline-flex;align-items:center;padding:4px 9px;border-radius:999px;font-weight:700;font-size:12px}
+.badge.p1{background:#fee2e2;color:#991b1b} .badge.p2{background:#ffedd5;color:#9a3412} .badge.p3{background:#dbeafe;color:#1d4ed8} .badge.p4{background:#ede9fe;color:#6d28d9}
+.badge.risk-low{background:#dcfce7;color:#166534} .badge.risk-medium{background:#fef3c7;color:#92400e} .badge.risk-high{background:#fee2e2;color:#991b1b}
+.progress-wrap{position:relative;min-width:120px;height:24px;background:#eaf2ff;border-radius:999px;overflow:hidden} .progress-bar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#2563eb,#14b8a6)} .progress-wrap span{position:relative;z-index:1;display:block;text-align:center;line-height:24px;font-weight:700;color:#0f172a}
+.footer{color:var(--muted);font-size:12px;margin-top:10px}
+@media (max-width:1100px){.kpi,.wide{grid-column:span 6}} @media (max-width:800px){.kpi,.wide{grid-column:1/-1} .hero h1{font-size:28px}}
+</style>
+</head>
+<body>
+<div class='container'>
+  <section class='hero'>
+    <h1>Development Task Dashboard</h1>
+    <p>Consolidated view of 120 development tasks merged from three Excel trackers. The dashboard summarizes workload, progress, priorities, feature coverage, ownership distribution, delivery dates, and detailed task-level execution data.</p>
+  </section>
+
+  <section class='grid'>
+    <div class='card kpi'>
+      <h3>Total tasks</h3>
+      <div class='big'>120</div>
+      <div class='sub'>Merged from 3 source workbooks</div>
+    </div>
+    <div class='card kpi'>
+      <h3>Average progress</h3>
+      <div class='big'>50.4%</div>
+      <div class='sub'>Across all tracked development items</div>
+    </div>
+    <div class='card kpi'>
+      <h3>Average duration</h3>
+      <div class='big'>18.5 d</div>
+      <div class='sub'>Estimated implementation effort</div>
+    </div>
+    <div class='card kpi'>
+      <h3>Avg. performance target</h3>
+      <div class='big'>88.5%</div>
+      <div class='sub'>Optimization target benchmark</div>
+    </div>
+
+    <div class='card wide'>
+      <h3>Priority mix</h3>
+      <div class='stackbar'><div class='seg' style='width:20.00%;background:#2563eb' title='P3: 24'></div><div class='seg' style='width:19.17%;background:#7c3aed' title='P2: 23'></div><div class='seg' style='width:27.50%;background:#14b8a6' title='P1: 33'></div><div class='seg' style='width:33.33%;background:#f59e0b' title='P4: 40'></div></div>
+      <div class='legend'>
+        <span style='--c:#2563eb'><span style='color:transparent'></span></span><span style='--c:#7c3aed'><span style='color:transparent'></span></span><span style='--c:#14b8a6'><span style='color:transparent'></span></span><span style='--c:#f59e0b'><span style='color:transparent'></span></span>
+      </div>
+      <div class='list'>
+        <div class='item'><b>P1</b><span>33 tasks · 27.5%</span></div><div class='item'><b>P2</b><span>23 tasks · 19.2%</span></div><div class='item'><b>P3</b><span>24 tasks · 20.0%</span></div><div class='item'><b>P4</b><span>40 tasks · 33.3%</span></div>
+      </div>
+    </div>
+
+    <div class='card wide'>
+      <h3>Execution status by progress band</h3>
+      <div class='list'>
+        <div class='item'><b>Not started / blocked</b><span>25 tasks</span></div><div class='item'><b>Early development</b><span>32 tasks</span></div><div class='item'><b>Ready for test</b><span>26 tasks</span></div><div class='item'><b>In development</b><span>37 tasks</span></div>
+      </div>
+      <div class='mini-grid'>
+        <div class='mini'><span class='sub'>Lowest progress</span><strong>1%</strong></div>
+        <div class='mini'><span class='sub'>Highest progress</span><strong>99%</strong></div>
+        <div class='mini'><span class='sub'>Start date range</span><strong style='font-size:16px'>2024-01-06 → 2024-12-28</strong></div>
+        <div class='mini'><span class='sub'>Completion date range</span><strong style='font-size:16px'>2024-01-01 → 2024-12-25</strong></div>
+      </div>
+    </div>
+
+    <div class='card wide'>
+      <h3>Top assignees by task count</h3>
+      <div class='list'>
+        <div class='item'><b>Development Engineer 2</b><span>10 tasks</span></div><div class='item'><b>Development Engineer 3</b><span>10 tasks</span></div><div class='item'><b>Development Engineer 4</b><span>10 tasks</span></div><div class='item'><b>Development Engineer 5</b><span>10 tasks</span></div><div class='item'><b>Development Engineer 6</b><span>10 tasks</span></div><div class='item'><b>Development Engineer 7</b><span>10 tasks</span></div><div class='item'><b>Development Engineer 8</b><span>10 tasks</span></div><div class='item'><b>Development Engineer 9</b><span>10 tasks</span></div>
+      </div>
+    </div>
+
+    <div class='card wide'>
+      <h3>Feature coverage</h3>
+      <div class='list'>
+        <div class='item'><b>Feature 2</b><span>8 tasks</span></div><div class='item'><b>Feature 3</b><span>8 tasks</span></div><div class='item'><b>Feature 4</b><span>8 tasks</span></div><div class='item'><b>Feature 5</b><span>8 tasks</span></div><div class='item'><b>Feature 6</b><span>8 tasks</span></div><div class='item'><b>Feature 7</b><span>8 tasks</span></div><div class='item'><b>Feature 8</b><span>8 tasks</span></div><div class='item'><b>Feature 9</b><span>8 tasks</span></div><div class='item'><b>Feature 10</b><span>8 tasks</span></div><div class='item'><b>Feature 11</b><span>8 tasks</span></div>
+      </div>
+    </div>
+
+    <div class='card full'>
+      <h3>Portfolio metrics</h3>
+      <div class='mini-grid'>
+        <div class='mini'><span class='sub'>Functional requirements / task</span><strong>14.8</strong></div>
+        <div class='mini'><span class='sub'>Technical requirements / task</span><strong>7.5</strong></div>
+        <div class='mini'><span class='sub'>Tech stack standardization</span><strong>1 stack pattern</strong></div>
+        <div class='mini'><span class='sub'>Complexity spread</span><strong>Simple</strong></div>
+      </div>
+      <div class='footer'>Source files: development-task-list.xlsx, development-task-2.xlsx, development-task-3.xlsx</div>
+    </div>
+
+    <div class='card full'>
+      <h3>Detailed task register</h3>
+      <div class='table-wrap'>
+        <table>
+          <thead>
+            <tr>
+              <th>Task ID</th><th>Feature</th><th>Priority</th><th>Assignee</th><th>Description</th><th>Duration</th><th>Progress</th><th>Func Req</th><th>Tech Req</th><th>Perf Target</th><th>Tech Stack</th><th>Complexity</th><th>Design Review</th><th>Dev Start</th><th>Dev Complete</th><th>Testing Delivery</th><th>Issues</th><th>Risk</th><th>Test Coverage</th><th>Completion Criteria</th><th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+    <tr>
+      <td>DEV-0001</td>
+      <td>Feature 2</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 2</td>
+      <td>Backend API development</td>
+      <td>30</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:1%'></div><span>1%</span></div>
+      </td>
+      <td>20</td>
+      <td>4</td>
+      <td>114%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-04-19</td>
+      <td>2024-12-28</td>
+      <td>2024-09-01</td>
+      <td>2024-01-22</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0002</td>
+      <td>Feature 3</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 3</td>
+      <td>Backend API development</td>
+      <td>32</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:40%'></div><span>40%</span></div>
+      </td>
+      <td>23</td>
+      <td>8</td>
+      <td>83%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-12-01</td>
+      <td>2024-01-22</td>
+      <td>2024-03-17</td>
+      <td>2024-10-06</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0003</td>
+      <td>Feature 4</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 4</td>
+      <td>Backend API development</td>
+      <td>32</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:38%'></div><span>38%</span></div>
+      </td>
+      <td>15</td>
+      <td>6</td>
+      <td>90%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-07</td>
+      <td>2024-05-01</td>
+      <td>2024-09-13</td>
+      <td>2024-07-17</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0004</td>
+      <td>Feature 5</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 5</td>
+      <td>Backend API development</td>
+      <td>7</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:48%'></div><span>48%</span></div>
+      </td>
+      <td>10</td>
+      <td>8</td>
+      <td>81%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-12</td>
+      <td>2024-10-18</td>
+      <td>2024-11-18</td>
+      <td>2024-12-22</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0005</td>
+      <td>Feature 6</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 6</td>
+      <td>Backend API development</td>
+      <td>31</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:30%'></div><span>30%</span></div>
+      </td>
+      <td>17</td>
+      <td>5</td>
+      <td>89%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-07</td>
+      <td>2024-09-26</td>
+      <td>2024-04-20</td>
+      <td>2024-03-17</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0006</td>
+      <td>Feature 7</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 7</td>
+      <td>Backend API development</td>
+      <td>33</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:13%'></div><span>13%</span></div>
+      </td>
+      <td>11</td>
+      <td>5</td>
+      <td>84%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-19</td>
+      <td>2024-05-21</td>
+      <td>2024-04-13</td>
+      <td>2024-01-06</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0007</td>
+      <td>Feature 8</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 8</td>
+      <td>Backend API development</td>
+      <td>22</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:89%'></div><span>89%</span></div>
+      </td>
+      <td>18</td>
+      <td>9</td>
+      <td>97%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-10</td>
+      <td>2024-10-20</td>
+      <td>2024-04-02</td>
+      <td>2024-06-16</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0008</td>
+      <td>Feature 9</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 9</td>
+      <td>Backend API development</td>
+      <td>26</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:65%'></div><span>65%</span></div>
+      </td>
+      <td>16</td>
+      <td>8</td>
+      <td>55%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-17</td>
+      <td>2024-07-10</td>
+      <td>2024-12-09</td>
+      <td>2024-12-09</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0009</td>
+      <td>Feature 10</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 10</td>
+      <td>Backend API development</td>
+      <td>25</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:15%'></div><span>15%</span></div>
+      </td>
+      <td>5</td>
+      <td>5</td>
+      <td>116%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-24</td>
+      <td>2024-04-26</td>
+      <td>2024-10-06</td>
+      <td>2024-06-20</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0010</td>
+      <td>Feature 11</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 11</td>
+      <td>Backend API development</td>
+      <td>16</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:83%'></div><span>83%</span></div>
+      </td>
+      <td>14</td>
+      <td>3</td>
+      <td>89%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-04-13</td>
+      <td>2024-12-18</td>
+      <td>2024-11-01</td>
+      <td>2024-02-19</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0011</td>
+      <td>Feature 12</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 12</td>
+      <td>Backend API development</td>
+      <td>5</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:66%'></div><span>66%</span></div>
+      </td>
+      <td>11</td>
+      <td>7</td>
+      <td>125%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-18</td>
+      <td>2024-09-24</td>
+      <td>2024-11-04</td>
+      <td>2024-05-24</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0012</td>
+      <td>Feature 13</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 1</td>
+      <td>Backend API development</td>
+      <td>16</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:53%'></div><span>53%</span></div>
+      </td>
+      <td>12</td>
+      <td>9</td>
+      <td>69%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-27</td>
+      <td>2024-08-25</td>
+      <td>2024-04-15</td>
+      <td>2024-07-02</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0013</td>
+      <td>Feature 14</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 2</td>
+      <td>Backend API development</td>
+      <td>12</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:42%'></div><span>42%</span></div>
+      </td>
+      <td>19</td>
+      <td>9</td>
+      <td>110%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-12</td>
+      <td>2024-09-15</td>
+      <td>2024-07-12</td>
+      <td>2024-11-21</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0014</td>
+      <td>Feature 15</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 3</td>
+      <td>Backend API development</td>
+      <td>32</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:40%'></div><span>40%</span></div>
+      </td>
+      <td>8</td>
+      <td>3</td>
+      <td>131%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-13</td>
+      <td>2024-09-18</td>
+      <td>2024-07-14</td>
+      <td>2024-02-05</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0015</td>
+      <td>Feature 1</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 4</td>
+      <td>Backend API development</td>
+      <td>9</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:86%'></div><span>86%</span></div>
+      </td>
+      <td>22</td>
+      <td>11</td>
+      <td>136%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-19</td>
+      <td>2024-05-21</td>
+      <td>2024-04-04</td>
+      <td>2024-07-16</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0016</td>
+      <td>Feature 2</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 5</td>
+      <td>Backend API development</td>
+      <td>6</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:94%'></div><span>94%</span></div>
+      </td>
+      <td>8</td>
+      <td>3</td>
+      <td>78%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-12-24</td>
+      <td>2024-04-26</td>
+      <td>2024-01-08</td>
+      <td>2024-01-18</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0017</td>
+      <td>Feature 3</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 6</td>
+      <td>Backend API development</td>
+      <td>29</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:19%'></div><span>19%</span></div>
+      </td>
+      <td>13</td>
+      <td>10</td>
+      <td>132%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-04</td>
+      <td>2024-08-23</td>
+      <td>2024-05-01</td>
+      <td>2024-12-12</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0018</td>
+      <td>Feature 4</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 7</td>
+      <td>Backend API development</td>
+      <td>30</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:14%'></div><span>14%</span></div>
+      </td>
+      <td>17</td>
+      <td>10</td>
+      <td>55%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-12-02</td>
+      <td>2024-06-13</td>
+      <td>2024-11-04</td>
+      <td>2024-07-12</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0019</td>
+      <td>Feature 5</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 8</td>
+      <td>Backend API development</td>
+      <td>32</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:31%'></div><span>31%</span></div>
+      </td>
+      <td>15</td>
+      <td>10</td>
+      <td>92%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-01-07</td>
+      <td>2024-06-01</td>
+      <td>2024-06-12</td>
+      <td>2024-02-07</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0020</td>
+      <td>Feature 6</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 9</td>
+      <td>Backend API development</td>
+      <td>6</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:70%'></div><span>70%</span></div>
+      </td>
+      <td>8</td>
+      <td>4</td>
+      <td>116%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-07</td>
+      <td>2024-04-02</td>
+      <td>2024-06-03</td>
+      <td>2024-07-02</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0021</td>
+      <td>Feature 7</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 10</td>
+      <td>Backend API development</td>
+      <td>5</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:15%'></div><span>15%</span></div>
+      </td>
+      <td>16</td>
+      <td>9</td>
+      <td>102%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-12</td>
+      <td>2024-12-20</td>
+      <td>2024-02-07</td>
+      <td>2024-05-05</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0022</td>
+      <td>Feature 8</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 11</td>
+      <td>Backend API development</td>
+      <td>32</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:78%'></div><span>78%</span></div>
+      </td>
+      <td>22</td>
+      <td>6</td>
+      <td>66%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-05</td>
+      <td>2024-03-23</td>
+      <td>2024-03-06</td>
+      <td>2024-05-21</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0023</td>
+      <td>Feature 9</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 12</td>
+      <td>Backend API development</td>
+      <td>26</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:34%'></div><span>34%</span></div>
+      </td>
+      <td>24</td>
+      <td>9</td>
+      <td>123%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-14</td>
+      <td>2024-08-21</td>
+      <td>2024-09-14</td>
+      <td>2024-06-06</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0024</td>
+      <td>Feature 10</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 1</td>
+      <td>Backend API development</td>
+      <td>16</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:5%'></div><span>5%</span></div>
+      </td>
+      <td>23</td>
+      <td>8</td>
+      <td>115%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-01-24</td>
+      <td>2024-01-27</td>
+      <td>2024-02-28</td>
+      <td>2024-10-20</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0025</td>
+      <td>Feature 11</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 2</td>
+      <td>Backend API development</td>
+      <td>20</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:89%'></div><span>89%</span></div>
+      </td>
+      <td>19</td>
+      <td>4</td>
+      <td>136%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-24</td>
+      <td>2024-05-20</td>
+      <td>2024-04-25</td>
+      <td>2024-04-23</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0026</td>
+      <td>Feature 12</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 3</td>
+      <td>Backend API development</td>
+      <td>14</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:50%'></div><span>50%</span></div>
+      </td>
+      <td>6</td>
+      <td>11</td>
+      <td>136%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-19</td>
+      <td>2024-01-23</td>
+      <td>2024-02-16</td>
+      <td>2024-04-19</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0027</td>
+      <td>Feature 13</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 4</td>
+      <td>Backend API development</td>
+      <td>15</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:60%'></div><span>60%</span></div>
+      </td>
+      <td>12</td>
+      <td>12</td>
+      <td>83%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-04</td>
+      <td>2024-10-24</td>
+      <td>2024-09-19</td>
+      <td>2024-09-22</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0028</td>
+      <td>Feature 14</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 5</td>
+      <td>Backend API development</td>
+      <td>8</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:96%'></div><span>96%</span></div>
+      </td>
+      <td>13</td>
+      <td>6</td>
+      <td>83%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-23</td>
+      <td>2024-02-04</td>
+      <td>2024-07-18</td>
+      <td>2024-08-06</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0029</td>
+      <td>Feature 15</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 6</td>
+      <td>Backend API development</td>
+      <td>30</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:3%'></div><span>3%</span></div>
+      </td>
+      <td>14</td>
+      <td>8</td>
+      <td>74%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-04-28</td>
+      <td>2024-09-02</td>
+      <td>2024-04-19</td>
+      <td>2024-05-08</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0030</td>
+      <td>Feature 1</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 7</td>
+      <td>Backend API development</td>
+      <td>25</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:77%'></div><span>77%</span></div>
+      </td>
+      <td>17</td>
+      <td>9</td>
+      <td>59%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-08</td>
+      <td>2024-02-16</td>
+      <td>2024-12-25</td>
+      <td>2024-03-12</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0031</td>
+      <td>Feature 2</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 8</td>
+      <td>Backend API development</td>
+      <td>8</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:74%'></div><span>74%</span></div>
+      </td>
+      <td>17</td>
+      <td>10</td>
+      <td>68%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-20</td>
+      <td>2024-02-17</td>
+      <td>2024-03-20</td>
+      <td>2024-10-09</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0032</td>
+      <td>Feature 3</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 9</td>
+      <td>Backend API development</td>
+      <td>21</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:19%'></div><span>19%</span></div>
+      </td>
+      <td>21</td>
+      <td>12</td>
+      <td>92%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-23</td>
+      <td>2024-08-02</td>
+      <td>2024-03-20</td>
+      <td>2024-03-04</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0033</td>
+      <td>Feature 4</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 10</td>
+      <td>Backend API development</td>
+      <td>24</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:93%'></div><span>93%</span></div>
+      </td>
+      <td>19</td>
+      <td>12</td>
+      <td>54%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-06</td>
+      <td>2024-07-03</td>
+      <td>2024-06-26</td>
+      <td>2024-03-28</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0034</td>
+      <td>Feature 5</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 11</td>
+      <td>Backend API development</td>
+      <td>15</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:18%'></div><span>18%</span></div>
+      </td>
+      <td>5</td>
+      <td>7</td>
+      <td>75%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-04</td>
+      <td>2024-12-10</td>
+      <td>2024-11-03</td>
+      <td>2024-06-22</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0035</td>
+      <td>Feature 6</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 12</td>
+      <td>Backend API development</td>
+      <td>19</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:17%'></div><span>17%</span></div>
+      </td>
+      <td>14</td>
+      <td>4</td>
+      <td>51%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-10</td>
+      <td>2024-02-04</td>
+      <td>2024-09-13</td>
+      <td>2024-02-16</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0036</td>
+      <td>Feature 7</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 1</td>
+      <td>Backend API development</td>
+      <td>11</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:76%'></div><span>76%</span></div>
+      </td>
+      <td>7</td>
+      <td>12</td>
+      <td>91%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-09</td>
+      <td>2024-09-11</td>
+      <td>2024-01-11</td>
+      <td>2024-04-20</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0037</td>
+      <td>Feature 8</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 2</td>
+      <td>Backend API development</td>
+      <td>24</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:36%'></div><span>36%</span></div>
+      </td>
+      <td>6</td>
+      <td>7</td>
+      <td>106%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-18</td>
+      <td>2024-06-13</td>
+      <td>2024-04-23</td>
+      <td>2024-03-28</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0038</td>
+      <td>Feature 9</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 3</td>
+      <td>Backend API development</td>
+      <td>28</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:23%'></div><span>23%</span></div>
+      </td>
+      <td>19</td>
+      <td>5</td>
+      <td>98%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-12-24</td>
+      <td>2024-07-14</td>
+      <td>2024-03-11</td>
+      <td>2024-11-23</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0039</td>
+      <td>Feature 10</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 4</td>
+      <td>Backend API development</td>
+      <td>6</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:26%'></div><span>26%</span></div>
+      </td>
+      <td>8</td>
+      <td>11</td>
+      <td>132%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-01</td>
+      <td>2024-11-28</td>
+      <td>2024-12-16</td>
+      <td>2024-08-28</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0040</td>
+      <td>Feature 11</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 5</td>
+      <td>Backend API development</td>
+      <td>16</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:34%'></div><span>34%</span></div>
+      </td>
+      <td>19</td>
+      <td>7</td>
+      <td>110%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-17</td>
+      <td>2024-09-07</td>
+      <td>2024-07-23</td>
+      <td>2024-11-13</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0041</td>
+      <td>Feature 12</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 6</td>
+      <td>Backend API development</td>
+      <td>25</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:34%'></div><span>34%</span></div>
+      </td>
+      <td>13</td>
+      <td>4</td>
+      <td>79%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-04</td>
+      <td>2024-02-09</td>
+      <td>2024-02-01</td>
+      <td>2024-07-11</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0042</td>
+      <td>Feature 13</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 7</td>
+      <td>Backend API development</td>
+      <td>16</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:31%'></div><span>31%</span></div>
+      </td>
+      <td>12</td>
+      <td>6</td>
+      <td>108%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-10</td>
+      <td>2024-02-04</td>
+      <td>2024-01-01</td>
+      <td>2024-04-06</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0043</td>
+      <td>Feature 14</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 8</td>
+      <td>Backend API development</td>
+      <td>25</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:26%'></div><span>26%</span></div>
+      </td>
+      <td>24</td>
+      <td>12</td>
+      <td>51%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-25</td>
+      <td>2024-04-17</td>
+      <td>2024-12-22</td>
+      <td>2024-01-21</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0044</td>
+      <td>Feature 15</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 9</td>
+      <td>Backend API development</td>
+      <td>9</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:11%'></div><span>11%</span></div>
+      </td>
+      <td>18</td>
+      <td>5</td>
+      <td>58%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-14</td>
+      <td>2024-01-12</td>
+      <td>2024-02-18</td>
+      <td>2024-06-03</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0045</td>
+      <td>Feature 1</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 10</td>
+      <td>Backend API development</td>
+      <td>24</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:33%'></div><span>33%</span></div>
+      </td>
+      <td>5</td>
+      <td>6</td>
+      <td>56%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-23</td>
+      <td>2024-05-15</td>
+      <td>2024-10-17</td>
+      <td>2024-05-18</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0046</td>
+      <td>Feature 2</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 11</td>
+      <td>Backend API development</td>
+      <td>8</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:89%'></div><span>89%</span></div>
+      </td>
+      <td>16</td>
+      <td>7</td>
+      <td>114%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-08-10</td>
+      <td>2024-12-08</td>
+      <td>2024-07-20</td>
+      <td>2024-10-25</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0047</td>
+      <td>Feature 3</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 12</td>
+      <td>Backend API development</td>
+      <td>28</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:51%'></div><span>51%</span></div>
+      </td>
+      <td>22</td>
+      <td>7</td>
+      <td>129%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-10</td>
+      <td>2024-10-10</td>
+      <td>2024-04-16</td>
+      <td>2024-01-03</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0048</td>
+      <td>Feature 4</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 1</td>
+      <td>Backend API development</td>
+      <td>15</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:56%'></div><span>56%</span></div>
+      </td>
+      <td>22</td>
+      <td>10</td>
+      <td>83%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-01</td>
+      <td>2024-09-20</td>
+      <td>2024-12-14</td>
+      <td>2024-04-14</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0049</td>
+      <td>Feature 5</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 2</td>
+      <td>Backend API development</td>
+      <td>12</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:76%'></div><span>76%</span></div>
+      </td>
+      <td>21</td>
+      <td>6</td>
+      <td>81%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-23</td>
+      <td>2024-12-11</td>
+      <td>2024-07-24</td>
+      <td>2024-04-23</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0050</td>
+      <td>Feature 6</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 3</td>
+      <td>Backend API development</td>
+      <td>6</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:69%'></div><span>69%</span></div>
+      </td>
+      <td>5</td>
+      <td>12</td>
+      <td>114%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-19</td>
+      <td>2024-07-23</td>
+      <td>2024-12-18</td>
+      <td>2024-10-20</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-list.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0051</td>
+      <td>Feature 7</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 4</td>
+      <td>To implement: backend API development</td>
+      <td>23</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:13%'></div><span>13%</span></div>
+      </td>
+      <td>21</td>
+      <td>4</td>
+      <td>57%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-21</td>
+      <td>2024-06-21</td>
+      <td>2024-02-27</td>
+      <td>2024-11-09</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0052</td>
+      <td>Feature 8</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 5</td>
+      <td>To implement: backend API development</td>
+      <td>16</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:34%'></div><span>34%</span></div>
+      </td>
+      <td>20</td>
+      <td>6</td>
+      <td>72%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-13</td>
+      <td>2024-03-22</td>
+      <td>2024-06-02</td>
+      <td>2024-05-14</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0053</td>
+      <td>Feature 9</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 6</td>
+      <td>To implement: backend API development</td>
+      <td>7</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:73%'></div><span>73%</span></div>
+      </td>
+      <td>13</td>
+      <td>4</td>
+      <td>62%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-04-13</td>
+      <td>2024-08-11</td>
+      <td>2024-09-20</td>
+      <td>2024-05-18</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0054</td>
+      <td>Feature 10</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 7</td>
+      <td>To implement: backend API development</td>
+      <td>30</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:68%'></div><span>68%</span></div>
+      </td>
+      <td>16</td>
+      <td>8</td>
+      <td>89%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-26</td>
+      <td>2024-08-20</td>
+      <td>2024-02-27</td>
+      <td>2024-02-15</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0055</td>
+      <td>Feature 11</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 8</td>
+      <td>To implement: backend API development</td>
+      <td>19</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:65%'></div><span>65%</span></div>
+      </td>
+      <td>13</td>
+      <td>5</td>
+      <td>69%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-08-04</td>
+      <td>2024-04-25</td>
+      <td>2024-12-12</td>
+      <td>2024-02-11</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0056</td>
+      <td>Feature 12</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 9</td>
+      <td>To implement: backend API development</td>
+      <td>5</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:80%'></div><span>80%</span></div>
+      </td>
+      <td>23</td>
+      <td>9</td>
+      <td>138%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-27</td>
+      <td>2024-08-01</td>
+      <td>2024-07-05</td>
+      <td>2024-11-11</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0057</td>
+      <td>Feature 13</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 10</td>
+      <td>To implement: backend API development</td>
+      <td>33</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:91%'></div><span>91%</span></div>
+      </td>
+      <td>14</td>
+      <td>12</td>
+      <td>93%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-28</td>
+      <td>2024-07-20</td>
+      <td>2024-01-09</td>
+      <td>2024-01-25</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0058</td>
+      <td>Feature 14</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 11</td>
+      <td>To implement: backend API development</td>
+      <td>10</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:67%'></div><span>67%</span></div>
+      </td>
+      <td>23</td>
+      <td>10</td>
+      <td>54%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-06</td>
+      <td>2024-01-24</td>
+      <td>2024-09-20</td>
+      <td>2024-07-14</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0059</td>
+      <td>Feature 15</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 12</td>
+      <td>To implement: backend API development</td>
+      <td>26</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:82%'></div><span>82%</span></div>
+      </td>
+      <td>11</td>
+      <td>3</td>
+      <td>100%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-13</td>
+      <td>2024-09-24</td>
+      <td>2024-11-21</td>
+      <td>2024-03-04</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0060</td>
+      <td>Feature 1</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 1</td>
+      <td>To implement: backend API development</td>
+      <td>22</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:92%'></div><span>92%</span></div>
+      </td>
+      <td>11</td>
+      <td>3</td>
+      <td>124%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-08-15</td>
+      <td>2024-09-20</td>
+      <td>2024-11-28</td>
+      <td>2024-11-23</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0061</td>
+      <td>Feature 2</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 2</td>
+      <td>To implement: backend API development</td>
+      <td>21</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:22%'></div><span>22%</span></div>
+      </td>
+      <td>21</td>
+      <td>7</td>
+      <td>130%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-18</td>
+      <td>2024-06-12</td>
+      <td>2024-07-28</td>
+      <td>2024-02-12</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0062</td>
+      <td>Feature 3</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 3</td>
+      <td>To implement: backend API development</td>
+      <td>8</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:82%'></div><span>82%</span></div>
+      </td>
+      <td>21</td>
+      <td>3</td>
+      <td>50%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-15</td>
+      <td>2024-04-20</td>
+      <td>2024-11-05</td>
+      <td>2024-12-14</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0063</td>
+      <td>Feature 4</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 4</td>
+      <td>To implement: backend API development</td>
+      <td>30</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:68%'></div><span>68%</span></div>
+      </td>
+      <td>14</td>
+      <td>7</td>
+      <td>57%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-16</td>
+      <td>2024-06-15</td>
+      <td>2024-09-18</td>
+      <td>2024-11-12</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0064</td>
+      <td>Feature 5</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 5</td>
+      <td>To implement: backend API development</td>
+      <td>22</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:41%'></div><span>41%</span></div>
+      </td>
+      <td>9</td>
+      <td>4</td>
+      <td>64%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-12-03</td>
+      <td>2024-03-04</td>
+      <td>2024-08-23</td>
+      <td>2024-04-04</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0065</td>
+      <td>Feature 6</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 6</td>
+      <td>To implement: backend API development</td>
+      <td>13</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:10%'></div><span>10%</span></div>
+      </td>
+      <td>10</td>
+      <td>10</td>
+      <td>73%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-26</td>
+      <td>2024-02-20</td>
+      <td>2024-10-13</td>
+      <td>2024-11-20</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0066</td>
+      <td>Feature 7</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 7</td>
+      <td>To implement: backend API development</td>
+      <td>20</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:5%'></div><span>5%</span></div>
+      </td>
+      <td>17</td>
+      <td>12</td>
+      <td>114%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-05</td>
+      <td>2024-02-15</td>
+      <td>2024-10-20</td>
+      <td>2024-03-03</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0067</td>
+      <td>Feature 8</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 8</td>
+      <td>To implement: backend API development</td>
+      <td>5</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:90%'></div><span>90%</span></div>
+      </td>
+      <td>8</td>
+      <td>6</td>
+      <td>63%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-04</td>
+      <td>2024-04-02</td>
+      <td>2024-05-11</td>
+      <td>2024-01-20</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0068</td>
+      <td>Feature 9</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 9</td>
+      <td>To implement: backend API development</td>
+      <td>29</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:3%'></div><span>3%</span></div>
+      </td>
+      <td>6</td>
+      <td>10</td>
+      <td>128%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-14</td>
+      <td>2024-05-15</td>
+      <td>2024-04-05</td>
+      <td>2024-09-03</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0069</td>
+      <td>Feature 10</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 10</td>
+      <td>To implement: backend API development</td>
+      <td>27</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:45%'></div><span>45%</span></div>
+      </td>
+      <td>22</td>
+      <td>10</td>
+      <td>95%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-11</td>
+      <td>2024-01-23</td>
+      <td>2024-10-27</td>
+      <td>2024-08-14</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0070</td>
+      <td>Feature 11</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 11</td>
+      <td>To implement: backend API development</td>
+      <td>18</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:90%'></div><span>90%</span></div>
+      </td>
+      <td>16</td>
+      <td>7</td>
+      <td>68%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-12-20</td>
+      <td>2024-11-16</td>
+      <td>2024-07-22</td>
+      <td>2024-01-20</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0071</td>
+      <td>Feature 12</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 12</td>
+      <td>To implement: backend API development</td>
+      <td>29</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:44%'></div><span>44%</span></div>
+      </td>
+      <td>15</td>
+      <td>12</td>
+      <td>137%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-24</td>
+      <td>2024-08-04</td>
+      <td>2024-11-28</td>
+      <td>2024-07-15</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0072</td>
+      <td>Feature 13</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 1</td>
+      <td>To implement: backend API development</td>
+      <td>7</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:25%'></div><span>25%</span></div>
+      </td>
+      <td>10</td>
+      <td>11</td>
+      <td>89%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-04</td>
+      <td>2024-03-11</td>
+      <td>2024-09-28</td>
+      <td>2024-06-18</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0073</td>
+      <td>Feature 14</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 2</td>
+      <td>To implement: backend API development</td>
+      <td>14</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:82%'></div><span>82%</span></div>
+      </td>
+      <td>23</td>
+      <td>9</td>
+      <td>62%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-08-25</td>
+      <td>2024-02-27</td>
+      <td>2024-04-11</td>
+      <td>2024-09-15</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0074</td>
+      <td>Feature 15</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 3</td>
+      <td>To implement: backend API development</td>
+      <td>8</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:54%'></div><span>54%</span></div>
+      </td>
+      <td>11</td>
+      <td>11</td>
+      <td>77%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-18</td>
+      <td>2024-07-28</td>
+      <td>2024-10-06</td>
+      <td>2024-04-17</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0075</td>
+      <td>Feature 1</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 4</td>
+      <td>To implement: backend API development</td>
+      <td>6</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:64%'></div><span>64%</span></div>
+      </td>
+      <td>19</td>
+      <td>3</td>
+      <td>113%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-03</td>
+      <td>2024-07-12</td>
+      <td>2024-12-13</td>
+      <td>2024-02-12</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0076</td>
+      <td>Feature 2</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 5</td>
+      <td>To implement: backend API development</td>
+      <td>29</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:86%'></div><span>86%</span></div>
+      </td>
+      <td>8</td>
+      <td>6</td>
+      <td>83%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-13</td>
+      <td>2024-06-25</td>
+      <td>2024-11-13</td>
+      <td>2024-03-19</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0077</td>
+      <td>Feature 3</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 6</td>
+      <td>To implement: backend API development</td>
+      <td>20</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:83%'></div><span>83%</span></div>
+      </td>
+      <td>11</td>
+      <td>12</td>
+      <td>65%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-20</td>
+      <td>2024-03-23</td>
+      <td>2024-08-19</td>
+      <td>2024-03-01</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0078</td>
+      <td>Feature 4</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 7</td>
+      <td>To implement: backend API development</td>
+      <td>12</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:87%'></div><span>87%</span></div>
+      </td>
+      <td>9</td>
+      <td>7</td>
+      <td>74%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-06</td>
+      <td>2024-11-07</td>
+      <td>2024-02-13</td>
+      <td>2024-02-28</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0079</td>
+      <td>Feature 5</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 8</td>
+      <td>To implement: backend API development</td>
+      <td>7</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:36%'></div><span>36%</span></div>
+      </td>
+      <td>5</td>
+      <td>8</td>
+      <td>126%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-02</td>
+      <td>2024-02-16</td>
+      <td>2024-07-13</td>
+      <td>2024-11-14</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0080</td>
+      <td>Feature 6</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 9</td>
+      <td>To implement: backend API development</td>
+      <td>9</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:15%'></div><span>15%</span></div>
+      </td>
+      <td>24</td>
+      <td>6</td>
+      <td>56%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-08</td>
+      <td>2024-08-20</td>
+      <td>2024-01-22</td>
+      <td>2024-03-26</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0081</td>
+      <td>Feature 7</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 10</td>
+      <td>To implement: backend API development</td>
+      <td>6</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:55%'></div><span>55%</span></div>
+      </td>
+      <td>5</td>
+      <td>12</td>
+      <td>76%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-03</td>
+      <td>2024-04-04</td>
+      <td>2024-04-07</td>
+      <td>2024-04-06</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0082</td>
+      <td>Feature 8</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 11</td>
+      <td>To implement: backend API development</td>
+      <td>14</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:77%'></div><span>77%</span></div>
+      </td>
+      <td>5</td>
+      <td>8</td>
+      <td>71%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-01-05</td>
+      <td>2024-10-23</td>
+      <td>2024-10-05</td>
+      <td>2024-06-02</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0083</td>
+      <td>Feature 9</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 12</td>
+      <td>To implement: backend API development</td>
+      <td>25</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:20%'></div><span>20%</span></div>
+      </td>
+      <td>16</td>
+      <td>9</td>
+      <td>77%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-10</td>
+      <td>2024-06-11</td>
+      <td>2024-06-08</td>
+      <td>2024-03-05</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0084</td>
+      <td>Feature 10</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 1</td>
+      <td>To implement: backend API development</td>
+      <td>10</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:4%'></div><span>4%</span></div>
+      </td>
+      <td>21</td>
+      <td>7</td>
+      <td>106%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-15</td>
+      <td>2024-12-12</td>
+      <td>2024-10-22</td>
+      <td>2024-02-02</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0085</td>
+      <td>Feature 11</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 2</td>
+      <td>To implement: backend API development</td>
+      <td>16</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:13%'></div><span>13%</span></div>
+      </td>
+      <td>11</td>
+      <td>10</td>
+      <td>95%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-07-03</td>
+      <td>2024-02-14</td>
+      <td>2024-11-28</td>
+      <td>2024-10-14</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0086</td>
+      <td>Feature 12</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 3</td>
+      <td>To implement: backend API development</td>
+      <td>27</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:34%'></div><span>34%</span></div>
+      </td>
+      <td>17</td>
+      <td>8</td>
+      <td>83%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-04-12</td>
+      <td>2024-04-28</td>
+      <td>2024-02-02</td>
+      <td>2024-11-27</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0087</td>
+      <td>Feature 13</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 4</td>
+      <td>To implement: backend API development</td>
+      <td>17</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:23%'></div><span>23%</span></div>
+      </td>
+      <td>19</td>
+      <td>5</td>
+      <td>68%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-02</td>
+      <td>2024-03-11</td>
+      <td>2024-02-15</td>
+      <td>2024-10-22</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0088</td>
+      <td>Feature 14</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 5</td>
+      <td>To implement: backend API development</td>
+      <td>20</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:67%'></div><span>67%</span></div>
+      </td>
+      <td>14</td>
+      <td>4</td>
+      <td>113%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-15</td>
+      <td>2024-11-21</td>
+      <td>2024-12-08</td>
+      <td>2024-02-18</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0089</td>
+      <td>Feature 15</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 6</td>
+      <td>To implement: backend API development</td>
+      <td>21</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:88%'></div><span>88%</span></div>
+      </td>
+      <td>17</td>
+      <td>7</td>
+      <td>50%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-08</td>
+      <td>2024-08-01</td>
+      <td>2024-10-13</td>
+      <td>2024-03-24</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0090</td>
+      <td>Feature 1</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 7</td>
+      <td>To implement: backend API development</td>
+      <td>14</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:59%'></div><span>59%</span></div>
+      </td>
+      <td>18</td>
+      <td>5</td>
+      <td>58%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-12</td>
+      <td>2024-04-16</td>
+      <td>2024-10-07</td>
+      <td>2024-12-22</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0091</td>
+      <td>Feature 2</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 8</td>
+      <td>To implement: backend API development</td>
+      <td>28</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:99%'></div><span>99%</span></div>
+      </td>
+      <td>18</td>
+      <td>6</td>
+      <td>99%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-21</td>
+      <td>2024-03-13</td>
+      <td>2024-09-13</td>
+      <td>2024-11-07</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0092</td>
+      <td>Feature 3</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 9</td>
+      <td>To implement: backend API development</td>
+      <td>13</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:77%'></div><span>77%</span></div>
+      </td>
+      <td>6</td>
+      <td>3</td>
+      <td>53%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-10</td>
+      <td>2024-06-06</td>
+      <td>2024-10-07</td>
+      <td>2024-07-03</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0093</td>
+      <td>Feature 4</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 10</td>
+      <td>To implement: backend API development</td>
+      <td>5</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:92%'></div><span>92%</span></div>
+      </td>
+      <td>9</td>
+      <td>7</td>
+      <td>128%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-25</td>
+      <td>2024-08-08</td>
+      <td>2024-11-10</td>
+      <td>2024-06-19</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0094</td>
+      <td>Feature 5</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 11</td>
+      <td>To implement: backend API development</td>
+      <td>30</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:53%'></div><span>53%</span></div>
+      </td>
+      <td>10</td>
+      <td>8</td>
+      <td>115%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-09</td>
+      <td>2024-10-05</td>
+      <td>2024-01-26</td>
+      <td>2024-04-27</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0095</td>
+      <td>Feature 6</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 12</td>
+      <td>To implement: backend API development</td>
+      <td>28</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:87%'></div><span>87%</span></div>
+      </td>
+      <td>22</td>
+      <td>6</td>
+      <td>69%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-01-14</td>
+      <td>2024-09-28</td>
+      <td>2024-10-05</td>
+      <td>2024-05-25</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0096</td>
+      <td>Feature 7</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 1</td>
+      <td>To implement: backend API development</td>
+      <td>11</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:55%'></div><span>55%</span></div>
+      </td>
+      <td>24</td>
+      <td>5</td>
+      <td>68%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-09-09</td>
+      <td>2024-12-05</td>
+      <td>2024-07-18</td>
+      <td>2024-07-04</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0097</td>
+      <td>Feature 8</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 2</td>
+      <td>To implement: backend API development</td>
+      <td>15</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:82%'></div><span>82%</span></div>
+      </td>
+      <td>7</td>
+      <td>11</td>
+      <td>77%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-24</td>
+      <td>2024-08-27</td>
+      <td>2024-11-13</td>
+      <td>2024-04-05</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0098</td>
+      <td>Feature 9</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 3</td>
+      <td>To implement: backend API development</td>
+      <td>24</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:5%'></div><span>5%</span></div>
+      </td>
+      <td>16</td>
+      <td>9</td>
+      <td>65%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-23</td>
+      <td>2024-12-03</td>
+      <td>2024-02-05</td>
+      <td>2024-08-19</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0099</td>
+      <td>Feature 10</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 4</td>
+      <td>To implement: backend API development</td>
+      <td>7</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:50%'></div><span>50%</span></div>
+      </td>
+      <td>17</td>
+      <td>7</td>
+      <td>105%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-22</td>
+      <td>2024-06-19</td>
+      <td>2024-12-11</td>
+      <td>2024-07-19</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0100</td>
+      <td>Feature 11</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 5</td>
+      <td>To implement: backend API development</td>
+      <td>13</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:75%'></div><span>75%</span></div>
+      </td>
+      <td>19</td>
+      <td>4</td>
+      <td>96%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-14</td>
+      <td>2024-04-04</td>
+      <td>2024-06-08</td>
+      <td>2024-07-07</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>N/A</td>
+      <td>N/A</td>
+      <td>development-task-2.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0101</td>
+      <td>Feature 12</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 6</td>
+      <td>Backend API development</td>
+      <td>18</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:6%'></div><span>6%</span></div>
+      </td>
+      <td>22</td>
+      <td>10</td>
+      <td>98%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-01-01</td>
+      <td>2024-05-09</td>
+      <td>2024-02-16</td>
+      <td>2024-05-08</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0102</td>
+      <td>Feature 13</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 7</td>
+      <td>Backend API development</td>
+      <td>14</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:30%'></div><span>30%</span></div>
+      </td>
+      <td>8</td>
+      <td>4</td>
+      <td>122%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-22</td>
+      <td>2024-01-06</td>
+      <td>2024-06-11</td>
+      <td>2024-02-06</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0103</td>
+      <td>Feature 14</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 8</td>
+      <td>Backend API development</td>
+      <td>19</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:9%'></div><span>9%</span></div>
+      </td>
+      <td>18</td>
+      <td>5</td>
+      <td>73%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-06</td>
+      <td>2024-08-26</td>
+      <td>2024-03-10</td>
+      <td>2024-12-08</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0104</td>
+      <td>Feature 15</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 9</td>
+      <td>Backend API development</td>
+      <td>17</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:73%'></div><span>73%</span></div>
+      </td>
+      <td>7</td>
+      <td>9</td>
+      <td>102%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-16</td>
+      <td>2024-01-09</td>
+      <td>2024-07-04</td>
+      <td>2024-07-04</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0105</td>
+      <td>Feature 1</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 10</td>
+      <td>Backend API development</td>
+      <td>17</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:46%'></div><span>46%</span></div>
+      </td>
+      <td>11</td>
+      <td>5</td>
+      <td>72%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-01-02</td>
+      <td>2024-11-12</td>
+      <td>2024-04-09</td>
+      <td>2024-05-21</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0106</td>
+      <td>Feature 2</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 11</td>
+      <td>Backend API development</td>
+      <td>12</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:87%'></div><span>87%</span></div>
+      </td>
+      <td>11</td>
+      <td>5</td>
+      <td>112%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-12</td>
+      <td>2024-09-27</td>
+      <td>2024-07-03</td>
+      <td>2024-01-05</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0107</td>
+      <td>Feature 3</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 12</td>
+      <td>Backend API development</td>
+      <td>15</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:22%'></div><span>22%</span></div>
+      </td>
+      <td>6</td>
+      <td>8</td>
+      <td>100%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-11-27</td>
+      <td>2024-08-10</td>
+      <td>2024-11-06</td>
+      <td>2024-02-02</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0108</td>
+      <td>Feature 4</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 1</td>
+      <td>Backend API development</td>
+      <td>19</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:83%'></div><span>83%</span></div>
+      </td>
+      <td>24</td>
+      <td>7</td>
+      <td>52%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-01-07</td>
+      <td>2024-06-04</td>
+      <td>2024-05-05</td>
+      <td>2024-05-25</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0109</td>
+      <td>Feature 5</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 2</td>
+      <td>Backend API development</td>
+      <td>27</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:5%'></div><span>5%</span></div>
+      </td>
+      <td>20</td>
+      <td>7</td>
+      <td>64%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-16</td>
+      <td>2024-05-13</td>
+      <td>2024-06-22</td>
+      <td>2024-04-09</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0110</td>
+      <td>Feature 6</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 3</td>
+      <td>Backend API development</td>
+      <td>17</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:72%'></div><span>72%</span></div>
+      </td>
+      <td>13</td>
+      <td>11</td>
+      <td>88%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-01-14</td>
+      <td>2024-04-23</td>
+      <td>2024-01-12</td>
+      <td>2024-01-22</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0111</td>
+      <td>Feature 7</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 4</td>
+      <td>Backend API development</td>
+      <td>21</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:56%'></div><span>56%</span></div>
+      </td>
+      <td>20</td>
+      <td>8</td>
+      <td>79%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-04-09</td>
+      <td>2024-06-10</td>
+      <td>2024-06-08</td>
+      <td>2024-10-14</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0112</td>
+      <td>Feature 8</td>
+      <td><span class='badge p3'>P3</span></td>
+      <td>Development Engineer 5</td>
+      <td>Backend API development</td>
+      <td>34</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:40%'></div><span>40%</span></div>
+      </td>
+      <td>8</td>
+      <td>7</td>
+      <td>54%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-08-26</td>
+      <td>2024-06-22</td>
+      <td>2024-12-12</td>
+      <td>2024-07-22</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0113</td>
+      <td>Feature 9</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 6</td>
+      <td>Backend API development</td>
+      <td>22</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:68%'></div><span>68%</span></div>
+      </td>
+      <td>23</td>
+      <td>8</td>
+      <td>116%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-06-05</td>
+      <td>2024-06-28</td>
+      <td>2024-09-14</td>
+      <td>2024-06-03</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0114</td>
+      <td>Feature 10</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 7</td>
+      <td>Backend API development</td>
+      <td>19</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:57%'></div><span>57%</span></div>
+      </td>
+      <td>18</td>
+      <td>7</td>
+      <td>54%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-08</td>
+      <td>2024-04-01</td>
+      <td>2024-07-23</td>
+      <td>2024-06-20</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0115</td>
+      <td>Feature 11</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 8</td>
+      <td>Backend API development</td>
+      <td>13</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:29%'></div><span>29%</span></div>
+      </td>
+      <td>9</td>
+      <td>4</td>
+      <td>72%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-21</td>
+      <td>2024-07-26</td>
+      <td>2024-07-20</td>
+      <td>2024-01-18</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0116</td>
+      <td>Feature 12</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 9</td>
+      <td>Backend API development</td>
+      <td>26</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:61%'></div><span>61%</span></div>
+      </td>
+      <td>7</td>
+      <td>11</td>
+      <td>82%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-03-16</td>
+      <td>2024-09-25</td>
+      <td>2024-11-12</td>
+      <td>2024-05-23</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0117</td>
+      <td>Feature 13</td>
+      <td><span class='badge p2'>P2</span></td>
+      <td>Development Engineer 10</td>
+      <td>Backend API development</td>
+      <td>15</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:19%'></div><span>19%</span></div>
+      </td>
+      <td>23</td>
+      <td>12</td>
+      <td>79%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-05-06</td>
+      <td>2024-10-01</td>
+      <td>2024-01-25</td>
+      <td>2024-03-28</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0118</td>
+      <td>Feature 14</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 11</td>
+      <td>Backend API development</td>
+      <td>26</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:13%'></div><span>13%</span></div>
+      </td>
+      <td>24</td>
+      <td>5</td>
+      <td>74%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-12-12</td>
+      <td>2024-04-20</td>
+      <td>2024-11-07</td>
+      <td>2024-01-28</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0119</td>
+      <td>Feature 15</td>
+      <td><span class='badge p4'>P4</span></td>
+      <td>Development Engineer 12</td>
+      <td>Backend API development</td>
+      <td>7</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:48%'></div><span>48%</span></div>
+      </td>
+      <td>5</td>
+      <td>12</td>
+      <td>117%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-02-13</td>
+      <td>2024-08-21</td>
+      <td>2024-06-20</td>
+      <td>2024-10-13</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+    <tr>
+      <td>DEV-0120</td>
+      <td>Feature 1</td>
+      <td><span class='badge p1'>P1</span></td>
+      <td>Development Engineer 1</td>
+      <td>Backend API development</td>
+      <td>32</td>
+      <td>
+        <div class='progress-wrap'><div class='progress-bar' style='width:75%'></div><span>75%</span></div>
+      </td>
+      <td>24</td>
+      <td>12</td>
+      <td>90%</td>
+      <td>Java/React</td>
+      <td>Simple</td>
+      <td>2024-10-04</td>
+      <td>2024-01-16</td>
+      <td>2024-02-26</td>
+      <td>2024-01-11</td>
+      <td>None</td>
+      <td><span class='badge risk-low'>Low</span></td>
+      <td>≥80%</td>
+      <td>Performance targets met, no P1/P2 defects</td>
+      <td>development-task-3.xlsx</td>
+    </tr>
+    
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>
