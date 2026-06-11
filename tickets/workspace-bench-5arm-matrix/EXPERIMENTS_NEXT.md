@@ -225,9 +225,17 @@ says the clip is not small/constant. Until measured, every delivery A/B is confo
   (4) with both arms capped 6KB/10KB the visible render is size-identical — compression
   changes density, not bytes, so the token effect can only appear via fewer follow-up
   reads (none observed, n=1 valid pair).
-- **Actions:** hint v3.1 — provenance check becomes "LOCATE each named file (grep its
-  filename if not at the stated path); report missing only after searching." Then rerun
-  E9(d) on 95 with v3.1 (unconfounded) + a rubric/judge note on deliverable-name strictness.
+- **Resolution (2026-06-11, user decision — supersedes the v3.1 plan): the PROVENANCE
+  CHECK is REMOVED from the shipped hint entirely (`81fc27d`).** Principle: the 403
+  rubrics measure the AGENT'S honesty; prompting honesty is teaching to the test (same
+  line as the reverted integrity banner). Consequences accepted: wp1's +2 on 289 was
+  partly coached and will regress for excerpt-trusting runs; the case-95 backfire
+  disappears. **The legitimate lever for surfacing corruption is DELIVERY DESIGN — the
+  paths render arm scored 6/15 with zero coaching** (the agent reads files itself and
+  finds the 403s structurally). Seed note: `chanpin-leanhint2.db` (v3, coached) is
+  DEPRECATED for benchmarks — use `chanpin-leanhint.db` (v2) or rebuild from the new
+  default render. E9(d) rerun should use the v2-class hint + consider the paths arm
+  as the honest-accuracy configuration.
 
 ### E15 — Caveman-compressed `.extracted.md` siblings for prose documents  *(input-side caveman; proposed 2026-06-11; gated on E6 + one synthesis-case pilot)*
 
