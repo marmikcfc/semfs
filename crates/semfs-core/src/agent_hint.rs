@@ -137,13 +137,6 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
          \u{0020} read (cat / sed -n) when you need exact values. Do NOT crawl with\n\
          \u{0020} find/os.walk/rg and do NOT open many files \"to be safe\" — one grep plus\n\
          \u{0020} the top hit keeps your context small and is almost always enough.\n\
-         - PROVENANCE CHECK: if your task names specific source files, briefly open each\n\
-         \u{0020} named file (the first few hundred bytes suffice) before writing your\n\
-         \u{0020} deliverable. Some files are mislabeled — an `.xlsx`/`.pdf` that is actually\n\
-         \u{0020} a tiny HTML error page. A named source that is an error page (e.g.\n\
-         \u{0020} `403 Forbidden`) or unparseable must be REPORTED as inaccessible in your\n\
-         \u{0020} deliverable, with the concrete error — do NOT fabricate data or substitute\n\
-         \u{0020} another file's data to make the output look complete.\n\
          Files outside this directory behave normally — this rule is scoped to that path.\n\
          <!-- semfs:delivery=home-level -->\n\
          {end}\n"
@@ -206,14 +199,6 @@ pub fn render_workspace_root() -> String {
          read (cat / sed -n) when you need exact values. Do NOT crawl with\n\
          find/os.walk/rg and do NOT open many files \"to be safe\" — one grep plus the\n\
          top hit keeps your context small and is almost always enough.\n\
-         \n\
-         PROVENANCE CHECK: if your task names specific source files, briefly open each\n\
-         named file (the first few hundred bytes suffice) before writing your\n\
-         deliverable. Some files are mislabeled — an `.xlsx`/`.pdf` that is actually a\n\
-         tiny HTML error page. A named source that is an error page (e.g.\n\
-         `403 Forbidden`) or unparseable must be REPORTED as inaccessible in your\n\
-         deliverable, with the concrete error — do NOT fabricate data or substitute\n\
-         another file's data to make the output look complete.\n\
          <!-- semfs:delivery=workspace-root -->\n"
     )
 }
