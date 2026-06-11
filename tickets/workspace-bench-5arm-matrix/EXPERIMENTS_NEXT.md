@@ -111,6 +111,25 @@ says the clip is not small/constant. Until measured, every delivery A/B is confo
 
 ### E9 — Delivery-form duel: capped-inline vs two-tier vs path-first  *(tests O1 vs PwC's warning)*
 
+> **✅ WAVE 1 RUN (2026-06-11 night, case 289, leanhint2 seed, binary `2cd0a507`,
+> artifacts `matrix_artifacts/e9w1/`).** Code: `SEMFS_GREP_RENDER_MODE`
+> (inline|two-tier|paths) + `SEMFS_GREP_TOTAL_CAP` (global 10KB budget) — commit `a14bdbf`.
+>
+> | arm | runs (tokens/calls/score) | read |
+> |---|---|---|
+> | two-tier | 22.5K/2/4 · 93.9K/10/5 · 22.5K/2/⊘* | bimodality persists; render shrank 13.2KB→2.3KB; 2 of 3 runs floor-band |
+> | paths | **85.5K/7-8 calls/6/15 ×2 — clean, ±1K tokens** | most consistent arm ever measured; NO PwC collapse (SEARCH_ONLY=off gave it self-reads); natural provenance — the agent trips over the 403 stubs itself |
+>
+> *e9b3 deliverable byte-identical to e9b1's; judge parse-fails reproducibly (the `_1`
+> collection duplicate) — second member of the p1 unjudgeable class. Judge hardening
+> escalates.
+>
+> **Calibration bug found:** the confidence verdict said MIXED in every run — RRF-fused
+> similarity scores are range-compressed, so the relative top-vs-#2 margin never clears
+> 15%. The HIGH stop-signal path is UNTESTED. Wave 2: spread-normalized margin
+> `(s1−s2)/(s1−sN)` + gate HIGH on the top hit being COMPLETE FILE; rerun two-tier ×3.
+> **E14 (slice) is unblocked** by paths' no-collapse result.
+
 - **Arms (same scout stack otherwise):** (a) inline 6KB (E8 default); (b) two-tier
   (top-1 hit ~800B excerpt + paths for 2–5 + stop-signal line); (c) path-first 1KB
   (paths + 1-line snippets only — the C1 pure form); (d) **caveman-compressed excerpts**
