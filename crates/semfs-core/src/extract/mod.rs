@@ -172,6 +172,35 @@ pub async fn extract_text(filepath: &str, bytes: &[u8]) -> Option<String> {
     result
 }
 
+/// Raw flattened-cell text for a spreadsheet, for materializing the
+/// `.extracted.md` sibling. With summary-augmented indexing, `extract_text`
+/// returns a per-sheet *summary* for xlsx so retrieval embeds prose, not
+/// number-noise — but the agent must read the actual rows to compute answers.
+/// So the sibling holds the raw table, not the summary (summary FINDS, table
+/// ANSWERS). The join mirrors the no-key raw-cell representation, so a
+/// summary-seed sibling reads identically to a raw-seed sibling.
+///
+/// Returns `None` for non-spreadsheet bytes; the caller then falls back to the
+/// indexed text, which for those formats already IS the real extracted text.
+pub fn raw_table_for_sibling(bytes: &[u8]) -> Option<String> {
+    match sniff(bytes) {
+        DocFormat::Xlsx | DocFormat::Xls => {
+            let sheets = spreadsheet::extract_sheets(bytes);
+            if sheets.is_empty() {
+                return None;
+            }
+            Some(
+                sheets
+                    .iter()
+                    .map(|s| s.text.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        }
+        _ => None,
+    }
+}
+
 /// Whether the opt-in VLM-describe fallback is enabled (`SEMFS_VLM_DESCRIBE`).
 /// Off by default: it adds vision-API cost and indexes descriptions rather than
 /// source text, so it's a deliberate per-run choice.

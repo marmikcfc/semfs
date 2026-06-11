@@ -412,6 +412,33 @@ fn present_excerpt(content: &str, chunk: &str) -> (bool, Option<String>) {
     }
 }
 
+/// Hard per-hit render ceiling. The daemon's `search` truncates to `result_limit()`,
+/// but a SINGLE hit's inlined text can still be huge — a mislabeled large doc (e.g. a
+/// 140 KB "xlsx" that is really a report) inlined whole floods the agent's multi-turn
+/// context, the dominant token sink (a broad grep returned ~300 KB uncapped). Cap the
+/// printed text per hit on a UTF-8 boundary; the full file is still on the mount if the
+/// agent needs the rest. Override with `SEMFS_GREP_RESULT_CAP` (bytes; 0/unset → 6 KB).
+fn grep_result_cap() -> usize {
+    std::env::var("SEMFS_GREP_RESULT_CAP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(6 * 1024)
+}
+
+/// Truncate `s` to the render cap on a char boundary. Returns `(text, truncated?)`.
+fn cap_render(s: &str) -> (String, bool) {
+    let cap = grep_result_cap();
+    if s.len() <= cap {
+        return (s.to_string(), false);
+    }
+    let mut end = cap.min(s.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (s[..end].to_string(), true)
+}
+
 fn line_range_in_file(file_content: &str, chunk: &str) -> Option<(usize, usize)> {
     if chunk.is_empty() {
         return None;
@@ -787,11 +814,18 @@ pub async fn run(args: Args) -> Result<()> {
         let fp = result.filepath.as_deref().unwrap_or("(unknown)");
 
         if let Some(memory) = result.memory.as_deref() {
-            let escaped = memory
+            let (capped, trunc) = cap_render(memory);
+            let escaped = capped
                 .replace('\\', "\\\\")
                 .replace('\n', "\\n")
                 .replace('\r', "\\r");
             println!("{}:{}", fp, escaped);
+            if trunc {
+                println!(
+                    "# ^ TRUNCATED — large file; first {} KB of extracted text shown. Open the file for the rest.",
+                    grep_result_cap() / 1024
+                );
+            }
             continue;
         }
 
@@ -815,15 +849,23 @@ pub async fn run(args: Args) -> Result<()> {
         // never opens or parses the binary. Skips the FUSE read entirely.
         if is_binary_ext(fp) {
             if let Some(text) = grep_db.as_ref().and_then(|db| db.get_extracted_text(fp)) {
-                let lines = text.lines().count().max(1);
-                let escaped = text
+                let (capped, trunc) = cap_render(&text);
+                let lines = capped.lines().count().max(1);
+                let escaped = capped
                     .replace('\\', "\\\\")
                     .replace('\n', "\\n")
                     .replace('\r', "\\r");
                 println!("{}:1-{}:{}", fp, lines, escaped);
-                println!(
-                    "# ^ COMPLETE FILE — excerpt above is this file's entire content; use it directly, do not open it."
-                );
+                if trunc {
+                    println!(
+                        "# ^ TRUNCATED — large file; first {} KB of extracted text shown. Open the file for the rest.",
+                        grep_result_cap() / 1024
+                    );
+                } else {
+                    println!(
+                        "# ^ COMPLETE FILE — excerpt above is this file's entire content; use it directly, do not open it."
+                    );
+                }
                 continue;
             }
         }
@@ -879,9 +921,10 @@ pub async fn run(args: Args) -> Result<()> {
         };
 
         // Print the full file when promoted to inline; otherwise the matched chunk.
-        let escaped = inline_full
-            .as_deref()
-            .unwrap_or(chunk)
+        // Cap the rendered text (a single huge inlined doc is the dominant token sink).
+        let raw = inline_full.as_deref().unwrap_or(chunk);
+        let (capped, trunc) = cap_render(raw);
+        let escaped = capped
             .replace('\\', "\\\\")
             .replace('\n', "\\n")
             .replace('\r', "\\r");
@@ -895,7 +938,13 @@ pub async fn run(args: Args) -> Result<()> {
         } else {
             println!("{}:{}", fp, escaped);
         }
-        if complete_file {
+        if trunc {
+            // Truncated → the excerpt is NOT the whole file; tell the agent honestly.
+            println!(
+                "# ^ TRUNCATED — large excerpt; first {} KB shown. Open the file for the rest.",
+                grep_result_cap() / 1024
+            );
+        } else if complete_file {
             // Parse-safe comment: tells the agent the excerpt is the whole file —
             // copy it directly; no need to open the file or crawl to verify.
             println!(

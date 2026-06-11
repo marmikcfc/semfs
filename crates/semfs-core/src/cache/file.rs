@@ -330,8 +330,16 @@ impl crate::vfs::File for SqliteFile {
                             // Either way we index the text below.
                             Some(text) => {
                                 if extract_sibling_enabled() {
+                                    // Dual-store: the index embeds `text` (a per-sheet
+                                    // summary for xlsx), but the readable sibling must
+                                    // hold the RAW table so the agent answers from
+                                    // ground truth (summary FINDS, table ANSWERS). For
+                                    // non-spreadsheets `text` already IS the extracted
+                                    // text, so fall back to it.
+                                    let sibling = crate::extract::raw_table_for_sibling(&bytes)
+                                        .unwrap_or_else(|| text.clone());
                                     if let Err(e) =
-                                        self.db.upsert_extracted_sibling(filepath, &text)
+                                        self.db.upsert_extracted_sibling(filepath, &sibling)
                                     {
                                         tracing::warn!(
                                             filepath,

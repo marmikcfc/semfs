@@ -121,10 +121,15 @@ async fn build_local_indexer(
                 Ok(None) => {}
                 Err(e) => eprintln!("reranker unavailable ({e}); RRF-only ranking"),
             }
-            // L7: attach the entity-graph extractor when an LLM is available.
-            if let Some(llm) = crate::cmd::resolve::build_llm(env) {
-                store = store.with_graph_extractor(Arc::new(llm));
-                eprintln!("entity-graph extraction enabled (L7)");
+            // L7: attach the entity-graph extractor when an LLM is available AND KG is
+            // enabled. Gating on KG (not just the key) lets a summary-only re-seed set
+            // SEMFS_KG=off to skip the slow, often-failing per-file L7 OpenRouter calls
+            // while still using OPENROUTER_API_KEY for table summaries.
+            if semfs_core::cache::graph_file::kg_enabled() {
+                if let Some(llm) = crate::cmd::resolve::build_llm(env) {
+                    store = store.with_graph_extractor(Arc::new(llm));
+                    eprintln!("entity-graph extraction enabled (L7)");
+                }
             }
             let store = Arc::new(store);
             Ok((store.clone(), store))

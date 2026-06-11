@@ -100,28 +100,26 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
     } else {
         String::new()
     };
+    // KG-on: name the kg/ files but never command reading them first — the
+    // WB E-runs measured a hint-commanded turn-1 KG read as the dominant token
+    // sink (35.7K read + crawl cascade; see tickets/workspace-bench-5arm-matrix).
     let kg_line = if crate::cache::graph_file::kg_enabled() {
         format!(
-            "It maintains a whole-workspace KNOWLEDGE GRAPH in `{path_str}/kg/`, plus\n\
-             semantic search. Prefer reading ONE small kg/ file over crawling files\n\
-             (it is faster and keeps your context small and clean). The kg/ files:\n\
-             \u{0020} - `kg/KNOWLEDGE_GRAPH.md` — compact orientation: topic clusters\n\
-             \u{0020}   (communities) with key entities + the dir map. Read this FIRST.\n\
-             \u{0020} - `kg/GRAPH_REPORT.md` — deeper map: god-node concepts, typed\n\
-             \u{0020}   relations, surprising connections, KNOWLEDGE GAPS (incl. any\n\
-             \u{0020}   inaccessible / error-page source files), and suggested questions.\n\
-             \u{0020} - `kg/graph.json` — the full queryable graph (nodes + typed edges);\n\
-             \u{0020}   parse it only when you need exact relations, not for orientation.\n\
-             \u{0020} All three auto-update as files are added or removed.\n\
+            "A knowledge-graph summary lives in `{path_str}/kg/` —\n\
+             \u{0020} `kg/KNOWLEDGE_GRAPH.md` (topic clusters + dir map), `kg/GRAPH_REPORT.md`\n\
+             \u{0020} (typed relations + knowledge gaps, incl. inaccessible / error-page source\n\
+             \u{0020} files), `kg/graph.json` (the full graph). Read kg/ files ONLY when the task\n\
+             \u{0020} needs whole-workspace orientation; for any specific question go straight to\n\
+             \u{0020} `semfs grep` — do not read kg/ first.\n\
              {graph_fs_line}\
-             - To FIND content, use semantic search instead of grep/rg/find/os.walk:\n"
+             - To FIND content, run ONE semantic search and read its top result:\n"
         )
     } else {
         format!(
             "It answers semantic search over its contents.\n\
              \n\
              {graph_fs_line}\
-             - To FIND content, use semantic search instead of grep/rg/find/os.walk:\n"
+             - To FIND content, run ONE semantic search and read its top result:\n"
         )
     };
     format!(
@@ -130,18 +128,22 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
          The directory `{path_str}/` is a dynamic semantic index (Supermemory mount).\n\
          {kg_line}\
          \n\
-         \u{0020}   semfs grep \"<natural language query>\" {path_str}/\n\
+         \u{0020}   semfs grep \"<2-4 key terms, in the corpus language>\" {path_str}/\n\
          \n\
-         \u{0020} It returns ranked, semantically relevant excerpts via a vector index.\n\
-         \u{0020} The excerpt IS the content — trust it; do not re-open or crawl to verify.\n\
-         \u{0020} A result line marked `# ^ COMPLETE FILE` is the whole file — copy it as-is.\n\
-         - Some files are mislabeled (e.g. an `.xlsx`/`.pdf` that is actually a tiny HTML\n\
-         \u{0020} error page). If parsing a file fails once, do NOT retry other parsers or\n\
-         \u{0020} unzip it — `cat` it once to see what it is, or just trust the grep excerpt.\n\
-         - If a source a task needs is inaccessible or corrupt (a `SOURCE INACCESSIBLE`\n\
-         \u{0020} note, or an HTTP error page like `403 Forbidden`), REPORT that fact in your\n\
-         \u{0020} deliverable — state the concrete error — and do NOT fabricate data or\n\
-         \u{0020} substitute a different file's data to make the output look complete.\n\
+         \u{0020} It returns ranked excerpts. The top hit is usually the file you need: the\n\
+         \u{0020} result names WHICH file, the excerpt shows its content. A line marked\n\
+         \u{0020} `# ^ COMPLETE FILE` is that file's entire content — use it directly. A line\n\
+         \u{0020} marked `# ^ TRUNCATED` means more exists: open THAT one file with a normal\n\
+         \u{0020} read (cat / sed -n) when you need exact values. Do NOT crawl with\n\
+         \u{0020} find/os.walk/rg and do NOT open many files \"to be safe\" — one grep plus\n\
+         \u{0020} the top hit keeps your context small and is almost always enough.\n\
+         - PROVENANCE CHECK: if your task names specific source files, briefly open each\n\
+         \u{0020} named file (the first few hundred bytes suffice) before writing your\n\
+         \u{0020} deliverable. Some files are mislabeled — an `.xlsx`/`.pdf` that is actually\n\
+         \u{0020} a tiny HTML error page. A named source that is an error page (e.g.\n\
+         \u{0020} `403 Forbidden`) or unparseable must be REPORTED as inaccessible in your\n\
+         \u{0020} deliverable, with the concrete error — do NOT fabricate data or substitute\n\
+         \u{0020} another file's data to make the output look complete.\n\
          Files outside this directory behave normally — this rule is scoped to that path.\n\
          <!-- semfs:delivery=home-level -->\n\
          {end}\n"
@@ -156,18 +158,15 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
 /// it regardless of `$HOME`, so it does not depend on the home-dir global hint
 /// reaching the agent's environment.
 pub fn render_workspace_root() -> String {
+    // KG-on: name the kg/ files but never command reading them first — the
+    // WB E-runs measured a hint-commanded turn-1 KG read as the dominant token
+    // sink (35.7K read + crawl cascade; see tickets/workspace-bench-5arm-matrix).
     let kg_section = if crate::cache::graph_file::kg_enabled() {
-        "It maintains a whole-workspace KNOWLEDGE GRAPH in `kg/`, plus semantic search.\n\
-         Prefer reading ONE small kg/ file over crawling files (faster; keeps your\n\
-         context small and clean):\n\
-         \n\
-         - `kg/KNOWLEDGE_GRAPH.md` — compact orientation: topic clusters (communities)\n\
-         \u{0020} with key entities + the dir map. Read this FIRST.\n\
-         - `kg/GRAPH_REPORT.md` — deeper map: god-node concepts, typed relations,\n\
-         \u{0020} surprising connections, KNOWLEDGE GAPS (incl. any inaccessible /\n\
-         \u{0020} error-page source files), and suggested questions.\n\
-         - `kg/graph.json` — the full queryable graph (nodes + typed edges); parse it\n\
-         \u{0020} only when you need exact relations, not for orientation.\n\
+        "A knowledge-graph summary lives in `kg/` — `kg/KNOWLEDGE_GRAPH.md` (topic\n\
+         clusters + dir map), `kg/GRAPH_REPORT.md` (typed relations + knowledge gaps,\n\
+         incl. inaccessible / error-page source files), `kg/graph.json` (the full\n\
+         graph). Read kg/ files ONLY when the task needs whole-workspace orientation;\n\
+         for any specific question go straight to `semfs grep` — do not read kg/ first.\n\
          \n"
     } else {
         "It answers semantic search over its contents.\n\n"
@@ -196,19 +195,25 @@ pub fn render_workspace_root() -> String {
          \n\
          {kg_section}\
          {graph_section}\
-         To FIND content, use semantic search instead of grep/rg/find/os.walk:\n\
+         To FIND content, run ONE semantic search and read its top result:\n\
          \n\
-         \u{0020}   semfs grep \"<natural language query>\" .\n\
+         \u{0020}   semfs grep \"<2-4 key terms, in the corpus language>\" .\n\
          \n\
-         The excerpt IS the content — trust it; do not re-open or crawl to verify. A\n\
-         result line marked `# ^ COMPLETE FILE` is the whole file — copy it as-is.\n\
-         Some files are mislabeled (e.g. an `.xlsx`/`.pdf` that is actually a tiny HTML\n\
-         error page). If parsing a file fails once, do NOT retry other parsers or unzip\n\
-         it — `cat` it once to see what it is, or just trust the grep excerpt.\n\
-         If a source a task needs is inaccessible or corrupt (a `SOURCE INACCESSIBLE`\n\
-         note, or an HTTP error page like `403 Forbidden`), REPORT that fact in your\n\
-         deliverable — state the concrete error — and do NOT fabricate data or\n\
-         substitute a different file's data to make the output look complete.\n\
+         It returns ranked excerpts. The top hit is usually the file you need: the\n\
+         result names WHICH file, the excerpt shows its content. A line marked\n\
+         `# ^ COMPLETE FILE` is that file's entire content — use it directly. A line\n\
+         marked `# ^ TRUNCATED` means more exists: open THAT one file with a normal\n\
+         read (cat / sed -n) when you need exact values. Do NOT crawl with\n\
+         find/os.walk/rg and do NOT open many files \"to be safe\" — one grep plus the\n\
+         top hit keeps your context small and is almost always enough.\n\
+         \n\
+         PROVENANCE CHECK: if your task names specific source files, briefly open each\n\
+         named file (the first few hundred bytes suffice) before writing your\n\
+         deliverable. Some files are mislabeled — an `.xlsx`/`.pdf` that is actually a\n\
+         tiny HTML error page. A named source that is an error page (e.g.\n\
+         `403 Forbidden`) or unparseable must be REPORTED as inaccessible in your\n\
+         deliverable, with the concrete error — do NOT fabricate data or substitute\n\
+         another file's data to make the output look complete.\n\
          <!-- semfs:delivery=workspace-root -->\n"
     )
 }
