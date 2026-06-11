@@ -153,7 +153,10 @@ words (`followup_iteration_report.*` — six independent runs converged on it); 
 then depends on the judge instance: lenient → grades content (11/12, 12/12), strict →
 zeroes everything on the name (four 0/12s tonight from agents that wrote real reports).
 Second mismatch: task says "desktop", harness convention is `model_output/`.
-**The clincher:** v4_i1 and v4_i2 — identical config, identical seed, identical
+**Final clean-hint (v4.1) table:** v4_i1 206K/14 calls/0 · **v4_i2 164K/17/12 — first
+local perfect score** · v4_p1 424K/32/0 · v4_p2 163K/16/0. Three of four wrote real
+reports under the task-derived name; one judge instance graded content, three enforced
+the name. **The clincher:** v4_i1 and v4_i2 — identical config, identical seed, identical
 deliverable filename (`followup_iteration_report.md`) — scored **0/12 and 12/12**.
 v4_i2 is also the first local PERFECT score on 95 (matches cloud's all-time best),
 achieved under the fully de-tuned v4.1 hint with zero coaching.
