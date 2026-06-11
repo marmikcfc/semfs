@@ -205,6 +205,30 @@ says the clip is not small/constant. Until measured, every delivery A/B is confo
   tokens — the first floor-adjacent run (TOKEN_ECONOMY §1.3).
 - **Cost:** the only real code investment on this list; scope after E9.
 
+### E9(d) — query-time compression pilot  *(✅ RUN 2026-06-11 night — mechanism PROVEN, bench CONFOUNDED, major hint bug found)*
+
+- **Code shipped:** `SEMFS_GREP_COMPRESS=on` (+`_MIN`, `SEMFS_COMPRESS_MODEL`) — render-time
+  caveman compression of prose excerpts via OpenRouter, spreadsheets+siblings exempt,
+  honest `COMPRESSED RENDITION` marker, fail-open; hooks on ALL render sites incl. the
+  daemon `memory` path (where local hits actually flow). **The LLM cost bills to semfs's
+  key — the agent's context (and the benchmark token metric) never sees it.**
+- **Smoke (mounted seed, same query ±compress):** render 158.7KB → 62.5KB (**−61%**);
+  per-excerpt −15% to −70%; **25/25 salient numbers preserved**; spreadsheets untouched.
+- **Bench A/B (case 95 ×2×2): CONFOUNDED — not a compression result.**
+  c1 11/12@105K (best local 95 ever) · x1 0/12@128K · c2 0/12@75K · x2 0/12@86K.
+  Forensics: (1) x2 never compressed anything (no eligible hits) and still scored 0 —
+  zeros are arm-independent; (2) the zeros' agents declared the task-named
+  `description_N.txt` files MISSING (they exist, elsewhere) — **hint v3's provenance
+  check backfires when named files aren't at the guessed path**: the agent obeys
+  "report inaccessible, don't substitute" and writes a missing-sources memo (0/12);
+  (3) judge filename-strictness inconsistent (c1's accepted name = x1's rejected name);
+  (4) with both arms capped 6KB/10KB the visible render is size-identical — compression
+  changes density, not bytes, so the token effect can only appear via fewer follow-up
+  reads (none observed, n=1 valid pair).
+- **Actions:** hint v3.1 — provenance check becomes "LOCATE each named file (grep its
+  filename if not at the stated path); report missing only after searching." Then rerun
+  E9(d) on 95 with v3.1 (unconfounded) + a rubric/judge note on deliverable-name strictness.
+
 ### E15 — Caveman-compressed `.extracted.md` siblings for prose documents  *(input-side caveman; proposed 2026-06-11; gated on E6 + one synthesis-case pilot)*
 
 > Distinct from the parked E12: E12 compresses what the agent *writes* (output stream);
