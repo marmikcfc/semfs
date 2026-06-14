@@ -1,0 +1,24 @@
+{
+  "kg": {
+    "status": "ok",
+    "tokens": 431443,
+    "calls": 12,
+    "used_semfs_grep": true,
+    "deliverables": [
+      "project_dependency_deduplication_list.md"
+    ],
+    "auth_used": "openrouter",
+    "wall_s": 182
+  },
+  "nokg": {
+    "status": "ok",
+    "tokens": 372446,
+    "calls": 10,
+    "used_semfs_grep": true,
+    "deliverables": [
+      "project_dependency_deduplication_list.md"
+    ],
+    "auth_used": "openrouter",
+    "wall_s": 167
+  }
+}

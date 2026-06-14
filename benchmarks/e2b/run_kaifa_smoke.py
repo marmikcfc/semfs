@@ -50,8 +50,11 @@ def main():
         sh(sbx, "sudo cp /home/user/ClaudeCode.js /opt/wb/evaluation/baselines/ClaudeCode.js")
         sbx.files.write(f"/home/user/cases/{CASE}.task", TASK.read_text())
         print("  uploading kaifa seed (35 MB gz)…", flush=True)
+        # Keep the .gz so each arm can restore a PRISTINE seed: refresh_knowledge_graph
+        # persists the /kg/ siblings INTO the seed DB on the KG-on mount, so reusing
+        # one seed file would leak /kg/ into the KG-off arm. Re-expand per arm.
         sbx.files.write("/home/user/.semfs/kaifa.db.gz", SEED_GZ.read_bytes())
-        o, e = sh(sbx, "gunzip -f /home/user/.semfs/kaifa.db.gz && ls -la /home/user/.semfs/kaifa.db", timeout=180)
+        o, e = sh(sbx, "gunzip -kf /home/user/.semfs/kaifa.db.gz && ls -la /home/user/.semfs/kaifa.db", timeout=180)
         print("  seed:", o.strip()[-120:], flush=True)
         rg_out, _ = sh(sbx, "( find /opt/wb -path '*ripgrep*linux*/rg' 2>/dev/null; command -v rg; echo rg ) | head -5")
         real_rg = next((l.strip() for l in rg_out.splitlines() if l.strip()), "rg")
@@ -63,6 +66,9 @@ def main():
             # unmount any prior mount, then (re)mount the SAME seed toggling SEMFS_KG
             sh(sbx, "semfs unmount kaifa --force 2>/dev/null; "
                     "fusermount -u /home/user/ws/mnt 2>/dev/null; sleep 2", timeout=60)
+            # Restore a PRISTINE seed so /kg/ siblings written by a prior (KG-on)
+            # mount don't leak into this arm — clean KG-on vs KG-off isolation.
+            sh(sbx, "gunzip -kf /home/user/.semfs/kaifa.db.gz", timeout=120)
             menv = {"SEMFS_EMBED_MODEL": "gemma-q4", "SEMFS_EMBED_ONNX_DIR": "/home/user/gemma_q4",
                     "SUPERMEMORY_API_KEY": "dummy-local", "SEMFS_NO_PUSH": "1",
                     "SEMFS_NO_SYNC": "1", "SEMFS_SEARCH_ONLY": "on"}
