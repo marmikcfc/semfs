@@ -253,6 +253,11 @@ fn main() -> anyhow::Result<()> {
     n_rel += n_code_rel;
 
     tx.commit()?;
+
+    // Materialize the Louvain community projection (graph_community/graph_god_node)
+    // — the form the `/kg/` overlay + KNOWLEDGE_GRAPH.md digest read from. The
+    // mount can't run Louvain per `ls`, so it must be persisted here.
+    semfs_core::cache::graph_file::materialize_projection(&conn)?;
     let distinct_ent: i64 = conn.query_row("SELECT COUNT(*) FROM graph_entity", [], |r| r.get(0))?;
     let distinct_rel: i64 = conn.query_row("SELECT COUNT(*) FROM graph_relation", [], |r| r.get(0))?;
     println!(
