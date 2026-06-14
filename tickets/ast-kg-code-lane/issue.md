@@ -129,14 +129,20 @@ Modal.** Modal builds the seed; **E2B runs the agent** against it via a real `se
 
 ## 6. Prerequisites / known gaps
 
-- [ ] **Stage `kaifa` corpus** → `/data/corpus/kaifa_standard` (absent today; acquire from
-      WB-Full / HF). Blocks both build and run.
-- [ ] **Add GPU** to the Modal seed-build function (`gpu="A10G"` or `"A100"`) + ensure the
-      `ort` build uses the CUDA execution provider.
-- [ ] **AST lane implementation** (§3) — the core feature.
+- [x] **Stage `kaifa` corpus** — already on the Modal volume at
+      `/data/wb/evaluation/filesys/kaifa_standard` (+ `kaifa_raw`). No HF download needed.
+- [x] **AST lane implementation** (§3) — DONE 2026-06-14. `backend/graph_ast.rs`
+      (parse_file + resolve, 14 grammars, full ontology) + `build_kg` dual lane +
+      `seed_dir` indexer. Unit + E2E tests green. See `DESIGN.md`.
+- [x] **Seed build on Modal** — `build_kaifa_seed` (orchestration-only) =
+      `seed_dir` (gemma-q4 ONNX) → coverage gate → `build_kg` dual lane → commit
+      `kaifa-gemma-q4.db`. Run with `SEMFS_SEED_ONLY=1 modal run …::build_kaifa_seed`.
+- [ ] **GPU acceleration** — currently CPU (fastembed's prebuilt ONNX runtime is CPU).
+      `gpu="A10G"` needs an `ort` CUDA-EP build; deferred (correctness first). Follow-up.
 - [ ] Build a **KG-on E2B arm** so the code graph is actually exercised (current matrix is
-      KG-off `nokg`).
-- [ ] Confirm the gemma seed warms to ~100% (`seed_complete.sh`) — avoid the <50% bug.
+      KG-off `nokg`). Follow-up (HARD RULE: the benchmark runs on E2B, not Modal).
+- [x] Confirm the gemma seed warms to ~100% — `seed_dir` indexes synchronously, so the
+      <50% incomplete-warm bug doesn't apply; `build_kaifa_seed` prints a coverage gate.
 
 ## 7. Open design questions (resolve in brainstorm before coding)
 
