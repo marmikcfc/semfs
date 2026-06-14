@@ -84,15 +84,23 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
-        match rt.block_on(extract_text(&vpath, &bytes)) {
-            Some(text) if !text.trim().is_empty() => {
+        // extract_text handles only BINARY doc formats (docx/pptx/xlsx/pdf/img)
+        // and returns None for plain-text/code (sniffed as Unknown). The mount
+        // daemon indexes those raw, so we do too: fall back to raw UTF-8 — this
+        // is the path that covers .py/.java/.ts/.go/.md/.json/.yaml/… code+docs.
+        let text = match rt.block_on(extract_text(&vpath, &bytes)) {
+            Some(t) if !t.trim().is_empty() => Some(t),
+            _ => String::from_utf8(bytes.clone()).ok().filter(|s| !s.trim().is_empty()),
+        };
+        match text {
+            Some(text) => {
                 if store.index(i as u64 + 1, &vpath, &text).is_ok() {
                     ok += 1;
                 } else {
                     err += 1;
                 }
             }
-            _ => empty += 1, // unsupported / no text layer (e.g. image, scanned pdf)
+            None => empty += 1, // true binary with no extractor (e.g. image, scanned pdf)
         }
         if (i + 1) % 100 == 0 {
             println!("  {}/{} ({ok} indexed)", i + 1, files.len());

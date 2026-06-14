@@ -384,6 +384,25 @@ def smoke_grep() -> dict:
 
 
 @app.function(image=image, volumes={VOL: data_volume}, timeout=300)
+def inspect_corpora() -> dict:
+    """Diagnostic: file counts for candidate corpus roots + box reachability,
+    to locate the kaifa workspace (volume dirs may be empty placeholders)."""
+    import glob
+    roots = sorted(
+        glob.glob(f"{VOL}/wb/evaluation/filesys/*")
+        + glob.glob(f"{VOL}/corpus/*")
+    )
+    counts = {}
+    for r in roots:
+        if os.path.isdir(r):
+            n = int(_sh(f"find {r} -type f 2>/dev/null | wc -l").stdout.strip() or "0")
+            counts[r.replace(VOL, "")] = n
+    out = {"file_counts": counts}
+    print(json.dumps(out, indent=2))
+    return out
+
+
+@app.function(image=image, volumes={VOL: data_volume}, timeout=300)
 def volume_status() -> dict:
     """Check whether the shared volume has the assets needed for the smoke."""
     paths = {
@@ -416,7 +435,14 @@ def build_kaifa_seed(corpus_name: str = "kaifa_standard", out_name: str = "kaifa
                        source files + LLM `extract_graph` for docs.
       4. commit      : persist `kaifa-gemma-q4.db` to /data/seeds.
     """
-    corpus = f"{VOL}/wb/evaluation/filesys/{corpus_name}"
+    # Resolve the corpus under the known roots (WB filesys workspaces or the
+    # pulled /corpus seeds). Accepts a bare name or an absolute path.
+    candidates = (
+        [corpus_name]
+        if corpus_name.startswith("/")
+        else [f"{VOL}/wb/evaluation/filesys/{corpus_name}", f"{VOL}/corpus/{corpus_name}"]
+    )
+    corpus = next((c for c in candidates if os.path.isdir(c)), candidates[0])
     assert os.path.isdir(corpus), f"corpus not staged on volume: {corpus}"
     assert os.path.isdir(f"{VOL}/models/gemma_q4"), "gemma_q4 ONNX missing on volume"
     out_db = f"{VOL}/seeds/{out_name}"
