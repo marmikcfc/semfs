@@ -440,9 +440,12 @@ def build_kaifa_seed(corpus_name: str = "kaifa_standard", out_name: str = "kaifa
     candidates = (
         [corpus_name]
         if corpus_name.startswith("/")
-        else [f"{VOL}/wb/evaluation/filesys/{corpus_name}", f"{VOL}/corpus/{corpus_name}"]
+        else [f"{VOL}/corpus/{corpus_name}", f"{VOL}/wb/evaluation/filesys/{corpus_name}"]
     )
-    corpus = next((c for c in candidates if os.path.isdir(c)), candidates[0])
+    # Prefer a NON-EMPTY dir (the WB filesys placeholders exist but are empty).
+    def _nonempty(d: str) -> bool:
+        return os.path.isdir(d) and int(_sh(f"find {d} -type f 2>/dev/null | head -1 | wc -l").stdout.strip() or "0") > 0
+    corpus = next((c for c in candidates if _nonempty(c)), candidates[0])
     assert os.path.isdir(corpus), f"corpus not staged on volume: {corpus}"
     assert os.path.isdir(f"{VOL}/models/gemma_q4"), "gemma_q4 ONNX missing on volume"
     out_db = f"{VOL}/seeds/{out_name}"
