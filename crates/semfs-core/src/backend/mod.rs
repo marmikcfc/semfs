@@ -6,6 +6,7 @@ pub(crate) mod cloud;
 pub mod chunk;
 pub mod community;
 pub mod graph;
+pub mod graph_ast;
 #[cfg(feature = "pg")]
 pub mod pgvector;
 pub mod rank;

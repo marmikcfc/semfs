@@ -65,6 +65,22 @@ pdf-extract = "0.7"
 # Temp file/dir for the headless-LibreOffice extract fallback (private per-call
 # UserInstallation profile + convert-to output dir); Drop-cleaned. Also used by tests.
 tempfile = "3"
+tree-sitter = "0.25"
+tree-sitter-language = "0.1"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-scala = "0.26"
+tree-sitter-php = "0.24"
+tree-sitter-kotlin-ng = "1"
+streaming-iterator = "0.1"
 
 # Mount backends — target-gated (M3a)
 # nfsserve compiles on both macOS and Linux (pure Rust).
