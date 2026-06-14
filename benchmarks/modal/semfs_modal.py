@@ -53,6 +53,21 @@ SEMFS_LOCAL_REF = (
 
 app = modal.App("semfs-bench")
 
+# Modal hydrates EVERY function's secrets when the app loads, so the agent-run
+# functions' `claude`/`codex-auth` secrets must exist even to run an unrelated
+# function (e.g. build_kaifa_seed). `SEMFS_SEED_ONLY=1` drops the agent secrets
+# at load time so the seed build runs in an environment that only has
+# `openrouter`. Real agent runs leave it unset and require the real secrets.
+_SEED_ONLY = os.environ.get("SEMFS_SEED_ONLY") == "1"
+
+
+def _agent_secrets(*names: str) -> list:
+    """openrouter + the named agent secrets, unless SEMFS_SEED_ONLY drops them."""
+    secrets = [modal.Secret.from_name("openrouter")]
+    if not _SEED_ONLY:
+        secrets += [modal.Secret.from_name(n) for n in names]
+    return secrets
+
 data_volume = modal.Volume.from_name("semfs-bench-data", create_if_missing=True)
 VOL = "/data"  # volume mountpoint: /data/{seeds,corpus,models,wb,codex}
 CANONICAL_SEED_DB = "chanpin-gemma-q4.db"
@@ -414,6 +429,7 @@ def build_kaifa_seed(corpus_name: str = "kaifa_standard", out_name: str = "kaifa
     )
 
     n_corpus = int(_sh(f"find {corpus} -type f | wc -l").stdout.strip() or "0")
+    assert n_corpus > 0, f"corpus {corpus} has no files (try corpus_name=kaifa_raw)"
     print(f"== seed_dir: indexing {n_corpus} files from {corpus} ==")
     r_seed = _sh(f"seed_dir {out_db} {corpus} 2>&1", env=env, timeout=3000)
     print(r_seed.stdout[-2000:])
@@ -611,7 +627,7 @@ def _load_claude_harness():
 
 
 @app.function(image=image, volumes={VOL: data_volume},
-              secrets=[modal.Secret.from_name("openrouter"), modal.Secret.from_name("codex-auth")],
+              secrets=_agent_secrets("codex-auth"),
               timeout=3600, cpu=4, memory=8192)
 def run_case(case: str = "289", label: str = "modal1",
              render_mode: str = "inline", extra_env: str = "",
@@ -817,7 +833,7 @@ def run_case(case: str = "289", label: str = "modal1",
 
 
 @app.function(image=image, volumes={VOL: data_volume},
-              secrets=[modal.Secret.from_name("openrouter"), modal.Secret.from_name("claude")],
+              secrets=_agent_secrets("claude"),
               timeout=3600, cpu=4, memory=8192)
 def run_claude_case(case: str = "289", label: str = "claude1",
                     render_mode: str = "inline", extra_env: str = "",
