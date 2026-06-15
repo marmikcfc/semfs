@@ -120,8 +120,11 @@ if EXPECTED_FILES:
     fname_hint = (f"\n[REQUIRED OUTPUT FILENAME] Your graded deliverable MUST be saved with EXACTLY "
                   f"this name (put ALL required content inside it): {names}. Use this exact filename "
                   "(including extension); do not split it or rename it.")
+# Optional turn-brake (WB_TURNBRAKE env, set via --knobs): cut re-reads/over-exploration
+# WITHOUT cutting retrieval — attacks the cache-read tax from the turn-count side.
+turnbrake = ("\n" + os.environ["WB_TURNBRAKE"]) if os.environ.get("WB_TURNBRAKE") else ""
 wrapped = (f"{note}\n\n{task}\n[Note] Save deliverables under ./model_output/ (relative to your "
-           "working directory) and end by printing the file paths as a Python list." + fname_hint)
+           "working directory) and end by printing the file paths as a Python list." + fname_hint + turnbrake)
 
 
 def run_agent(use_openrouter):
