@@ -25,6 +25,7 @@ CLAUDECODE_JS = REPO / "benchmarks/vendor/Workspace-Bench/evaluation/baselines/C
 CELL_DRIVER = REPO / "benchmarks/e2b/cell_driver.py"
 CODEX_AUTH = REPO / "codex_auth.json"
 FIXED_BIN = REPO / "benchmarks/e2b/assets/semfs-fixed"   # Modal-built x86_64 binary w/ timeout fix (pushed at boot)
+KNOBS = {}   # SEMFS_* knob overrides for the optimization sweep (loaded from --knobs JSON)
 WB_LITE = REPO / "benchmarks/e2b/assets/wb_lite/task_lite_clean_en"  # judge metadata (output_files etc.)
 
 
@@ -108,6 +109,7 @@ def boot_prep(sbx, need_plain, need_mount=True):
                      # instead of timing out → cloud fallback → panic → retry-storm.
                      "SEMFS_SEARCH_TIMEOUT_SECS": "120", "SEMFS_GREP_CLIENT_WAIT_SECS": "140",
                      "SEMFS_SEARCH_DEADLINE_SECS": "90"}
+        mount_env.update(KNOBS)   # sweep overrides reach the daemon (rerank/lane knobs)
         o, e = sh(sbx, "semfs mount chanpin --path /home/user/ws/mnt --backend fuse "
                        "--key dummy-local --no-sync --no-push 2>&1 || true", timeout=240, env=mount_env)
         print("  mount:", (o + e).strip()[-200:], flush=True)
@@ -150,6 +152,7 @@ def run_cell(sbx, agent, case, arm, rep, real_rg):
            "SUPERMEMORY_API_KEY": os.environ.get("SUPERMEMORY_API_KEY", ""),
            "SUPERMEMORY_API_URL": os.environ.get("SUPERMEMORY_API_URL", ""),
            "WB_OUTPUT_FILES": expected_output_files(case)}  # filename hint → cell_driver prompt
+    env.update(KNOBS)   # sweep overrides reach the grep client (caps/result-limit/rewrite)
     o, e = sh(sbx, f"cd /home/user && python3 cell_driver.py --label {label} --agent {agent} "
                    f"--case {case} --arm {arm} 2>>/tmp/{label}.err", timeout=1750, env=env)
     res = None
@@ -264,9 +267,13 @@ def main():
                     help="comma list to restrict arms, e.g. 'cloud' or 'plain,nokg'. Default: plain,nokg,nokgAK.")
     ap.add_argument("--parallel", type=int, default=1, help="number of concurrent sandboxes (pool size).")
     ap.add_argument("--force", action="store_true", help="re-run cells even if a prior ok result.json exists.")
+    ap.add_argument("--knobs", default=None, help="JSON file of SEMFS_* knob overrides for the optimization sweep.")
     args = ap.parse_args()
     if not ORKEY:
         sys.exit("OPENROUTER_API_KEY not in env — `set -a; . ./.env; set +a` first")
+    if args.knobs:
+        KNOBS.update({k: str(v) for k, v in json.loads(pathlib.Path(args.knobs).read_text()).items()})
+        print(f"knob overrides: {KNOBS}", flush=True)
 
     agents = [a.strip() for a in args.agents.split(",")] if args.agents else AGENTS
     arms = [a.strip() for a in args.arms.split(",")] if args.arms else ARMS

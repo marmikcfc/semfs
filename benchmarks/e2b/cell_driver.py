@@ -89,9 +89,12 @@ else:
         "SEMFS_EMBED_MODEL": "gemma-q4", "SEMFS_EMBED_ONNX_DIR": "/home/user/gemma_q4",
         "SUPERMEMORY_API_KEY": "dummy-local", "SEMFS_NO_PUSH": "1", "SEMFS_NO_SYNC": "1",
         "SEMFS_SEARCH_ONLY": "on",            # E2B 8GB cap forces =on (ledger §1)
-        "SEMFS_RESULT_LIMIT": "5", "SEMFS_GREP_RESULT_CAP": "6144",
-        "SEMFS_GREP_TOTAL_CAP": "10240", "SEMFS_REWRITE": "1",
     })
+    # Tunable knobs — respect an external override (run_matrix --knobs sweep) over the
+    # default, so optimization can vary them without editing this file.
+    for _k, _v in (("SEMFS_RESULT_LIMIT", "5"), ("SEMFS_GREP_RESULT_CAP", "6144"),
+                   ("SEMFS_GREP_TOTAL_CAP", "10240"), ("SEMFS_REWRITE", "1")):
+        os.environ.setdefault(_k, _v)
     if a.arm == "nokgAK":
         os.environ["SEMFS_ADAPTIVE_K"] = "on"
     # Claude parity (RCA 2026-06-13): re-enable the semfs kit + mount read access
