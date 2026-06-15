@@ -105,8 +105,20 @@ else:
         os.environ.setdefault("SEMFS_REAL_RG", os.environ.get("WB_REAL_RG", "rg"))
 
 task = open(f"/home/user/cases/{a.case}.task", encoding="utf-8").read().strip()
+# Inject the EXPECTED output filename(s) the judge grades against. Upstream WB never tells
+# the agent these (they live judge-side in metadata `output_files`), so a correct deliverable
+# under a different name scores 0 — the "filename lottery". Telling the agent the exact name
+# (a) removes that noise and (b) turns it into a real instruction-following test (told the
+# name → did it comply?). Applied to ALL arms, so the relative comparison stays fair.
+EXPECTED_FILES = [f.strip() for f in os.environ.get("WB_OUTPUT_FILES", "").split(",") if f.strip()]
+fname_hint = ""
+if EXPECTED_FILES:
+    names = ", ".join(f"model_output/{f}" for f in EXPECTED_FILES)
+    fname_hint = (f"\n[REQUIRED OUTPUT FILENAME] Your graded deliverable MUST be saved with EXACTLY "
+                  f"this name (put ALL required content inside it): {names}. Use this exact filename "
+                  "(including extension); do not split it or rename it.")
 wrapped = (f"{note}\n\n{task}\n[Note] Save deliverables under ./model_output/ (relative to your "
-           "working directory) and end by printing the file paths as a Python list.")
+           "working directory) and end by printing the file paths as a Python list." + fname_hint)
 
 
 def run_agent(use_openrouter):
@@ -179,12 +191,16 @@ try:
 except Exception:
     pass
 
+# Instruction-following signal: did the agent save the EXACT expected filename(s) it was told?
+followed = (all(f in deliv for f in EXPECTED_FILES) if EXPECTED_FILES else None)
+
 print("RESULT=" + json.dumps({
     "label": a.label, "agent": a.agent, "case": a.case, "arm": a.arm, "work_dir": WD,
     "auth_used": auth, "status": res.get("status"), "wall_s": wall, "calls": calls,
     "used_semfs_grep": used,
     "tokens": ut.get("total_tokens") or ((ut.get("prompt_tokens") or 0) + (ut.get("completion_tokens") or 0)),
     "usage": ut, "deliverables": list(deliv.keys()), "deliverable_content": deliv,
+    "expected_files": EXPECTED_FILES, "followed_filename": followed,
     "tool_commands": [c for c in cmds if c][:40],
     "err": str(res.get("errorMessage") or "")[:600],
 }, ensure_ascii=False))

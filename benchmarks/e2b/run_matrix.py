@@ -25,6 +25,22 @@ CLAUDECODE_JS = REPO / "benchmarks/vendor/Workspace-Bench/evaluation/baselines/C
 CELL_DRIVER = REPO / "benchmarks/e2b/cell_driver.py"
 CODEX_AUTH = REPO / "codex_auth.json"
 FIXED_BIN = REPO / "benchmarks/e2b/assets/semfs-fixed"   # Modal-built x86_64 binary w/ timeout fix (pushed at boot)
+WB_LITE = REPO / "benchmarks/e2b/assets/wb_lite/task_lite_clean_en"  # judge metadata (output_files etc.)
+
+
+def expected_output_files(case):
+    """The exact filename(s) the judge grades against (WB metadata `output_files`), which
+    upstream never tells the agent. We inject them as a prompt hint (cell_driver) so a correct
+    deliverable isn't zeroed by the filename lottery — and to test instruction-following."""
+    mp = WB_LITE / str(case) / "metadata.json"
+    if not mp.exists():
+        return ""
+    try:
+        d = json.loads(mp.read_text())
+        of = d.get("output_files") or ([d["output_file"]] if d.get("output_file") else [])
+        return ",".join(os.path.basename(str(x)).strip() for x in of if str(x).strip())
+    except Exception:
+        return ""
 CORPUS = str(REPO / "benchmarks/e2b/assets/chanpin_standard")   # plain-arm tree (persistent; pulled from Modal 2026-06-15)
 OUT = REPO / "tickets/workspace-bench-5arm-matrix/artifacts/e2b_runs"
 CASES_FULL = ["15", "44", "45", "53", "55", "95", "171", "175", "386", "388"]   # 289 excluded (seed leak)
@@ -132,7 +148,8 @@ def run_cell(sbx, agent, case, arm, rep, real_rg):
     env = {"OPENROUTER_API_KEY": ORKEY, "WB_REAL_RG": real_rg, "HOME": "/home/user",
            "CLAUDE_CODE_OAUTH_TOKEN": CLAUDE_OAUTH,
            "SUPERMEMORY_API_KEY": os.environ.get("SUPERMEMORY_API_KEY", ""),
-           "SUPERMEMORY_API_URL": os.environ.get("SUPERMEMORY_API_URL", "")}
+           "SUPERMEMORY_API_URL": os.environ.get("SUPERMEMORY_API_URL", ""),
+           "WB_OUTPUT_FILES": expected_output_files(case)}  # filename hint → cell_driver prompt
     o, e = sh(sbx, f"cd /home/user && python3 cell_driver.py --label {label} --agent {agent} "
                    f"--case {case} --arm {arm} 2>>/tmp/{label}.err", timeout=1750, env=env)
     res = None
