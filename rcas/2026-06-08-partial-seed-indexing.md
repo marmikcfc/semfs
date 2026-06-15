@@ -1,6 +1,17 @@
 # RCA: seeds index only ~half the corpus (imported-but-unindexed)
 
-**Date:** 2026-06-08 · **Severity:** high (retrieval blind to ~55% of corpus)
+> **⚠️ SUPERSEDED / MIS-DIAGNOSED (corrected 2026-06-15).** This RCA's headline ("blind to
+> ~55% of corpus", "warm interrupted, gap permanent") was **wrong**. The "750 missing files"
+> are overwhelmingly the **747 EMPTY WB placeholder files** (`size==0`) — they have no content
+> to index, so having no `chunks` is correct, not a gap. Measuring **non-empty** original files
+> (excluding semfs's own `.extracted.md`/`.semfs-error.txt` sidecars), the chanpin-gemma-q4
+> seed is **98.2% complete (616/627 reachable)** — see
+> `tickets/seed-completeness-gate/SEED_COMPLETENESS.md`. The real content loss is **~8 files**
+> (legacy `.ppt`/`.xls`, a few PDFs/PPTX) plus 1 image + 2 build artifacts. The fix that
+> matters is the **completeness GATE** (`semfs seed-verify`, shipped 2026-06-15) so this class
+> of mis-measurement can't recur — NOT a re-warm. Keep reading for the original (flawed) analysis.
+
+**Date:** 2026-06-08 · **Severity:** ~~high~~ → **low** (corrected: 98.2% real-content coverage)
 
 ## Symptom
 `chanpin-gemma` (and `chanpin-e5-nosum`) embed far fewer files than the corpus:

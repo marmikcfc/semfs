@@ -130,10 +130,17 @@ async fn send_request_classified_to_path(
         writer.shutdown().await?;
 
         let mut lines = BufReader::new(reader).lines();
-        // Must stay ABOVE the daemon's `SEARCH_TIMEOUT` (50s, see daemon::ipc) so
-        // the daemon's typed error wins before the client gives up. Raised 30s →
-        // 60s alongside the 25s → 50s search-bound bump (2026-06-05).
-        let line = tokio::time::timeout(Duration::from_secs(60), lines.next_line())
+        // Must stay ABOVE the daemon's search timeout so the daemon's typed error
+        // wins before the client gives up. Default 140s (raised 60s→140s alongside
+        // the 50s→120s daemon bump, 2026-06-15); override with
+        // SEMFS_GREP_CLIENT_WAIT_SECS. Keep > SEMFS_SEARCH_TIMEOUT_SECS (default 120).
+        let client_wait = Duration::from_secs(
+            std::env::var("SEMFS_GREP_CLIENT_WAIT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(140),
+        );
+        let line = tokio::time::timeout(client_wait, lines.next_line())
             .await
             .context("timeout waiting for daemon response")?
             .context("read response line")?

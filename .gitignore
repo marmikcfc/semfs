@@ -51,3 +51,16 @@ __pycache__/
 docs/
 paper/
 .scratch/
+# benchmark assets pulled from Modal (corpus/seed/embedder) — never commit
+benchmarks/e2b/assets/
+
+# OpenRouter dashboard client cookie (auth secret)
+scripts/.or_client_cookie
+
+# secrets / auth / logs — NEVER commit
+codex_auth.json
+claude_auth_config.json
+openrouter_logs.csv
+claude_auth_config.json
+*.session.txt
+2026-*-this-session-is-being-continued*.txt

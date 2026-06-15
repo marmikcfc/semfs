@@ -37,7 +37,18 @@ const RERANK_CANDIDATES: usize = 50;
 /// cooperative degrade (return RRF hits, skip rerank) reliably wins the race
 /// against the daemon's outer hard timeout, which would otherwise cut the search
 /// off with nothing. (RCA 2026-06-04-semfs-grep-hangs-post-search-under-load #3.)
-const SEARCH_DEADLINE: Duration = Duration::from_secs(20);
+///
+/// Default 90s (raised 20s→90s, 2026-06-15) — gives the rerank room to COMPLETE
+/// under post-mount load before degrading to RRF, while staying under the daemon's
+/// 120s `search_timeout()`. Override with SEMFS_SEARCH_DEADLINE_SECS.
+fn search_deadline() -> Duration {
+    Duration::from_secs(
+        std::env::var("SEMFS_SEARCH_DEADLINE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(90),
+    )
+}
 /// When a query is scoped to a path prefix, vec0 KNN can't filter on the joined
 /// `filepath` (it only post-filters the global k-nearest), so we raise `k` to
 /// this bound and GLOB-filter, ensuring in-scope hits aren't crowded out of the
@@ -847,7 +858,7 @@ impl SemanticIndex for SqliteVecStore {
         let filepath = filepath.map(|s| s.to_string());
         // Compute the cooperative deadline here (passed into the blocking body so
         // it is also injectable in tests).
-        let deadline = Instant::now() + SEARCH_DEADLINE;
+        let deadline = Instant::now() + search_deadline();
         tokio::task::spawn_blocking(move || {
             store.search_blocking(&query, filepath.as_deref(), deadline)
         })
@@ -921,7 +932,7 @@ impl SqliteVecStore {
                 "sqlite search exceeded its {}s deadline during query-embed; \
                  returning best-effort RRF hits (rerank will be skipped) rather \
                  than failing closed to empty",
-                SEARCH_DEADLINE.as_secs()
+                search_deadline().as_secs()
             );
         }
         let conn = self.db.conn.lock();
@@ -1245,7 +1256,7 @@ impl SqliteVecStore {
                 tracing::warn!(
                     "sqlite search hit its {}s deadline before rerank; skipping rerank, \
                      returning RRF-ranked hits (still revalidated in phase 2)",
-                    SEARCH_DEADLINE.as_secs()
+                    search_deadline().as_secs()
                 );
             } else {
                 // Bound rerank CPU: only the top RRF candidates are reranked; the

@@ -23,7 +23,19 @@ use crate::cache::CacheFs;
 /// and `rcas/2026-06-05-agent-search-token-blowup-turn-multiplication.md`). This
 /// is a HEADROOM mitigation, not the throughput fix (dedicated read connection —
 /// see ticket `search-throughput-readpath-isolation`).
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(50);
+/// Default 120s (raised 50s→120s, 2026-06-15): under heavy post-mount Mutex
+/// contention 50s still timed out → cloud fallback → agent retry-storm
+/// (rcas/2026-06-15-grep-timeout-cloud-fallback-panic.md). Override with
+/// SEMFS_SEARCH_TIMEOUT_SECS (no rebuild needed). Must stay BELOW the client's
+/// wait (SEMFS_GREP_CLIENT_WAIT_SECS, default 140s).
+fn search_timeout() -> Duration {
+    Duration::from_secs(
+        std::env::var("SEMFS_SEARCH_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120),
+    )
+}
 
 /// State the IPC handler reads to answer requests.
 #[allow(missing_debug_implementations)] // CacheFs doesn't implement Debug in full
@@ -170,7 +182,7 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             // returns a typed error before the client deadline (so the client sees
             // a real failure, not a silent fall-through to a stale backend).
             Some(index) => match tokio::time::timeout(
-                SEARCH_TIMEOUT,
+                search_timeout(),
                 index.search(&query, filepath.as_deref()),
             )
             .await
@@ -188,7 +200,7 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
                     backend: Some(state.backend.clone()),
                 },
                 Err(_) => Response::SearchError {
-                    message: format!("search timed out after {}s", SEARCH_TIMEOUT.as_secs()),
+                    message: format!("search timed out after {}s", search_timeout().as_secs()),
                     backend: Some(state.backend.clone()),
                 },
             },

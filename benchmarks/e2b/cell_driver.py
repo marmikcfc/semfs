@@ -123,10 +123,17 @@ def run_agent(use_openrouter):
             os.environ.pop("CODEX_USE_CHATGPT", None)
             ap_ = {"baseUrl": "https://openrouter.ai/api/v1", "apiKey": ORKEY, "model": "openai/gpt-5.4"}
     else:
-        # Claude: ALWAYS OpenRouter (user req). Anthropic-shaped endpoint = /api (NOT /api/v1).
-        os.environ.pop("USE_CLAUDE_LONG_RUNNING_TOKEN", None)
-        ap_ = {"provider_type": "anthropic", "baseUrl": "https://openrouter.ai/api",
-               "apiKey": ORKEY, "model": "anthropic/claude-sonnet-4.6"}
+        # Claude: native Claude Code subscription FIRST (CLAUDE_CODE_OAUTH_TOKEN injected by
+        # the orchestrator); OpenRouter only as fallback. Native = free (subscription) + the
+        # reliable path (runbook §6); the harness strips ANTHROPIC_* so the OAuth wins.
+        if not use_openrouter:
+            os.environ["USE_CLAUDE_LONG_RUNNING_TOKEN"] = "1"
+            os.environ["CLAUDE_OAUTH_MODEL"] = "claude-sonnet-4-6"
+            ap_ = {"model": "anthropic/claude-sonnet-4.6"}
+        else:
+            os.environ.pop("USE_CLAUDE_LONG_RUNNING_TOKEN", None)
+            ap_ = {"provider_type": "anthropic", "baseUrl": "https://openrouter.ai/api",
+                   "apiKey": ORKEY, "model": "anthropic/claude-sonnet-4.6"}
     return h.run(prompt=wrapped, work_dir=WD, sandbox_dir=sd, timeout_s=1500, api_provider=ap_)
 
 
@@ -140,13 +147,12 @@ def bad(r):
 
 
 t0 = time.time()
-# codex: native(ChatGPT) first → OpenRouter fallback.  claude: OpenRouter directly.
-if a.agent == "claude":
-    res = run_agent(use_openrouter=True); auth = "openrouter"
-else:
-    res = run_agent(use_openrouter=False); auth = "native(chatgpt)"
-    if bad(res) and ORKEY:
-        res = run_agent(use_openrouter=True); auth = "openrouter(fallback)"
+# Both agents: NATIVE subscription first (codex=ChatGPT, claude=Claude OAuth) → OpenRouter
+# fallback only if native fails. Keeps the big agent spend on subscriptions, not OpenRouter.
+res = run_agent(use_openrouter=False)
+auth = "native(chatgpt)" if a.agent == "codex" else "native(claude-oauth)"
+if bad(res) and ORKEY:
+    res = run_agent(use_openrouter=True); auth = "openrouter(fallback)"
 
 wall = int(time.time() - t0)
 tr = res.get("trace", {}) or {}
@@ -163,6 +169,15 @@ if os.path.isdir(mo):
         p = os.path.join(mo, f)
         if os.path.isfile(p):
             deliv[f] = open(p, encoding="utf-8", errors="replace").read()[:2500]
+
+# Write agent.json — the WB trace format `agent_eval.py` reads NATIVELY (trace.executionTrace
+# WITH tool outputs = the file-read evidence the source-grounded rubrics need). This is the
+# fix for the judge-starvation bug: past runs saved only command strings.
+try:
+    open(f"{WD}/agent.json", "w", encoding="utf-8").write(
+        json.dumps({"trace": {"executionTrace": et, "usageTotal": ut}}, ensure_ascii=False))
+except Exception:
+    pass
 
 print("RESULT=" + json.dumps({
     "label": a.label, "agent": a.agent, "case": a.case, "arm": a.arm, "work_dir": WD,

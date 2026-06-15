@@ -4235,6 +4235,7 @@ dependencies = [
  "clap",
  "directories 5.0.1",
  "libc",
+ "rusqlite",
  "semfs-core",
  "serde",
  "serde_json",
