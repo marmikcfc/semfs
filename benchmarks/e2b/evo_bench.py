@@ -167,7 +167,7 @@ def run_reps(worktree, knobs, binary, env, exp_tag):
         if knobs.exists():
             cmd += ["--knobs", str(knobs)]
         log(f"  run_matrix rep {r}/{N_REPS} (tag {rep})")
-        run(cmd, cwd=str(worktree), env=cell_env, timeout=4200, retries=2)
+        run(cmd, cwd=str(worktree), env=cell_env, timeout=2400, retries=2)
         for c in CASES:
             labels.append(f"pm_codex_{c}_{ARM}_r{rep}")
     return labels
@@ -227,14 +227,31 @@ def collect(worktree, labels):
     return cells
 
 
+def find_main_repo():
+    """Locate the MAIN repo (the one holding the gitignored assets/). Prefer EVO_MAIN_REPO;
+    else derive from evo's EVO_* artifact paths, which live under <main>/.evo/... ."""
+    env_main = os.environ.get("EVO_MAIN_REPO")
+    if env_main and (pathlib.Path(env_main) / "benchmarks/e2b/assets").exists():
+        return pathlib.Path(env_main).resolve()
+    for v in ("EVO_RESULT_PATH", "EVO_TRACES_DIR", "EVO_CHECKPOINT_DIR"):
+        p = os.environ.get(v)
+        if not p:
+            continue
+        cur = pathlib.Path(p).resolve()
+        for anc in [cur, *cur.parents]:
+            if (anc / ".evo").exists() and (anc / "benchmarks/e2b/assets").exists():
+                return anc
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--worktree", required=True)
     args = ap.parse_args()
     worktree = pathlib.Path(args.worktree).resolve()
-    main_repo = pathlib.Path(os.environ.get("EVO_MAIN_REPO", "")).resolve()
+    main_repo = find_main_repo()
     if not main_repo or not (main_repo / "benchmarks/e2b/assets").exists():
-        log(f"FATAL: EVO_MAIN_REPO unset or missing assets ({main_repo})")
+        log(f"FATAL: could not locate MAIN repo with assets (EVO_MAIN_REPO={os.environ.get('EVO_MAIN_REPO')})")
         sys.exit(2)
     exp_id = os.environ.get("EVO_EXPERIMENT_ID", "unknown").replace("_", "")
     exp_tag = f"evo{exp_id}"

@@ -143,6 +143,7 @@ def boot_prep(sbx, need_plain, need_mount=True):
         tf = tempfile.mktemp(suffix=".tgz")
         subprocess.run(["tar", "czf", tf, "-C", os.path.dirname(CORPUS), os.path.basename(CORPUS)], check=True)
         data = pathlib.Path(tf).read_bytes()
+        pathlib.Path(tf).unlink(missing_ok=True)   # free the 442MB local tarball now (ENOSPC leak fix)
         # CHUNKED upload: a single 442MB files.write hangs (E2B single-call ceiling).
         # Split into ~32MB parts, write each, reassemble in the sandbox. RCA 2026-06-15.
         CHUNK = 32 * 1024 * 1024
