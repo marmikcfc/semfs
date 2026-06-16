@@ -197,6 +197,17 @@ pub fn render_workspace_root() -> String {
          read (cat / sed -n) for the rest. Cost note: a broad crawl (find / os.walk /\n\
          rg over the tree) or opening many files costs far more context than a focused\n\
          search plus the reads you actually need.\n\
+         \n\
+         How many results: by default grep returns just the most confident few (often\n\
+         one, when there is a clear winner) — ideal for a single-answer lookup. If your\n\
+         task must cover MANY files (write a report, summarize/compare across files,\n\
+         \u{0022}list all X\u{0022}), add `--all` (or `-n <count>`) so you get the full\n\
+         set in one call instead of re-searching.\n\
+         \n\
+         Be token-frugal: start with ONE focused search and read only the files it\n\
+         points to; widen (`--all`) only if the task truly needs more. Do NOT repeat a\n\
+         search you already ran with reworded queries — the files it returned are\n\
+         already in your context; re-grepping just re-reads them and burns tokens.\n\
          <!-- semfs:delivery=workspace-root -->\n"
     )
 }

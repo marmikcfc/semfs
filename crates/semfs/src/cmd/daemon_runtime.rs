@@ -548,6 +548,15 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         }
     }
 
+    // SEMFS_INDEX_ONLY=1: skip FUSE mount and IPC; just index and exit.
+    // Used in environments where FUSE is unavailable (e.g. Modal gVisor).
+    // The DB at ~/.semfs/{tag}.db is fully indexed and ready for `semfs grep --tag`.
+    if std::env::var("SEMFS_INDEX_ONLY").ok().as_deref() == Some("1") {
+        startup.report("ready", "index complete (SEMFS_INDEX_ONLY mode, no FUSE)")?;
+        eprintln!("semfs: indexing complete (SEMFS_INDEX_ONLY=1); exiting without FUSE mount");
+        return Ok(());
+    }
+
     startup.report("mounting_fs", "mounting filesystem")?;
     let handle = mount_fs(fs.clone(), opts).await?;
 
@@ -575,6 +584,19 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         org_name: session_org_name,
         graph_queue,
         shutdown_notify: ipc_shutdown_notify.clone(),
+        // Cross-turn grep dedup (SEM-19, v1). Opt-in: SEMFS_DEDUP_WINDOW=N (turns)
+        // enables a single daemon-global sliding window; unset/0 → None → today's
+        // stateless behavior, byte-identical. Assumes one mount = one agent (v1).
+        session_cache: match std::env::var("SEMFS_DEDUP_WINDOW")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0)
+        {
+            0 => None,
+            w => Some(std::sync::Mutex::new(
+                semfs_core::daemon::session_cache::SessionCache::new(w),
+            )),
+        },
     });
     let socket_path = daemon::socket_path(&cfg.container_tag);
     // Bind the control socket SYNCHRONOUSLY here so a bind failure aborts the

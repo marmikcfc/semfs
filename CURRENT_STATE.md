@@ -1,97 +1,127 @@
 # Current State — semfs / Workspace-Bench instance
 
-_Last updated: 2026-06-08 (evening). Companion to `EXPERIMENTS.md`, `rcas/`._
+_Last updated: 2026-06-16. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
 
-## ⮕ Latest (2026-06-08 evening) — q4 full-coverage seed + KG + graph-fs E2E
-- **Active seed:** `chanpin-gemma-q4` (BYO-ONNX q4, `byo:gemma-q4-onnx:768`), **696/704 contentful
-  files (98.9%)**, no OOM. KG: 9,298 entities / 637 communities / 672 god-nodes.
-- **Three extractor fallbacks shipped** (uncommitted, deployed to box): `pdftotext` (CJK PDFs),
-  `soffice` (legacy OLE), `ocr_pdf_paged` (page-split vision OCR). PDF chain: pdf-extract →
-  pdftotext → ocr_pdf_paged → ocr_pdf. 49 extract tests pass. `extract/{pdf,ocr,mod}.rs`.
-- **KG-materialization race FIXED** (`daemon_runtime.rs`): `refresh_knowledge_graph()` moved before
-  `mount_fs()` so "ready" ⇒ "KG ready" (was: codex read empty KG → fabricated 0/15).
-- **Case-289 graph-fs E2E (valid run):** 0/15 → **6/15**; codex now reads KG (1,727 B), uses
-  `/by-topic` (21×) + grep, sees 403. BUT **493K tokens** — hit the **format trap** (parsed xlsx
-  with openpyxl/pandas/libreoffice ×6). Graph-fs fixes engagement, NOT tokens. Format trap is the
-  <100K lever. See EXPERIMENTS.md §8 + `rcas/2026-06-08-kg-materialization-race-…`,
-  `…-extraction-coverage-…`.
-- **Uncommitted local changes:** `extract/{pdf,ocr,mod}.rs`, `Cargo.toml`, `daemon_runtime.rs`.
-  **Recurring footgun:** `source`-not-`export` of `OPENROUTER_API_KEY` (broke push/build_kg/OCR).
+## ⮕ Latest (2026-06-16) — grep cross-turn dedup v1 shipped; seed decontaminated; full WB-Lite rubrics pulled
+
+- **Cross-turn dedup (SEM-19, v1) IMPLEMENTED + tested** (414 tests green). Daemon-side sliding-window
+  that strips re-sent file content across turns. Env-gated `SEMFS_DEDUP_WINDOW` (default **0 = off** →
+  byte-identical to before). Built into the Modal x86_64 binary and validated live on E2B+OpenRouter
+  (dedup fires only with W>0, W=0 control clean).
+- **Seed decontaminated:** removed the `/model_output/` leak subtree from `chanpin-gemma-q4.db`
+  (case-289 gold deliverable + a `tmp/` dir + error sidecars) across fs+chunks+ffts; integrity ok;
+  legit `product_data/` copy preserved; backup at `chanpin-gemma-q4.db.preclean-bak`.
+- **All 100 WB-Lite rubrics downloaded** from HF on Modal → copied + normalized locally. Backend
+  Developer (11) rubrics now in hand for eventual testing; full PM-11 (incl. previously-missing
+  171/289/386/388) now stageable.
+- **kaifa (backend-dev) seed = index-only** — complete for retrieval, but NO filesystem layer (not
+  mountable). Needs an FS-populating rebuild before backend-dev cases can run the mount flow.
+- **3-arm PM matrix RAN** (10 cases × {plain, dedup, dedup+turn-brake} × n=3, OpenRouter): raw numbers
+  plain 12.6% / dedup 3.8% / dedup+TB 3.0% — **BUT the result is CONFOUNDED** (dead mounts on the fd2
+  batch + a query rewriter that corrupts searches + a weak model). **Not a clean semfs-vs-plain verdict.**
+  See "PM matrix result" — and note the affordance diagnosis was RETRACTED (it was a dead-mount artifact).
 
 ---
 
-## Box (benchmark instance)
-- Host: `ubuntu@13.201.35.159` · key `~/.ssh/semfs-benchmark` · `m7i.xlarge` (4 vCPU/16 GB, no GPU).
-- Repo (rsync, **not git**): `/srv/semfs-benchmark/semantic-filesystem`.
-- Binary: `/home/ubuntu/.local/bin/semfs` (v0.0.5). Mounts open `~/.semfs/<tag>.db`.
-- Seed env: `/home/ubuntu/.semfs_seed_env` (OPENROUTER_API_KEY). Do **not** print keys.
-- Corpus source (clean, 1,368 files, 0 junk): `/srv/semfs-benchmark/extract-test/chanpin_seed`.
+## Platform (current)
+- **Test env: E2B real-FUSE, x86_64**, template `semfs-baked` (binary + chanpin seed + gemma embedder
+  + WB harness baked). **ALL benchmark tests run on E2B, never Modal** (hard rule).
+- **Build env: Modal x86_64-linux** (`benchmarks/modal/build_semfs.py`) — local Mac can't cross-compile
+  fastembed/ONNX. Volume `semfs-bench-data` holds seeds/corpus/bin/wb.
+- Branch: `feat/backend-agnostic-store`. Binary: `semfs 0.0.5`.
+- Orchestrator: `benchmarks/e2b/run_matrix.py`; per-cell `cell_driver.py` (uploaded per-run, no rebuild
+  needed for Python edits). Knobs via `--knobs <json>` → merged into daemon `mount_env` **and** cell env.
 
-## Deployed binary (this session) — md5 prefix `3fbf919…` (banner-reverted)
-Built from local branch `feat/backend-agnostic-store`. Contains:
-- **Graph-as-filesystem** (`/by-topic` overlay): persisted Louvain projection
-  (`graph_community`/`graph_god_node`), bounded read model, synthetic inodes
-  (`ino≥1<<48`), readdir/lookup/getattr branching under `SEMFS_GRAPH_FS=on`,
-  symlink cross-edges; **kind-tiered god-node labels** (Concept/Org≫dates/values).
-- **H1 trust marker**: local snippet grep leaves `memory` None → renders via chunk
-  presenter (`# ^ COMPLETE FILE …do not open it` + line ranges; cloud parity),
-  keeping the `[semfs: SOURCE INACCESSIBLE]` 403 surfacing.
-- **H1b**: `model_output/` excluded from search results (`is_agent_output_path`).
-- **FS-contract**: `agent_hint.rs` describes the `/by-topic` overlay + call behavior.
-- ⚠️ **REVERTED**: the "integrity banner" atop `KNOWLEDGE_GRAPH.md` (listing inaccessible
-  sources w/ "REPORT and STOP") was implemented then **removed as CHEATING** (spoon-fed
-  the case-289 answer). Do not reintroduce. `build_digest` is back to the honest digest.
-- 314 lib tests green.
+## Binary (this session) — Modal x86_64, with dedup
+- Rebuilt on Modal → `benchmarks/e2b/assets/semfs-fixed` (37 MB, ELF x86-64). Boot-pushed over the baked
+  binary by `run_matrix.boot_prep` (`/usr/local/bin/semfs`). Verified `SEMFS_DEDUP_WINDOW` + the
+  `already in your context … not resending` pointer string are compiled in.
+- Contains the prior timeout fixes (`SEMFS_SEARCH_TIMEOUT_SECS`=120, `SEARCH_DEADLINE`=90, client wait
+  140; cloud-fallback panic guard) **plus** the new dedup (`SessionCache`, `SearchHit.seen_at_turn`).
 
-## Seeds inventory (`~/.semfs/*.db`)
-| tag | embedder | files indexed | KG | clean? | note |
-|---|---|---:|---|---|---|
-| `chanpin-e5-nosum` | e5-small | 725 / 1368 (53%) | full (9156 ent / 4783 rel / 602 comm) | ❌ 3 model_output (incl. **fabricated list**) + 5 .semfs-error + 37 .venv | the one all graph-fs/H1 runs used |
-| `chanpin-gemma` | gemma fp32 | 652 / 1368 | sparse (763 ent, 0 rel, 0 comm) | ❌ model_output cruft (honest report, NOT fabricated) | original gemma seed (Jun 7) |
-| `chanpin-gemma-clean` | gemma fp32 | 647 / 1368 (47%) | **full** (8652 ent / 4741 rel / 602 comm / 665 god) | ✅ clean ALL lanes (text/BM25/dense/fs) | cleaned + KG-rebuilt copy; STILL partial-corpus |
-| `chanpin-gemma-full` | gemma fp32 | **(re-seeding in progress)** | pending | clean | **complete** reseed via `/tmp/seed_complete.sh` (waits for index) |
+## Dedup v1 — what shipped (SEM-19, `tickets/grep-stateless-context-dedup/`)
+- `crates/semfs-core/src/daemon/session_cache.rs` — `SessionCache` sliding window (6 unit tests).
+- `daemon/ipc.rs::dedup_seen` — partition after `index.search`: strip `memory`/`chunk` + set
+  `seen_at_turn` for files already returned within the window (3 tests). DIFF, never REPLAY.
+- `SearchHit.seen_at_turn: Option<u64>` (serde default); `daemon_runtime.rs` reads `SEMFS_DEDUP_WINDOW`
+  (0 → `None` → disabled); `cmd/grep.rs` renders a pointer line for seen hits.
+- **v1 assumption: one mount = one agent** (single daemon-global window, no keying). v2 (deferred) =
+  key by `(agent_pid, starttime)` via `SO_PEERCRED` for multi-agent/sequential-reuse safety.
 
-## Key measured results (case 289, clean prompt, Seed-2.0-Lite judge)
-| run | embedder | tokens | calls | rubrics | note |
-|---|---|---:|---:|---:|---|
-| kg4 (no graph-fs) | e5 | 203.7K | 11 | 7/15 | grep→8 crawl→fabricate |
-| gfs1 / gfs2 / gfs3 (graph-fs) | e5 | 87K / 490K / 686K | 5/20/13 | 10 / — / — | **HIGH VARIANCE**; gfs1 honest 10/15 (ceiling) |
-| gfsh1 / gfsh3 (+H1) | e5 | 207K / 173K | 9/6 | 5 / 6 | format-trap KILLED (0); tail 686K→207K, still >100K |
+## Seeds
+| seed | where | index | FS layer | usable for |
+|---|---|---|---|---|
+| `chanpin-gemma-q4.db` (PM) | E2B template `/opt` + local assets | 7153 chunks / 2800 inodes; ~98.2% | **full** | mount-based PM benchmark |
+| `kaifa-gemma-q4.db` (backend-dev) | Modal `seeds/` (229 MB) | 2415 files / 6386 chunks / 21,115 ent / 323,101 rel; 0 unindexed | **ABSENT** (fs_inode=1, dentry=0, fs_data=0) | retrieval only — NOT mountable |
 
-**Honest conclusion:** <100K is *achievable* (gfs1=87K honest) but **NOT reliable**. The lever is
-**turn count** (tokens ≈ turns × ~20K uncached overhead; Exa-cited literature confirms the
-no-caching quadratic law). graph-fs kills os.walk-blowup; H1 kills the format-trap; the residual
-is codex **distrusting the 403 and hunting**. Embedder is NOT the lever (Gemma ≈ e5).
+⚠️ **The PM seed is BAKED into the E2B template** (`/opt/chanpin-gemma-q4.db`), copied to `~/.semfs/chanpin.db`
+at boot — so the local decontaminated seed is **not used** unless we (A) re-bake the template, or (B)
+boot-push the cleaned 690 MB seed (reuse the chunked-upload path). Leak was 289-only (irrelevant to the
+other 10 cases).
 
-## Findings + RCAs this session
-- **Seed contamination** (e5): the fabricated `model_output/best_selling…` list (months-as-product
-  titles) is indexed and ranks #1 on the answer query → baits codex into copying it (the dishonest
-  207K run). Cleaning is higher-leverage than switching embedders.
-- **Partial-seed indexing RCA** (`rcas/2026-06-08-partial-seed-indexing.md`): BOTH seeds index only
-  ~half the corpus (e5 53%, gemma 47%). Root cause: **incomplete warm** — `mount` returns "ready"
-  when the daemon answers Ping, NOT when indexing finishes; the seed build unmounted (or OOM-died,
-  per `rcas/2026-06-01-…prewarm-oom…`) before the slow local embed drained. The warm is **not
-  resumable** (`import_file_with_ownership` returns early on AlreadyExists) → a full re-seed is
-  required. **FIX**: `/tmp/seed_complete.sh` polls chunks-count to stability before unmount.
-- **Composio/Exa research**: over-search literature → **H4** (evidence-stabilization "no new
-  results" signal) as the one legit env-side tool-call lever; model-side/hard-cap methods are
-  unavailable or = harness-gaming. See `tickets/ls-kg-semantic-readdir/TOKEN_REDUCTION_HYPOTHESES.md`.
+## WB-Lite rubrics + case universe
+- **Rubrics (all 100, normalized):** `benchmarks/e2b/assets/wb_lite_all/lite_all/task_lite_clean_en/<id>/metadata.json`.
+  HF stores list fields as JSON strings → normalized to lists, `id` set = `absolute_id`.
+- **Judge source (live):** `benchmarks/e2b/assets/wb_lite/task_lite_clean_en/` — currently only the
+  original **5** (15/44/45/53/55); copied to `/tmp/wb_lite/` at judge time. Stage more from `wb_lite_all/`.
+- **Personas (lite):** Backend Developer 11 (ids 3,7,91,92,94,226,242,266,286,300,311) · Product Manager 11
+  · Researcher 17 · Logistics Manager 30 · Operations Manager 31.
+- **PM-11 = {15,44,45,53,55,95,171,175,289,386,388}.** 289 was the seed-leak (now cleaned); 10 were
+  "valid", 289 now potentially includable pending the `product_data/` corpus question.
 
-## In progress
-- **gemma-full reseed** (`/tmp/seed_complete.sh` → `chanpin-gemma-full`): complete-corpus gemma fp32
-  seed that WAITS for index completion. Measuring live rate to estimate ETA. Next: rebuild KG over
-  the full set + materialize projection + verify coverage ≈ 100% extractable, then it becomes the
-  canonical clean+complete gemma seed.
+## Token cost model (corrected)
+- **OpenRouter (`openai/gpt-5.4`): `cache_read=0`** → full context re-billed every turn (billed ≈ total).
+- **Native ChatGPT subscription (`gpt-5.5`): ~80% cached** → billed ≪ total.
+- Earlier testing total: **145 cells, ~71.3 M raw / ~20.4 M billed** tokens (codex 33 M raw / claude 38 M).
+- **Turn count is the first-order lever** (`total ≈ Σ context over turns`; corr(calls,total)=0.82).
+  **Dedup is second-order** (trims re-sent payload, not turn count). Turn-brake (p2b prompt) cuts turns
+  but is non-deterministic; dedup is the deterministic backstop.
 
-## Open work / next steps
-- Finish gemma-full reseed → KG rebuild → **clean baseline** (tokens/calls/accuracy) on a
-  complete, uncontaminated corpus — the honest starting point we never had.
-- Then the real lever: **tool-call/turn-count reduction** (H4, pending user's "is it fair" ruling).
-- Durable fixes: git-track `seed_complete.sh`; add a `--wait-for-index` mount flag + a seed
-  completeness gate (`indexed >= corpus − known_binary_fails`); fix xlsx→Pdf mis-detect (fs_unindexed).
+## PM matrix result (2026-06-16) — CONFOUNDED (dead mounts + query-rewrite corruption); NOT a clean verdict
+- Raw: 10 PM cases × 3 arms × n=3, OpenRouter (289 excluded). plain 12.6% / 339K · dedup(W5) 3.8% / 296K · dedup+TB 3.0% / 113K. **Do not read this as "plain beats semfs"** — it's confounded (below).
+- **VERIFIED ROOT CAUSE (2026-06-16, supersedes ALL earlier diagnoses — retrieval/affordance/over-exploration/synthesis are RETRACTED):** the cell I deep-dived (`53_nokg_rfd2`) had a **DEAD MOUNT** — `semfs list` → "no active mounts", `semfs grep` → "No container tag found". No FUSE filesystem to `ls`/`find`/`readdir`; the agent reverse-engineered the raw `.semfs/chanpin.db` because it was the only on-disk copy. So the "affordance lures the agent into the DB / over-exploration" story was an **infra artifact**, not semfs behavior.
+- **Prevalence:** dead mounts hit the **fd2 batch only** (5 cells: 44/53/55/95/386); **54/59 nokg cells had working mounts.** Localized infra failure — but it poisoned the exact cell analyzed.
+- **Real semfs issues (from working-mount cells, e.g. 53_fd3/ft1, 171_ft3):** (1) **the query rewriter CORRUPTS searches** — `semfs grep "PO_4"` (a purchase-order id) was rewritten to "phosphate (PO4) ion / phosphate fertilizer" (case 171); (2) **grep CLI arg errors** — `semfs grep "q" /ws/mnt/Desktop` → `error: unexpected argument`. Working-mount cells are LEAN (7–8 cmds, like plain), so over-exploration was an fd2/dead-mount artifact too.
+- **The matrix is confounded 3 ways:** (a) dead mounts (infra, fd2 batch), (b) query-rewrite corruption (retrieval), (c) a weak model (`gpt-5.4`; absolute scores low for plain too, 12.6% vs historical 46%).
+- **VERIFIED ROOT CAUSE (2026-06-16, deepest — RCA `rcas/2026-06-16-semfs-agent-doesnt-transcribe-grep-content.md`):** on a healthy mount, `semfs grep` returned the source records **VERBATIM** into context (c0b: all 4 DES records + dates + thresholds, ~50 KB), yet the deliverable c0b wrote contains **0× `DES-0006`, 0× `2024-12-18`, 0× the thresholds** — a generic template. **Retrieval is fine; the agent doesn't transcribe content it has.** Cause = delivery-form mismatch (plain `cat`s 4 clean files → transcribes 8/11; semfs hands a ranked repeated blob → summarizes 0/11) + a FUSE enumeration defect (`find -type f` → 0 on the live mount) blocking the clean-`cat` fallback. Mount-health gate now shipped in run_matrix; mount-gate confirmed clean on the controlled re-run; rewrite-off did NOT help (refuted).
+- **FIX TESTED (2026-06-16, small n, mount-gated — RCA "Verification RESULTS"):** two fixes tried on
+  53/171 vs plain. Verified scores (judge `passed`): plain 53={1,5}/11 171={11,12}/18 ·
+  **fix_v2** (block-render code `print_block` + dedup + rw0, NO prompt) 53=0/11 171={0,11}/18 ·
+  **fix_v1** (fix_v2 + transcription prompt) 53={0,0,0,8,11}/11 171={0,0,0,0,11}/18.
+  → **Block-render code alone does NOT close the gap** (fires, but insufficient). **Transcription
+  prompt is bimodal** — occasional big win (11/11, 8/11, *confirms* the root cause) but collapses to 0
+  on most reps; **not shippable**. n is tiny → variance-dominated, **NOT a clean verdict**.
+- **REMAINING DURABLE LEVER:** the **FUSE enumeration fix** (make `find`/`ls`/`readdir` surface files
+  in `fs_dentry`) so the agent can use plain's deterministic "locate → cat → transcribe" path instead
+  of synthesizing from a ranked blob. Needs a Modal rebuild + a direct mount probe of the FUSE
+  `readdir`/`getattr` code path — **not yet done**. (Offered as the next step; pending user go.)
+- **CODE STATUS:** `print_block` + dedup are in the working tree
+  (`crates/semfs/src/cmd/grep.rs`, `crates/semfs-core/src/daemon/{ipc.rs,mod.rs,session_cache.rs}`)
+  and in the ephemeral `assets/semfs-fixed` binary — **NOT git-committed** yet.
+
+## Dedup A/B result (8-cell, OpenRouter, cases 45/53) — INCONCLUSIVE (superseded by the PM matrix above)
+- Mechanism validated (pointer fires with W=5, W=0 control clean). But n=2 is variance-dominated
+  (calls swung 8→58 same config) and the accuracy spread is the known case-45 coin-flip. **No token/
+  accuracy win demonstrable at this n.** Honest next step = a daemon bytes-stripped counter to isolate
+  the dedup effect, OR more reps. Not vs-plain yet (would need plain in the same matched run).
+
+## Pending / ON HOLD
+- **3-arm matrix on ChatGPT subscription** (user request): arms = (1) dedup-on, (2) dedup-on + turn-brake
+  (prompt hint only), (3) plain; **n=3**. HELD until explicit go-ahead.
+  - User wants **clean seed everywhere** → must wire the cleaned-seed boot-push first.
+  - Native-auth uncertain (earlier native attempts fell back to OpenRouter) → run a 1-cell native smoke
+    **only after explicit go** (user instruction).
+  - Open decisions: scope (5 staged vs full PM-11 — full needs staging rubrics from `wb_lite_all/` +
+    resolving 289's `product_data/` corpus copy); turn-brake p2a (mild) vs p2b (strong).
+- **kaifa FS rebuild** for eventual backend-dev mount-based testing.
+
+## Routing (CLAUDE.md §0)
+- Tickets → Linear team `SemFS` (SEM-19 = dedup, updated w/ design+plan; SEM-35 = WB matrix).
+- RCAs → `rcas/*.md` (canonical) + Notion RCAs DB digest. Design/status docs → Notion SemFS page.
+- Large artifacts → Google Drive `semfs/`. Don't commit seeds/corpus/binaries (assets/ gitignored).
 
 ## Security / ops (standing)
-- Never print API keys (`${VAR:+SET}` only). Earlier-exposed OpenRouter/Supermemory keys still
-  need rotation by the user.
-- Do NOT reboot the EC2 instance without explicit OK. Keep all seeds intact.
-- Mount cleanup: `semfs unmount <tag>` (never pattern-kill). Destructive DB edits only on COPIES.
+- Never print/commit secrets (`codex_auth.json`, `claude_auth_config.json`, `openrouter_logs.csv`
+  gitignored). Credentials injected at E2B RUNTIME only, never baked into a template.
+- Destructive DB edits only on COPIES (seed clean kept `.preclean-bak`). Case 289 excluded historically
+  for seed leak — now cleaned in the local seed (not yet re-baked into the template).

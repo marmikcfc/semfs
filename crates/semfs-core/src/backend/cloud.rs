@@ -14,6 +14,7 @@ fn to_hit(r: crate::api::dto::SearchResult) -> SearchHit {
         memory: r.memory,
         chunk: r.chunk,
         similarity: r.similarity,
+        seen_at_turn: None,
     }
 }
 

@@ -427,6 +427,17 @@ fn grep_result_cap() -> usize {
 }
 
 /// Truncate `s` to the render cap on a char boundary. Returns `(text, truncated?)`.
+/// Print a full-file hit as a structured block with real newlines so the model
+/// can distinguish record fields without parsing `\n` escapes. Used only for
+/// the `inline_full` path (the whole file was small enough to inline cleanly).
+/// Format: `=== <path> ===\n<content>\n=== end <path> ===`
+fn print_block(fp: &str, content: &str) {
+    println!("=== {} ===", fp);
+    print!("{}", content);
+    if !content.ends_with('\n') { println!(); }
+    println!("=== end {} ===", fp);
+}
+
 fn cap_render(s: &str) -> (String, bool) {
     let cap = grep_result_cap();
     if s.len() <= cap {
@@ -560,33 +571,122 @@ fn snippet_line(text: &str) -> String {
     s
 }
 
-/// The stop-signal: a confidence verdict derived from the ranked similarity
-/// scores. Relative margin only — score SCALES are backend-dependent (RRF vs
-/// cosine vs cloud), so absolute thresholds would lie; the top-vs-second gap is
-/// comparable everywhere. Both branches prescribe a bounded next action: the
-/// re-query loop (same question, new wording, ×5) is the failure mode this line
-/// exists to stop — measured as the 2-vs-12-call bimodality in the E8 runs.
-fn confidence_line(top: f64, second: Option<f64>) -> String {
-    match second {
-        None => "# confidence: HIGH — single match. The excerpt above is the matched \
-                 content; answer from it. Do not re-search."
-            .to_string(),
-        Some(s) => {
-            let denom = top.abs().max(f64::EPSILON);
-            let margin = (top - s) / denom;
-            if margin >= 0.15 {
-                format!(
-                    "# confidence: HIGH — top hit outranks #2 by {:.0}%. Answer from the \
-                     excerpt above; open this ONE file only if you need values beyond it. \
-                     Do not re-search with new wording.",
-                    margin * 100.0
-                )
-            } else {
-                "# confidence: MIXED — top results score closely. Open the top 1-2 files \
-                 listed to confirm, then answer. Do not re-search with new wording."
-                    .to_string()
-            }
+/// E16 — confidence-adaptive K: decide HOW MANY hits to render from the score curve,
+/// instead of always dumping a fixed list. Reuses the spread-normalized margin idea.
+/// - `Answer`: the top hit dominates (`(s1−s2)/(s1−sN) ≥ T_HIGH`) → render exactly 1, as
+///   THE answer. Collapses the agent's verify-and-re-grep loop.
+/// - `Cluster`: otherwise render the head of the list up to the score cliff — every hit
+///   within `T_CLUSTER` of the top relative to the set's own spread — capped at `k_max()`.
+///   Flat/compressed scores (no winner) → the full capped list (today's behaviour).
+/// Backend-agnostic: operates on `SearchHit.similarity`, which RRF/cosine/cloud all set.
+/// Env: `SEMFS_ADAPTIVE_K=on` (default off → A/B-able), `SEMFS_K_MAX` (default 10),
+/// `SEMFS_CONF_HIGH` (default 0.30), `SEMFS_CONF_CLUSTER` (default 0.50).
+#[derive(Clone, Copy, PartialEq)]
+enum AdaptiveTier {
+    Answer,
+    Cluster,
+}
+
+fn adaptive_k_enabled() -> bool {
+    matches!(
+        std::env::var("SEMFS_ADAPTIVE_K").ok().as_deref(),
+        Some("on") | Some("1") | Some("true")
+    )
+}
+
+fn env_f64(key: &str, default: f64) -> f64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|x| *x > 0.0)
+        .unwrap_or(default)
+}
+
+fn k_max() -> usize {
+    std::env::var("SEMFS_K_MAX")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(10)
+}
+
+/// `sims` must be descending. Returns `(k, tier)`. Empty → `(0, Cluster)`.
+fn adaptive_k(sims: &[f64]) -> (usize, AdaptiveTier) {
+    let n = sims.len();
+    if n == 0 {
+        return (0, AdaptiveTier::Cluster);
+    }
+    if n == 1 {
+        return (1, AdaptiveTier::Answer);
+    }
+    let top = sims[0];
+    let smin = sims[n - 1];
+    let spread = (top - smin).max(f64::EPSILON);
+    let t_high = env_f64("SEMFS_CONF_HIGH", 0.30);
+    let t_cluster = env_f64("SEMFS_CONF_CLUSTER", 0.50);
+    let kmax = k_max();
+    // Dominant top hit → answer.
+    let margin2 = ((top - sims[1]) / spread).clamp(0.0, 1.0);
+    if margin2 >= t_high {
+        return (1, AdaptiveTier::Answer);
+    }
+    // Otherwise include the head cluster (hits within T_CLUSTER of the top, normalized
+    // by the set's spread), capped at k_max.
+    let mut k = 1usize;
+    for &s in &sims[1..] {
+        let m = ((top - s) / spread).clamp(0.0, 1.0);
+        if m <= t_cluster && k < kmax {
+            k += 1;
+        } else {
+            break;
         }
+    }
+    (k.clamp(1, kmax), AdaptiveTier::Cluster)
+}
+
+/// The stop-signal: a confidence verdict derived from the ranked similarity
+/// scores. The top-vs-#2 gap is SPREAD-NORMALIZED — `(s1−s2)/(s1−sN)` — not taken
+/// relative to s1. RRF-fused scores are range-compressed (every hit sits near
+/// `1/(60+rank)`), so the old relative margin `(s1−s2)/s1` never cleared threshold
+/// and HIGH literally never fired (E9 wave-1 finding). Normalizing the gap by the
+/// result set's OWN spread is scale-invariant (works for RRF, cosine, and cloud)
+/// and lets a genuinely dominant top hit register. HIGH ("answer from the excerpt,
+/// do not open or re-search") is additionally gated on the top hit being a COMPLETE
+/// FILE: a dominant-but-truncated top hit gets MEDIUM ("open the ONE top file"),
+/// because telling the agent to trust a partial excerpt is the dishonest-render
+/// failure mode. Each branch prescribes a bounded next action to stop the re-query
+/// loop (same question, new wording, ×5) — the 2-vs-12-call bimodality in the E8 runs.
+fn confidence_line(top: f64, second: Option<f64>, min: Option<f64>, top_complete: bool) -> String {
+    // margin ∈ [0,1]: how far the top hit sits above #2 as a fraction of the result
+    // set's full spread. Single match → maximal separation. <3 hits (sN == s2, no
+    // spread below #2) → fall back to the relative gap, which stays conservative
+    // under RRF compression (≈ always MIXED) — the safe default.
+    let (margin, thr) = match (second, min) {
+        (None, _) => (1.0_f64, 0.0_f64),
+        (Some(s2), Some(sn)) if sn < s2 => (
+            ((top - s2) / (top - sn).max(f64::EPSILON)).clamp(0.0, 1.0),
+            0.30_f64,
+        ),
+        (Some(s2), _) => (
+            ((top - s2) / top.abs().max(f64::EPSILON)).clamp(0.0, 1.0),
+            0.15_f64,
+        ),
+    };
+    let dominant = margin >= thr;
+    if dominant && top_complete {
+        format!(
+            "# confidence: HIGH — top hit dominates (margin {:.0}%) and the excerpt above \
+             is the COMPLETE file. Answer from it directly; do not open files or re-search.",
+            margin * 100.0
+        )
+    } else if dominant {
+        "# confidence: MEDIUM — top hit dominates but its excerpt is partial. Open the ONE \
+         top file to confirm the values, then answer. Do not re-search with new wording."
+            .to_string()
+    } else {
+        "# confidence: MIXED — top results score closely. Open the top 1-2 files listed to \
+         confirm, then answer. Do not re-search with new wording."
+            .to_string()
     }
 }
 
@@ -671,6 +771,20 @@ pub struct Args {
     /// unavailable or errors.
     #[arg(long)]
     pub rewrite: bool,
+
+    /// Task-awareness: how many results to return. The agent declares this when
+    /// it knows the shape of its task — a single-answer lookup needs few; a
+    /// report / "cover every file" / cross-file synthesis task needs many. When
+    /// set, it OVERRIDES confidence-adaptive-K (the agent knows its intent;
+    /// grep's score curve does not). Capped at the result pool.
+    #[arg(long, short = 'n')]
+    pub limit: Option<usize>,
+
+    /// Return the full result set (up to the pool cap, ≤ RESULT_LIMIT). Shorthand
+    /// for "this task must read many files" — use for reports / list-all /
+    /// synthesis. Overrides adaptive-K.
+    #[arg(long)]
+    pub all: bool,
 }
 
 pub async fn run(args: Args) -> Result<()> {
@@ -918,11 +1032,40 @@ pub async fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
+    // E16 — confidence-adaptive K, made TASK-AWARE. Precedence:
+    //   1. the agent's explicit count (`--limit N` / `--all`) — it knows its task shape;
+    //   2. confidence-adaptive-K from the score curve (`SEMFS_ADAPTIVE_K=on`);
+    //   3. the whole pool (legacy default).
+    let adaptive = adaptive_k_enabled();
+    let explicit = args.limit.is_some() || args.all;
+    let (render_n, atier) = if let Some(n) = args.limit {
+        (n.min(hits.len()), AdaptiveTier::Cluster)
+    } else if args.all {
+        (hits.len(), AdaptiveTier::Cluster)
+    } else if adaptive {
+        adaptive_k(&hits.iter().map(|h| h.similarity).collect::<Vec<_>>())
+    } else {
+        (hits.len(), AdaptiveTier::Cluster)
+    };
+    // K=0 under adaptive (no confident match) → honest empty, no noise dump.
+    if adaptive && !explicit && render_n == 0 {
+        eprintln!("# no high-confidence match in the index for {:?}", args.query);
+        eprintln!(
+            "# do not re-search with reworded queries; read the most relevant directory directly if needed."
+        );
+        return Ok(());
+    }
+
     // Header: tells LLMs and users what this output is and how to use it.
     eprintln!(
-        "# supermemory semantic search — {} results for {:?}",
-        hits.len(),
-        args.query
+        "# supermemory semantic search — {} result(s) for {:?}{}",
+        render_n,
+        args.query,
+        if adaptive && atier == AdaptiveTier::Answer {
+            " — ONE dominant match (high confidence)"
+        } else {
+            ""
+        }
     );
     eprintln!("# searches by meaning across files in this container. usage:");
     eprintln!("#   grep \"2-4 key terms\"                    short focused queries rank best");
@@ -966,12 +1109,26 @@ pub async fn run(args: Args) -> Result<()> {
     let mut budget_note_printed = false;
     let top_sim = hits.first().map(|h| h.similarity);
     let second_sim = hits.get(1).map(|h| h.similarity);
+    let min_sim = hits.last().map(|h| h.similarity);
+    // Whether the TOP hit (i==0) earned the COMPLETE FILE marker — gates the HIGH
+    // confidence verdict below to an honest "trust the excerpt" only when the top
+    // excerpt IS the whole file.
+    let mut top_is_complete = false;
 
-    for (i, result) in hits.iter().enumerate() {
+    for (i, result) in hits.iter().take(render_n).enumerate() {
         if i > 0 {
             println!();
         }
         let fp = result.filepath.as_deref().unwrap_or("(unknown)");
+
+        // Cross-turn dedup (SEM-19): the daemon already returned this file's
+        // content earlier this session and stripped it, so emit a pointer line
+        // instead of re-rendering. The agent still "has" the file (it's in its
+        // context from turn N) — re-sending would just re-charge tokens.
+        if let Some(t) = result.seen_at_turn {
+            println!("# already in your context (turn {t}): {fp} — not resending");
+            continue;
+        }
 
         // Tier decision: does this hit get a full excerpt or just path + snippet?
         let full_tier = match mode {
@@ -1006,12 +1163,11 @@ pub async fn run(args: Args) -> Result<()> {
             let compressed = maybe_compress(fp, memory);
             let render_src = compressed.as_deref().unwrap_or(memory);
             let (capped, trunc) = cap_render(render_src);
-            let escaped = capped
-                .replace('\\', "\\\\")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r");
-            spent += fp.len() + escaped.len() + 24;
-            println!("{}:{}", fp, escaped);
+            // Render as a structured block with real newlines (same rationale as
+            // print_block below): preserves record/field structure so the model
+            // can transcribe specific values rather than write a generic summary.
+            spent += fp.len() + capped.len() + 20;
+            print_block(fp, &capped);
             if compressed.is_some() {
                 println!("{}", COMPRESSED_MARKER);
             } else if trunc {
@@ -1066,6 +1222,9 @@ pub async fn run(args: Args) -> Result<()> {
                         grep_result_cap() / 1024
                     );
                 } else {
+                    if i == 0 {
+                        top_is_complete = true;
+                    }
                     println!(
                         "# ^ COMPLETE FILE — excerpt above is this file's entire content; use it directly, do not open it."
                     );
@@ -1131,20 +1290,29 @@ pub async fn run(args: Args) -> Result<()> {
         let compressed = maybe_compress(fp, raw);
         let render_src = compressed.as_deref().unwrap_or(raw);
         let (capped, trunc) = cap_render(render_src);
-        let escaped = capped
-            .replace('\\', "\\\\")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r");
-        spent += fp.len() + escaped.len() + 24;
 
-        if let Some((start, end)) = line_range {
-            if start == end {
-                println!("{}:{}:{}", fp, start, escaped);
-            } else {
-                println!("{}:{}-{}:{}", fp, start, end, escaped);
-            }
+        // When we inlined the whole file, render as a structured block with real
+        // newlines so the model can read record fields without parsing \n escapes.
+        // For partial chunks (line_range from a larger file) keep the compact
+        // one-liner format — that path is already size-bounded and grep-like.
+        if inline_full.is_some() && !compressed.is_some() {
+            spent += fp.len() + capped.len() + 20;
+            print_block(fp, &capped);
         } else {
-            println!("{}:{}", fp, escaped);
+            let escaped = capped
+                .replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r");
+            spent += fp.len() + escaped.len() + 24;
+            if let Some((start, end)) = line_range {
+                if start == end {
+                    println!("{}:{}:{}", fp, start, escaped);
+                } else {
+                    println!("{}:{}-{}:{}", fp, start, end, escaped);
+                }
+            } else {
+                println!("{}:{}", fp, escaped);
+            }
         }
         if compressed.is_some() {
             println!("{}", COMPRESSED_MARKER);
@@ -1155,6 +1323,9 @@ pub async fn run(args: Args) -> Result<()> {
                 grep_result_cap() / 1024
             );
         } else if complete_file {
+            if i == 0 {
+                top_is_complete = true;
+            }
             // Parse-safe comment: tells the agent the excerpt is the whole file —
             // copy it directly; no need to open the file or crawl to verify.
             println!(
@@ -1163,13 +1334,27 @@ pub async fn run(args: Args) -> Result<()> {
         }
     }
 
-    // E9 stop-signal: in two-tier mode, close the render with a confidence
-    // verdict derived from the ranked scores. Placed last so it survives the
-    // harness's head+tail clip and is the final thing the agent reads.
-    if mode == RenderMode::TwoTier {
+    // E9/E16 stop-signal: close the render with a confidence verdict, last so it survives
+    // the harness's head+tail clip and is the final thing the agent reads.
+    if adaptive && !explicit {
+        println!();
+        match atier {
+            AdaptiveTier::Answer => println!(
+                "# confidence: HIGH — one dominant match above; this IS the answer, use it \
+                 directly. If your task needs MORE files (a report / cover-everything task), \
+                 re-run with `--all`. Otherwise do not re-search."
+            ),
+            AdaptiveTier::Cluster => println!(
+                "# confidence: {} closely-scored results returned; open the top 1-2 to confirm, \
+                 then answer. Need the full set (synthesis/report)? re-run with `--all`. \
+                 Do not re-search with new wording.",
+                render_n
+            ),
+        }
+    } else if mode == RenderMode::TwoTier {
         if let Some(top) = top_sim {
             println!();
-            println!("{}", confidence_line(top, second_sim));
+            println!("{}", confidence_line(top, second_sim, min_sim, top_is_complete));
         }
     }
 
@@ -1191,22 +1376,74 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_k_dominant_returns_one() {
+        // (0.9-0.4)/(0.9-0.3) = 0.83 ≥ 0.30 → Answer, k=1
+        let (k, t) = super::adaptive_k(&[0.9, 0.4, 0.35, 0.3]);
+        assert_eq!(k, 1);
+        assert!(t == super::AdaptiveTier::Answer);
+    }
+
+    #[test]
+    fn adaptive_k_flat_returns_capped_cluster() {
+        // nearly-flat (RRF-compressed) scores → no winner → big cluster, capped at k_max=10
+        let sims: Vec<f64> = (0..12).map(|i| 0.5 - i as f64 * 0.001).collect();
+        let (k, t) = super::adaptive_k(&sims);
+        assert!((2..=10).contains(&k), "flat scores should return a capped cluster, got {k}");
+        assert!(t == super::AdaptiveTier::Cluster);
+    }
+
+    #[test]
+    fn adaptive_k_empty_is_zero() {
+        assert_eq!(super::adaptive_k(&[]).0, 0);
+    }
+
+    #[test]
     fn confidence_high_on_clear_margin() {
-        let line = confidence_line(0.80, Some(0.50));
+        // Spread-normalized: gap (0.80-0.50)=0.30 over spread (0.80-0.30)=0.50 → 60%.
+        let line = confidence_line(0.80, Some(0.50), Some(0.30), true);
         assert!(line.contains("HIGH"), "{line}");
-        assert!(line.contains("38%") || line.contains("37%"), "{line}");
+        assert!(line.contains("60%"), "{line}");
     }
 
     #[test]
     fn confidence_mixed_on_close_scores() {
-        let line = confidence_line(0.80, Some(0.78));
+        // Gap (0.80-0.78)=0.02 over spread 0.50 → 4% < 30% → MIXED.
+        let line = confidence_line(0.80, Some(0.78), Some(0.30), true);
         assert!(line.contains("MIXED"), "{line}");
         assert!(line.contains("Do not re-search"), "{line}");
     }
 
     #[test]
     fn confidence_high_on_single_hit() {
-        assert!(confidence_line(0.42, None).contains("HIGH"));
+        // Single match + complete file → HIGH.
+        assert!(confidence_line(0.42, None, None, true).contains("HIGH"));
+    }
+
+    #[test]
+    fn confidence_medium_when_top_dominant_but_truncated() {
+        // Same dominant margin as the HIGH test, but the top excerpt is NOT the
+        // whole file → MEDIUM ("open the one file"), never a dishonest HIGH.
+        let line = confidence_line(0.80, Some(0.50), Some(0.30), false);
+        assert!(line.contains("MEDIUM"), "{line}");
+        assert!(line.contains("Open the ONE top file"), "{line}");
+    }
+
+    #[test]
+    fn confidence_high_on_rrf_compressed_dominant() {
+        // E9 wave-1 regression. RRF scores are range-compressed (all ≈ 1/(60+rank)).
+        // OLD relative margin (0.0340-0.0320)/0.0340 = 5.9% < 15% → MIXED — HIGH
+        // never fired (the bug). Spread-normalized: gap 0.0020 over spread
+        // (0.0340-0.0305)=0.0035 → 57% ≥ 30% → HIGH. This is the fix.
+        let line = confidence_line(0.0340, Some(0.0320), Some(0.0305), true);
+        assert!(line.contains("HIGH"), "{line}");
+    }
+
+    #[test]
+    fn confidence_mixed_on_tight_ladder() {
+        // Top barely above #2 relative to the full spread → still MIXED, even with
+        // compressed absolute scores (spread-norm doesn't over-fire on a tight ladder).
+        let line = confidence_line(0.0340, Some(0.0338), Some(0.0300), true);
+        assert!(line.contains("MIXED"), "{line}");
     }
 
     #[test]

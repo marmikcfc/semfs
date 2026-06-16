@@ -37,6 +37,34 @@ fn search_timeout() -> Duration {
     )
 }
 
+/// Cross-turn dedup (SEM-19, v1): mark hits whose content was already returned
+/// earlier this session and STRIP their `memory`/`chunk` so the bytes never cross
+/// the IPC boundary — the agent can't re-pay for what it isn't sent. No-op when
+/// the cache is disabled (`SEMFS_DEDUP_WINDOW=0` → `None`). Only content-bearing,
+/// path-identified hits participate; an annotation-only or pathless hit is left
+/// untouched. DIFF, never REPLAY.
+fn dedup_seen(
+    cache: &Option<std::sync::Mutex<super::session_cache::SessionCache>>,
+    hits: &mut [crate::backend::SearchHit],
+) {
+    let Some(cache) = cache else { return };
+    let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
+    c.begin_turn();
+    for h in hits.iter_mut() {
+        let has_content = h.memory.as_deref().is_some_and(|s| !s.is_empty())
+            || h.chunk.as_deref().is_some_and(|s| !s.is_empty());
+        let Some(fp) = h.filepath.as_deref() else { continue };
+        if !has_content {
+            continue;
+        }
+        if let Some(first_turn) = c.see(fp) {
+            h.seen_at_turn = Some(first_turn);
+            h.memory = None;
+            h.chunk = None;
+        }
+    }
+}
+
 /// State the IPC handler reads to answer requests.
 #[allow(missing_debug_implementations)] // CacheFs doesn't implement Debug in full
 pub struct IpcState {
@@ -64,6 +92,11 @@ pub struct IpcState {
     /// Fired when an `Unmount` request arrives — daemon main loop awaits this
     /// and treats it the same as SIGTERM.
     pub shutdown_notify: Arc<Notify>,
+    /// Cross-turn `grep` dedup memory (SEM-19, v1). `Some` when
+    /// `SEMFS_DEDUP_WINDOW > 0`; `None` disables it (behavior byte-identical to
+    /// before). A `std::sync::Mutex` is fine: the lock is held only for the
+    /// synchronous partition AFTER `index.search()` awaits, never across an await.
+    pub session_cache: Option<std::sync::Mutex<super::session_cache::SessionCache>>,
 }
 
 /// Bind the IPC socket SYNCHRONOUSLY (clearing any stale socket first). Kept
@@ -187,11 +220,14 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             )
             .await
             {
-                Ok(Ok(hits)) => Response::SearchHits {
-                    hits,
-                    searchable: true,
-                    backend: Some(state.backend.clone()),
-                },
+                Ok(Ok(mut hits)) => {
+                    dedup_seen(&state.session_cache, &mut hits);
+                    Response::SearchHits {
+                        hits,
+                        searchable: true,
+                        backend: Some(state.backend.clone()),
+                    }
+                }
                 // Genuine search fault — carry the backend so the client can apply
                 // the right fail-closed policy from THIS one response (no separate
                 // Status RPC to race).
@@ -212,5 +248,69 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
                 backend: Some(state.backend.clone()),
             },
         },
+    }
+}
+
+#[cfg(test)]
+mod dedup_tests {
+    use super::dedup_seen;
+    use crate::backend::SearchHit;
+    use crate::daemon::session_cache::SessionCache;
+    use std::sync::Mutex;
+
+    fn hit(fp: &str, content: &str) -> SearchHit {
+        SearchHit {
+            filepath: Some(fp.into()),
+            memory: Some(content.into()),
+            chunk: None,
+            similarity: 0.9,
+            seen_at_turn: None,
+        }
+    }
+
+    #[test]
+    fn marks_and_strips_repeat_content_hits_keeps_new() {
+        let cache = Some(Mutex::new(SessionCache::new(5)));
+        // turn 1: first delivery — content kept, nothing marked.
+        let mut t1 = vec![hit("/a.md", "BODY A"), hit("/b.md", "BODY B")];
+        dedup_seen(&cache, &mut t1);
+        assert!(t1.iter().all(|h| h.seen_at_turn.is_none()));
+        assert_eq!(t1[0].memory.as_deref(), Some("BODY A"));
+        // turn 2: /a re-surfaces (re-grep) → marked seen + stripped; /c is new.
+        let mut t2 = vec![hit("/a.md", "BODY A"), hit("/c.md", "BODY C")];
+        dedup_seen(&cache, &mut t2);
+        assert_eq!(t2[0].seen_at_turn, Some(1));
+        assert_eq!(t2[0].memory, None, "content stripped — bytes never cross IPC");
+        assert!(t2[1].seen_at_turn.is_none());
+        assert_eq!(t2[1].memory.as_deref(), Some("BODY C"));
+    }
+
+    #[test]
+    fn noop_when_disabled() {
+        let cache: Option<Mutex<SessionCache>> = None;
+        let mut h = vec![hit("/a.md", "BODY")];
+        dedup_seen(&cache, &mut h);
+        dedup_seen(&cache, &mut h);
+        assert!(h[0].seen_at_turn.is_none());
+        assert_eq!(h[0].memory.as_deref(), Some("BODY"), "disabled = byte-identical to today");
+    }
+
+    #[test]
+    fn contentless_hit_not_recorded() {
+        // A hit with no content must not occupy a dedup slot — otherwise a later
+        // turn where the same file DOES carry content would be wrongly suppressed.
+        let cache = Some(Mutex::new(SessionCache::new(5)));
+        let mut t1 = vec![SearchHit {
+            filepath: Some("/a.md".into()),
+            memory: None,
+            chunk: None,
+            similarity: 0.5,
+            seen_at_turn: None,
+        }];
+        dedup_seen(&cache, &mut t1);
+        let mut t2 = vec![hit("/a.md", "NOW HAS CONTENT")];
+        dedup_seen(&cache, &mut t2);
+        assert!(t2[0].seen_at_turn.is_none());
+        assert_eq!(t2[0].memory.as_deref(), Some("NOW HAS CONTENT"));
     }
 }

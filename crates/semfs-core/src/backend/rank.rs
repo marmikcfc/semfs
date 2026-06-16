@@ -141,6 +141,7 @@ pub fn to_hits(by_file: HashMap<String, FileAcc>, prefix: Option<&str>) -> Vec<S
             memory: None,
             similarity: acc.score(),
             chunk: Some(top_chunks_text(acc.chunks, n)),
+            seen_at_turn: None,
         })
         .collect();
     sort_desc(&mut hits);

@@ -19,6 +19,7 @@
 pub mod client;
 pub mod ipc;
 pub mod protocol;
+pub mod session_cache;
 
 use std::path::PathBuf;
 

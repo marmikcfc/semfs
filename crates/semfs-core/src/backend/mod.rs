@@ -24,6 +24,13 @@ pub struct SearchHit {
     pub memory: Option<String>,
     pub chunk: Option<String>,
     pub similarity: f64,
+    /// Cross-turn dedup (SEM-19): set by the daemon when this file's content was
+    /// already returned with content earlier this session. When `Some(turn)`, the
+    /// daemon has stripped `memory`/`chunk` and `grep` renders a pointer line
+    /// ("already in your context (turn N)") instead of re-sending the excerpt.
+    /// `#[serde(default)]` → absent (`None`) on the daemonless/cloud path.
+    #[serde(default)]
+    pub seen_at_turn: Option<u64>,
 }
 
 /// The semantic-search substrate behind `grep`. Any backend that answers a semantic query.
@@ -49,6 +56,7 @@ mod tests {
                 memory: None,
                 chunk: Some(format!("matched: {query}")),
                 similarity: 0.9,
+                seen_at_turn: None,
             }])
         }
     }
