@@ -1,3 +1,0 @@
-未能在允许的工作目录内找到用户指定的 3 个源文件：`development-task-list.xlsx`、`development-task-2.xlsx`、`development-task-3.xlsx`。因此，无法基于这 3 个确切文件完成“已验证的数据汇总”。不过我已按你的输出路径要求，生成并写入了 HTML 仪表板文件到 `model_output/project-management/` 下。
-
-['model_output/project-management/DevTask_Dashboard.html']
