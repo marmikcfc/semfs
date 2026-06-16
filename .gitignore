@@ -64,3 +64,8 @@ openrouter_logs.csv
 claude_auth_config.json
 *.session.txt
 2026-*-this-session-is-being-continued*.txt
+
+# evo workspace + harness artifacts
+.evo/
+.evo_bench_metrics.json
+benchmarks/e2b/assets/.evo_bin_cache/

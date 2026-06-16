@@ -139,7 +139,10 @@ def run_agent(use_openrouter):
             ap_ = {"model": "gpt-5.5"}
         else:
             os.environ.pop("CODEX_USE_CHATGPT", None)
-            ap_ = {"baseUrl": "https://openrouter.ai/api/v1", "apiKey": ORKEY, "model": "openai/gpt-5.4"}
+            # OpenRouter model is env-overridable (WB_OR_MODEL) so the optimization campaign
+            # can pin a model (e.g. z-ai/glm-5.1) without editing this file. Empty → default.
+            ap_ = {"baseUrl": "https://openrouter.ai/api/v1", "apiKey": ORKEY,
+                   "model": os.environ.get("WB_OR_MODEL") or "openai/gpt-5.4"}
     else:
         # Claude: native Claude Code subscription FIRST (CLAUDE_CODE_OAUTH_TOKEN injected by
         # the orchestrator); OpenRouter only as fallback. Native = free (subscription) + the
@@ -167,10 +170,15 @@ def bad(r):
 t0 = time.time()
 # Both agents: NATIVE subscription first (codex=ChatGPT, claude=Claude OAuth) → OpenRouter
 # fallback only if native fails. Keeps the big agent spend on subscriptions, not OpenRouter.
-res = run_agent(use_openrouter=False)
-auth = "native(chatgpt)" if a.agent == "codex" else "native(claude-oauth)"
-if bad(res) and ORKEY:
-    res = run_agent(use_openrouter=True); auth = "openrouter(fallback)"
+# WB_FORCE_OPENROUTER=1 skips the native attempt and runs OpenRouter directly
+# (explicit OpenRouter A/B; avoids the native→fallback two-attempt path).
+if os.environ.get("WB_FORCE_OPENROUTER") == "1" and ORKEY:
+    res = run_agent(use_openrouter=True); auth = "openrouter(forced)"
+else:
+    res = run_agent(use_openrouter=False)
+    auth = "native(chatgpt)" if a.agent == "codex" else "native(claude-oauth)"
+    if bad(res) and ORKEY:
+        res = run_agent(use_openrouter=True); auth = "openrouter(fallback)"
 
 wall = int(time.time() - t0)
 tr = res.get("trace", {}) or {}

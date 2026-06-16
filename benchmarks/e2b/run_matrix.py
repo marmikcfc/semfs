@@ -24,7 +24,10 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 CLAUDECODE_JS = REPO / "benchmarks/vendor/Workspace-Bench/evaluation/baselines/ClaudeCode.js"
 CELL_DRIVER = REPO / "benchmarks/e2b/cell_driver.py"
 CODEX_AUTH = REPO / "codex_auth.json"
-FIXED_BIN = REPO / "benchmarks/e2b/assets/semfs-fixed"   # Modal-built x86_64 binary w/ timeout fix (pushed at boot)
+# Modal-built x86_64 binary pushed over the baked one at boot. Env-overridable (WB_FIXED_BIN)
+# so the evo harness can point each experiment at its own per-source-hash rebuilt binary
+# without mutating the shared assets/ dir.
+FIXED_BIN = pathlib.Path(os.environ.get("WB_FIXED_BIN") or (REPO / "benchmarks/e2b/assets/semfs-fixed"))
 KNOBS = {}   # SEMFS_* knob overrides for the optimization sweep (loaded from --knobs JSON)
 WB_LITE = REPO / "benchmarks/e2b/assets/wb_lite/task_lite_clean_en"  # judge metadata (output_files etc.)
 
@@ -67,6 +70,39 @@ def is_sandbox_dead(exc):
     return any(x in s for x in ("SandboxNotFoundException","404","not found","CLOSED","LocalProtocolError","ConnectionInputs"))
 
 
+MOUNT_ARMS = {"kg", "nokg", "nokgAK"}   # arms that depend on a live semfs FUSE mount
+
+
+def build_mount_env():
+    me = {"SEMFS_EMBED_MODEL": "gemma-q4", "SEMFS_EMBED_ONNX_DIR": "/home/user/gemma_q4",
+          "SUPERMEMORY_API_KEY": "dummy-local", "SEMFS_NO_PUSH": "1", "SEMFS_NO_SYNC": "1",
+          "SEMFS_SEARCH_ONLY": "on", "SEMFS_DEBUG_RANKING": "1",
+          "SEMFS_SEARCH_TIMEOUT_SECS": "120", "SEMFS_GREP_CLIENT_WAIT_SECS": "140",
+          "SEMFS_SEARCH_DEADLINE_SECS": "90"}
+    me.update(KNOBS)   # sweep overrides reach the daemon (rerank/lane/rewrite knobs)
+    return me
+
+
+def do_mount(sbx):
+    o, e = sh(sbx, "semfs mount chanpin --path /home/user/ws/mnt --backend fuse "
+                   "--key dummy-local --no-sync --no-push 2>&1 || true", timeout=240, env=build_mount_env())
+    return (o + e).strip()
+
+
+def mount_live(sbx):
+    """Mount-health gate (SEM-35): a DEAD FUSE mount silently yields garbage scores that
+    confound the semfs arms (the daemon can die mid-run — OOM/panic — so this is checked
+    PER CELL, not just at boot). Live ⇔ semfs reports an active mount AND /ws/mnt serves files."""
+    lst, _ = sh(sbx, "semfs list 2>&1 || true", timeout=30)
+    if "no active mounts" in lst.lower():
+        return False
+    n, _ = sh(sbx, "ls -1 /home/user/ws/mnt 2>/dev/null | wc -l", timeout=30)
+    try:
+        return int(n.strip()) > 0
+    except Exception:
+        return False
+
+
 def boot_prep(sbx, need_plain, need_mount=True):
     print(f"  boot-prep… (mount={need_mount}, plain={need_plain})", flush=True)
     sh(sbx, "mkdir -p ~/ws ~/run ~/.semfs ~/.codex && "
@@ -97,24 +133,11 @@ def boot_prep(sbx, need_plain, need_mount=True):
     print("  real rg:", real_rg, flush=True)
     # mount semfs (only needed for nokg/nokgAK; cloud + plain don't use the local mount)
     if need_mount:
-        mount_env = {"SEMFS_EMBED_MODEL": "gemma-q4", "SEMFS_EMBED_ONNX_DIR": "/home/user/gemma_q4",
-                     "SUPERMEMORY_API_KEY": "dummy-local", "SEMFS_NO_PUSH": "1", "SEMFS_NO_SYNC": "1",
-                     "SEMFS_SEARCH_ONLY": "on",
-                     # dump RRF→RERANK→FINAL ranked order (rank/score/filepath) per query into
-                     # the daemon log. Search runs in the DAEMON, so this must be set HERE at
-                     # mount (not in cell_driver). Captured via semfs_logs/chanpin.log on pull.
-                     "SEMFS_DEBUG_RANKING": "1",
-                     # timeout fix (rcas/2026-06-15-grep-timeout-cloud-fallback-panic.md):
-                     # raise the search bound to ~2min so a lock-contended search completes
-                     # instead of timing out → cloud fallback → panic → retry-storm.
-                     "SEMFS_SEARCH_TIMEOUT_SECS": "120", "SEMFS_GREP_CLIENT_WAIT_SECS": "140",
-                     "SEMFS_SEARCH_DEADLINE_SECS": "90"}
-        mount_env.update(KNOBS)   # sweep overrides reach the daemon (rerank/lane knobs)
-        o, e = sh(sbx, "semfs mount chanpin --path /home/user/ws/mnt --backend fuse "
-                       "--key dummy-local --no-sync --no-push 2>&1 || true", timeout=240, env=mount_env)
-        print("  mount:", (o + e).strip()[-200:], flush=True)
+        # mount env (debug-ranking + the timeout fix from rcas/2026-06-15) lives in
+        # build_mount_env() so boot AND the per-cell remount use the SAME config.
+        print("  mount:", do_mount(sbx)[-200:], flush=True)
         ls, _ = sh(sbx, "ls /home/user/ws/mnt 2>&1 | head -5")
-        print("  mount ls:", ls.strip()[:200], flush=True)
+        print(f"  mount ls: {ls.strip()[:200]}  | live={mount_live(sbx)}", flush=True)
     if need_plain:
         import subprocess, tempfile
         tf = tempfile.mktemp(suffix=".tgz")
@@ -140,6 +163,18 @@ def run_cell(sbx, agent, case, arm, rep, real_rg):
     label = f"pm_{agent}_{case}_{arm}_r{rep}"
     sbx.set_timeout(3600)
     print(f"  ▶ {label} …", flush=True)
+    # MOUNT-HEALTH GATE (SEM-35): never let a dead mount masquerade as a "semfs got 0%".
+    # The daemon can die mid-run, so check per cell; remount once; if still dead, record an
+    # explicit infra_fail (NOT "ok" → re-runs next invocation, excluded from aggregation).
+    if arm in MOUNT_ARMS and not mount_live(sbx):
+        print(f"    ⚠ mount dead before {label} — remounting…", flush=True)
+        do_mount(sbx)
+        if not mount_live(sbx):
+            print(f"    ✗ INFRA_FAIL {label}: mount still dead — cell EXCLUDED", flush=True)
+            res = {"label": label, "agent": agent, "case": case, "arm": arm, "status": "infra_fail_mount"}
+            d = OUT / label; d.mkdir(parents=True, exist_ok=True)
+            (d / "result.json").write_text(json.dumps(res, ensure_ascii=False, indent=2))
+            return res
     # One daemon log accumulates ALL cells on a sandbox; record the line offset NOW so the
     # pull can slice out just THIS cell's RANKDUMP/pipeline-counts lines (per-query rank order).
     _ls, _ = sh(sbx, "wc -l < /home/user/.cache/semfs/logs/chanpin.log 2>/dev/null || echo 0")
@@ -151,6 +186,8 @@ def run_cell(sbx, agent, case, arm, rep, real_rg):
            "CLAUDE_CODE_OAUTH_TOKEN": CLAUDE_OAUTH,
            "SUPERMEMORY_API_KEY": os.environ.get("SUPERMEMORY_API_KEY", ""),
            "SUPERMEMORY_API_URL": os.environ.get("SUPERMEMORY_API_URL", ""),
+           "WB_FORCE_OPENROUTER": os.environ.get("WB_FORCE_OPENROUTER", ""),  # 1 = skip native, use OpenRouter
+           "WB_OR_MODEL": os.environ.get("WB_OR_MODEL", ""),  # OpenRouter model override (e.g. z-ai/glm-5.1)
            "WB_OUTPUT_FILES": expected_output_files(case)}  # filename hint → cell_driver prompt
     env.update(KNOBS)   # sweep overrides reach the grep client (caps/result-limit/rewrite)
     o, e = sh(sbx, f"cd /home/user && python3 cell_driver.py --label {label} --agent {agent} "
