@@ -162,8 +162,10 @@ def run_reps(worktree, knobs, binary, env, exp_tag):
     cell_env["WB_FIXED_BIN"] = str(binary)
     for r in range(1, N_REPS + 1):
         rep = f"{exp_tag}r{r}"
+        # No --force: cells are labelled per-experiment (rep includes exp_id), so a re-run
+        # (e.g. after a judge-only fix) SKIPS already-ok cells and just re-judges — resumable.
         cmd = ["python3", str(runmtx), "--cases", ",".join(CASES), "--agents", "codex",
-               "--arms", ARM, "--rep", rep, "--parallel", "2", "--force"]
+               "--arms", ARM, "--rep", rep, "--parallel", "2"]
         if knobs.exists():
             cmd += ["--knobs", str(knobs)]
         log(f"  run_matrix rep {r}/{N_REPS} (tag {rep})")

@@ -20,9 +20,13 @@ RUNS = REPO / "tickets/workspace-bench-5arm-matrix/artifacts/e2b_runs"
 WBLITE = pathlib.Path("/tmp/wb_lite/task_lite_clean_en")
 
 env = dict(os.environ)
-for line in open(REPO / ".env"):
-    if "=" in line and not line.strip().startswith("#"):
-        k, _, v = line.partition("="); env[k.strip()] = v.strip()
+# .env is gitignored → ABSENT in evo worktrees. Be tolerant: augment from .env when present
+# (main repo), else fall back to os.environ (the evo harness injects OPENROUTER_API_KEY there).
+_envf = REPO / ".env"
+if _envf.exists():
+    for line in open(_envf):
+        if "=" in line and not line.strip().startswith("#"):
+            k, _, v = line.partition("="); env[k.strip()] = v.strip()
 ORKEY = env.get("OPENROUTER_API_KEY", "")
 # agent_eval.py reads the yaml values LITERALLY (no env expansion), so write a RESOLVED
 # config with real values (mirrors the EC2 /tmp/judge_seed.yaml), not the ${..} template.
