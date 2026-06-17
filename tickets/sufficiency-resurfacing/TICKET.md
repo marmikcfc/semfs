@@ -55,3 +55,41 @@ Compact (no extra tokens — re-affirms content already paid for), deterministic
 
 - Anti-dedup: this **supersedes** the SEM-19 dedup-strip (which made over-exploration worse).
 - Orthogonal to compression (input/output token trimming) and the KG (structure map) tickets.
+
+---
+
+## Test plan — PREPPED 2026-06-17, **NOT launched** (awaiting explicit go)
+
+Per user (2026-06-17): "KG on should by default use this [the dense Leiden+kNN KG]; we should have a
+sufficiency-resurfacing knob added. Don't test yet, but ideally test **sufficiency-resurfacing** and
+**sufficiency-resurfacing + KG**." The dense KG is now the **default** KG build (`graph_file.rs`
+unconditionally uses Leiden+kNN — see `tickets/kg-quality/`), so "KG on" already means the dense KG.
+
+**Knob added:** `benchmarks/e2b/knobs/sufficiency.json` = the winning `prompt_only` base (turnbrake +
+caps + rewrite-off) **+ `SEMFS_SUFFICIENCY=on`**. Deliberately NO `SEMFS_DEDUP_WINDOW` — sufficiency
+is the anti-dedup alternative (daemon sets `dedup_strip=false` when sufficiency is on). This tests
+whether sufficiency *adds on top of the established winner*, not in isolation.
+
+**Arm matrix** (isolates the two focal levers as marginal effects over the prompt-only winner):
+
+| arm | KG | sufficiency | invocation | needs dense-KG seed? |
+|---|---|---|---|---|
+| plain | — | — | `--arms plain` | no |
+| prompt-only (current winner) | off | off | `--arms nokg --knobs prompt_only.json` | no |
+| **sufficiency** ⭐ | off | on | `--arms nokg --knobs sufficiency.json` | no |
+| KG+prompt | on | off | `--arms kg --knobs prompt_only.json` | **yes** |
+| **sufficiency + KG** ⭐ | on | on | `--arms kg --knobs sufficiency.json` | **yes** |
+
+⭐ = the two arms the user named. The other three are the baselines needed to read them (you can't
+attribute a win to sufficiency or KG without prompt-only and KG+prompt as controls).
+
+**Prerequisite for the KG arms (the `--arms kg` rows):** the shipping seed
+`benchmarks/e2b/assets/chanpin-gemma-q4.db` still holds the **old Louvain** projection (173 comms,
+38% singletons). Before any KG-arm run it must be re-materialized with the new code
+(`cargo run --release -p semfs-core --example materialize_kg -- <seed>` → 32 comms, 3% singletons),
+done on a **copy** then swapped in (destructive-edit-on-copies rule), or rebuilt fresh on Modal x86_64.
+Otherwise the KG arm would test the *fragmented* KG — a confound.
+
+**Run config (to finalize at launch):** glm-5.1 (`WB_OR_MODEL=z-ai/glm-5.1`, `WB_FORCE_OPENROUTER=1`),
+53/171 + a discovery case, n≥3, E2B real-FUSE only ([[all-benchmark-tests-on-e2b]]). The Modal binary
+must be rebuilt with the sufficiency + Leiden+kNN code before the run.
