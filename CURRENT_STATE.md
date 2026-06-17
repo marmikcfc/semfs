@@ -1,6 +1,24 @@
 # Current State — semfs / Workspace-Bench instance
 
-_Last updated: 2026-06-16. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
+_Last updated: 2026-06-17. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
+
+## ⮕ Latest (2026-06-17) — evo /optimize on glm-5.1: PROMPT lever beats plain on both axes; converged
+
+- **`/evo:optimize` (z-ai/glm-5.1, WB-Lite 53+171, E2B real-FUSE) CONVERGED (stall=5).** Objective
+  (beat plain on BOTH higher accuracy AND lower tokens) **ACHIEVED**: winner **exp_0002 = 44.4% acc /
+  173K tok** vs **plain 27.2% / 242K** (+63% rel. acc, −28% tokens). Simpler robust **exp_0007
+  (prompt-only) = 34.9% / 143K** also wins. evo workspace `.evo/run_0000` (full log in `.evo/project.md`).
+- **Load-bearing lever = the transcription/stop PROMPT** (WB_TURNBRAKE): stops the agent's re-search
+  loop (no-prompt ablation exploded to 0.24/878K) + forces verbatim transcription (≈2× acc). Confirms
+  the 2026-06-16 transcribe RCA; refutes its "prompt is bimodal/unshippable" worry (at n=3 it's decisive).
+- **Empirical redirect on Task #10:** the win is agent BEHAVIOR (prompt), not delivery form → the RCA's
+  Rust cleaner-delivery / FUSE-enum levers target a NON-bottleneck here → deprioritized (low-EV).
+- **Robustness:** `SEMFS_GREP_COMPRESS=on` → per-grep OpenRouter calls → timeout risk on grep-heavy
+  cases → **prefer prompt-only config**. Held-out 95/386/175 INCONCLUSIVE (beyond glm-5.1 for both arms,
+  plain 0% @ 1–2.3M tok). Real next lever = a hard search/turn cap (case-95 over-explored 134 calls).
+- New harness: `benchmarks/e2b/{evo_bench.py,evo_token_gate.py}` + knobs `{best_exp0002,prompt_only}.json`
+  + `glm_plain_baseline.sh`/`glm_heldout_validation.sh`. Fixed: ENOSPC corpus-tarball leak; worktree
+  bloat 907→72MB (untracked artifacts); run_judge `.env`-in-worktree crash. Committed on branch.
 
 ## ⮕ Latest (2026-06-16) — grep cross-turn dedup v1 shipped; seed decontaminated; full WB-Lite rubrics pulled
 
