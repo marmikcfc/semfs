@@ -2,6 +2,23 @@
 
 _Last updated: 2026-06-17. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
 
+## ⮕ Latest (2026-06-17) — kg-quality SHIPPED: full Leiden + embedding-kNN → singletons 38%→3%
+
+- **kg-quality fix shipped** (commit `0106b2e`, TDD: 13 community tests + 351 core + 74 semfs green).
+  Two changes to the KG projection: (1) `Graph::add_knn_edges` densifies the file graph with cosine-kNN
+  edges (each file → 6 nearest embedding neighbours, reusing the `vchunks` vec0 index — ~free); (2) a
+  full multi-level **Leiden** detector (`local_move→refine→aggregate→recurse`, self-loop-carrying)
+  replaces the single-level Louvain+`leiden_refine` hybrid. Wired into `graph_file.rs::build_file_graph`.
+- **Structural measurement** (re-materialized chanpin KG on a `/tmp` copy — deterministic, offline,
+  no LLM/FUSE): **singletons 66 (38.2%) → 1 (3.1%)** ✅ beat the <10% target; communities 173→32;
+  god-nodes 669→128. ~35% of files that had a *zero* "related-files" pointer now sit in a real cluster.
+- **Honest caveat:** overshot into a **135-file bucket** (21% of corpus; target was <60). Validated
+  *coherent* not junk-drawer (all `compliance_and_risk_control/*`), power-law spread (top-3 = 43%), no
+  single-blob pathology. `RESOLUTION=1.0` is the lever; whether 135 is too coarse *as a pointer* is an
+  E2E question — not sweeping the proxy in a vacuum.
+- **Next (the "relevant metrics" goal, NOT yet launched):** Modal x86_64 seed rebuild with this code →
+  E2B FUSE A/B `SEMFS_KG=on` vs nokg/plain (53/171 + discovery case). Ticket: `tickets/kg-quality/`.
+
 ## ⮕ Latest (2026-06-17) — evo /optimize on glm-5.1: PROMPT lever beats plain on both axes; converged
 
 - **`/evo:optimize` (z-ai/glm-5.1, WB-Lite 53+171, E2B real-FUSE) CONVERGED (stall=5).** Objective
