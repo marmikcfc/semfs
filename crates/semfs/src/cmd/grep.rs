@@ -712,6 +712,31 @@ fn confidence_line(top: f64, second: Option<f64>, min: Option<f64>, top_complete
     }
 }
 
+/// Sufficiency re-surfacing (anti-dedup): when a search mostly re-surfaces files the
+/// agent already retrieved this session, emit a STRONG "you have the complete set, stop"
+/// verdict — instead of dedup's content-stripping that backfired (agent felt it lost data
+/// → searched more). Fires only on high overlap (≥60% of rendered hits already seen, ≥2
+/// seen), so a genuinely-new search is never falsely told to stop. `None` = stay silent.
+fn sufficiency_verdict(rendered: usize, seen: usize, seen_paths: &[String]) -> Option<String> {
+    if rendered == 0 || seen < 2 || (seen as f64) < 0.6 * rendered as f64 {
+        return None;
+    }
+    Some(format!(
+        "# ✓ COMPLETE SET — you already retrieved these this session: {}. Further searches \
+         return the same results. STOP searching and build the deliverable from what you have.",
+        seen_paths.join(", ")
+    ))
+}
+
+/// `SEMFS_SUFFICIENCY=on` → re-surface already-seen content (daemon keeps it) and emit the
+/// sufficiency verdict, instead of dedup's strip-and-pointer.
+fn sufficiency_enabled() -> bool {
+    matches!(
+        std::env::var("SEMFS_SUFFICIENCY").ok().as_deref(),
+        Some("on" | "1" | "true")
+    )
+}
+
 fn line_range_in_file(file_content: &str, chunk: &str) -> Option<(usize, usize)> {
     if chunk.is_empty() {
         return None;
@@ -1137,6 +1162,9 @@ pub async fn run(args: Args) -> Result<()> {
     // excerpt IS the whole file.
     let mut top_is_complete = false;
 
+    let sufficiency = sufficiency_enabled();
+    let mut seen_count = 0usize;
+    let mut seen_paths: Vec<String> = Vec::new();
     for (i, result) in hits.iter().take(render_n).enumerate() {
         if i > 0 {
             println!();
@@ -1148,8 +1176,15 @@ pub async fn run(args: Args) -> Result<()> {
         // instead of re-rendering. The agent still "has" the file (it's in its
         // context from turn N) — re-sending would just re-charge tokens.
         if let Some(t) = result.seen_at_turn {
-            println!("# already in your context (turn {t}): {fp} — not resending");
-            continue;
+            if sufficiency {
+                // SUFFICIENCY: the daemon kept the content → re-surface it (fall through to
+                // render below) and tally the overlap for the COMPLETE-SET verdict.
+                seen_count += 1;
+                seen_paths.push(fp.to_string());
+            } else {
+                println!("# already in your context (turn {t}): {fp} — not resending");
+                continue;
+            }
         }
 
         // Tier decision: does this hit get a full excerpt or just path + snippet?
@@ -1380,6 +1415,15 @@ pub async fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Sufficiency re-surfacing (anti-dedup): if this search mostly re-surfaced files the agent
+    // already retrieved, tell it the set is COMPLETE so it stops the re-search loop.
+    if sufficiency {
+        if let Some(v) = sufficiency_verdict(hits.len().min(render_n), seen_count, &seen_paths) {
+            println!();
+            println!("{v}");
+        }
+    }
+
     Ok(())
 }
 
@@ -1412,6 +1456,19 @@ mod tests {
         let (k, t) = super::adaptive_k(&sims);
         assert!((2..=10).contains(&k), "flat scores should return a capped cluster, got {k}");
         assert!(t == super::AdaptiveTier::Cluster);
+    }
+
+    #[test]
+    fn sufficiency_fires_on_high_overlap_and_lists_files() {
+        let paths = vec!["/a.txt".to_string(), "/b.txt".to_string(), "/c.txt".to_string()];
+        // 3 of 4 rendered already seen → fire a STOP verdict that names the files
+        let v = super::sufficiency_verdict(4, 3, &paths).expect("high overlap must fire");
+        assert!(v.contains("COMPLETE SET"), "verdict should signal completeness");
+        assert!(v.contains("/a.txt") && v.contains("/c.txt"), "must list the already-seen files");
+        assert!(v.to_uppercase().contains("STOP"), "must tell the agent to stop searching");
+        // low overlap or too-few-seen → stay silent (don't falsely stop a real search)
+        assert!(super::sufficiency_verdict(5, 1, &["/a.txt".to_string()]).is_none(), "1/5 seen → silent");
+        assert!(super::sufficiency_verdict(0, 0, &[]).is_none(), "no hits → silent");
     }
 
     #[test]

@@ -584,19 +584,38 @@ pub async fn run(cfg: DaemonConfig) -> Result<()> {
         org_name: session_org_name,
         graph_queue,
         shutdown_notify: ipc_shutdown_notify.clone(),
-        // Cross-turn grep dedup (SEM-19, v1). Opt-in: SEMFS_DEDUP_WINDOW=N (turns)
-        // enables a single daemon-global sliding window; unset/0 → None → today's
-        // stateless behavior, byte-identical. Assumes one mount = one agent (v1).
-        session_cache: match std::env::var("SEMFS_DEDUP_WINDOW")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0)
-        {
-            0 => None,
-            w => Some(std::sync::Mutex::new(
-                semfs_core::daemon::session_cache::SessionCache::new(w),
-            )),
+        // Cross-turn grep session memory. Two consumers of the same sliding window:
+        //   SEMFS_DEDUP_WINDOW=N → dedup (strip re-sent content)  [SEM-19 v1]
+        //   SEMFS_SUFFICIENCY=on → sufficiency (re-surface + "you have it, stop" verdict)
+        // Sufficiency takes precedence; unset/0/off → None → today's stateless behavior.
+        session_cache: {
+            let sufficiency = std::env::var("SEMFS_SUFFICIENCY")
+                .ok()
+                .as_deref()
+                .map(|v| matches!(v, "on" | "1" | "true"))
+                .unwrap_or(false);
+            let window = std::env::var("SEMFS_DEDUP_WINDOW")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0);
+            if sufficiency {
+                Some(std::sync::Mutex::new(
+                    semfs_core::daemon::session_cache::SessionCache::new(5),
+                ))
+            } else if window > 0 {
+                Some(std::sync::Mutex::new(
+                    semfs_core::daemon::session_cache::SessionCache::new(window),
+                ))
+            } else {
+                None
+            }
         },
+        // dedup STRIPS re-sent content; sufficiency KEEPS it (re-surface). strip = !sufficiency.
+        dedup_strip: !std::env::var("SEMFS_SUFFICIENCY")
+            .ok()
+            .as_deref()
+            .map(|v| matches!(v, "on" | "1" | "true"))
+            .unwrap_or(false),
     });
     let socket_path = daemon::socket_path(&cfg.container_tag);
     // Bind the control socket SYNCHRONOUSLY here so a bind failure aborts the

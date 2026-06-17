@@ -46,6 +46,7 @@ fn search_timeout() -> Duration {
 fn dedup_seen(
     cache: &Option<std::sync::Mutex<super::session_cache::SessionCache>>,
     hits: &mut [crate::backend::SearchHit],
+    strip: bool,
 ) {
     let Some(cache) = cache else { return };
     let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -59,8 +60,12 @@ fn dedup_seen(
         }
         if let Some(first_turn) = c.see(fp) {
             h.seen_at_turn = Some(first_turn);
-            h.memory = None;
-            h.chunk = None;
+            // dedup mode strips (bytes never re-cross IPC); SUFFICIENCY mode keeps the
+            // content (re-surface it) and lets the client emit a "you have it, stop" verdict.
+            if strip {
+                h.memory = None;
+                h.chunk = None;
+            }
         }
     }
 }
@@ -97,6 +102,10 @@ pub struct IpcState {
     /// before). A `std::sync::Mutex` is fine: the lock is held only for the
     /// synchronous partition AFTER `index.search()` awaits, never across an await.
     pub session_cache: Option<std::sync::Mutex<super::session_cache::SessionCache>>,
+    /// `true` = dedup mode (strip re-sent content); `false` = SUFFICIENCY mode
+    /// (keep content, re-surface it, let the client emit a "you have it, stop" verdict).
+    /// Ignored when `session_cache` is `None`.
+    pub dedup_strip: bool,
 }
 
 /// Bind the IPC socket SYNCHRONOUSLY (clearing any stale socket first). Kept
@@ -221,7 +230,7 @@ async fn dispatch(req: Request, state: &IpcState) -> Response {
             .await
             {
                 Ok(Ok(mut hits)) => {
-                    dedup_seen(&state.session_cache, &mut hits);
+                    dedup_seen(&state.session_cache, &mut hits, state.dedup_strip);
                     Response::SearchHits {
                         hits,
                         searchable: true,
@@ -273,12 +282,12 @@ mod dedup_tests {
         let cache = Some(Mutex::new(SessionCache::new(5)));
         // turn 1: first delivery — content kept, nothing marked.
         let mut t1 = vec![hit("/a.md", "BODY A"), hit("/b.md", "BODY B")];
-        dedup_seen(&cache, &mut t1);
+        dedup_seen(&cache, &mut t1, true);
         assert!(t1.iter().all(|h| h.seen_at_turn.is_none()));
         assert_eq!(t1[0].memory.as_deref(), Some("BODY A"));
         // turn 2: /a re-surfaces (re-grep) → marked seen + stripped; /c is new.
         let mut t2 = vec![hit("/a.md", "BODY A"), hit("/c.md", "BODY C")];
-        dedup_seen(&cache, &mut t2);
+        dedup_seen(&cache, &mut t2, true);
         assert_eq!(t2[0].seen_at_turn, Some(1));
         assert_eq!(t2[0].memory, None, "content stripped — bytes never cross IPC");
         assert!(t2[1].seen_at_turn.is_none());
@@ -286,11 +295,24 @@ mod dedup_tests {
     }
 
     #[test]
+    fn sufficiency_marks_seen_but_keeps_content() {
+        // SUFFICIENCY mode (strip=false): a re-surfaced file is MARKED seen but its
+        // content is KEPT — the anti-dedup. The client uses the mark to emit a "stop" verdict.
+        let cache = Some(Mutex::new(SessionCache::new(5)));
+        let mut t1 = vec![hit("/a.md", "BODY A")];
+        dedup_seen(&cache, &mut t1, false); // turn 1
+        let mut t2 = vec![hit("/a.md", "BODY A")];
+        dedup_seen(&cache, &mut t2, false); // turn 2 — /a re-surfaces
+        assert_eq!(t2[0].seen_at_turn, Some(1), "must MARK it seen");
+        assert_eq!(t2[0].memory.as_deref(), Some("BODY A"), "content KEPT — re-surfaced, not stripped");
+    }
+
+    #[test]
     fn noop_when_disabled() {
         let cache: Option<Mutex<SessionCache>> = None;
         let mut h = vec![hit("/a.md", "BODY")];
-        dedup_seen(&cache, &mut h);
-        dedup_seen(&cache, &mut h);
+        dedup_seen(&cache, &mut h, true);
+        dedup_seen(&cache, &mut h, true);
         assert!(h[0].seen_at_turn.is_none());
         assert_eq!(h[0].memory.as_deref(), Some("BODY"), "disabled = byte-identical to today");
     }
@@ -307,9 +329,9 @@ mod dedup_tests {
             similarity: 0.5,
             seen_at_turn: None,
         }];
-        dedup_seen(&cache, &mut t1);
+        dedup_seen(&cache, &mut t1, true);
         let mut t2 = vec![hit("/a.md", "NOW HAS CONTENT")];
-        dedup_seen(&cache, &mut t2);
+        dedup_seen(&cache, &mut t2, true);
         assert!(t2[0].seen_at_turn.is_none());
         assert_eq!(t2[0].memory.as_deref(), Some("NOW HAS CONTENT"));
     }
