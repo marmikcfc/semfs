@@ -524,10 +524,32 @@ fn is_spreadsheet_ext(filepath: &str) -> bool {
         .any(|ext| base.ends_with(ext))
 }
 
+/// Source-code and structured-config files whose text must NOT be compressed —
+/// telegraphic rewriting can silently drop/garble syntax, identifiers, or structure.
+/// Sees through the `.extracted.md` sibling suffix, like [`is_spreadsheet_ext`].
+fn is_code_ext(filepath: &str) -> bool {
+    let lower = filepath.to_lowercase();
+    let base = lower.strip_suffix(".extracted.md").unwrap_or(&lower);
+    const CODE_EXTS: &[&str] = &[
+        // programming languages
+        ".rs", ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".java",
+        ".c", ".h", ".cpp", ".cc", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash", ".zsh",
+        ".sql", ".swift", ".kt", ".scala", ".lua", ".pl", ".r", ".dart", ".ex", ".exs",
+        ".clj", ".hs", ".ml", ".vue", ".svelte",
+        // structured config / markup (compression would corrupt the structure)
+        ".toml", ".yaml", ".yml", ".json", ".xml", ".html", ".htm", ".css", ".scss",
+    ];
+    CODE_EXTS.iter().any(|ext| base.ends_with(ext))
+}
+
 /// Compress `text` for inline render when eligible; `None` = render the
 /// original (ineligible, disabled, no key, or the LLM call failed).
 fn maybe_compress(filepath: &str, text: &str) -> Option<String> {
-    if !compress_enabled() || is_spreadsheet_ext(filepath) || text.len() < compress_min_bytes() {
+    if !compress_enabled()
+        || is_spreadsheet_ext(filepath)
+        || is_code_ext(filepath)
+        || text.len() < compress_min_bytes()
+    {
         return None;
     }
     let key = std::env::var("OPENROUTER_API_KEY").ok().filter(|k| !k.is_empty())?;
@@ -1391,6 +1413,23 @@ mod tests {
         assert!((2..=10).contains(&k), "flat scores should return a capped cluster, got {k}");
         assert!(t == super::AdaptiveTier::Cluster);
     }
+
+    #[test]
+    fn code_and_config_files_are_compress_exempt() {
+        // source code + structured config must never be sent to the compressor
+        for f in [
+            "src/lib.rs", "app.py", "server.ts", "main.go", "Query.java", "build.sh",
+            "config.toml", "k8s.yaml", "pkg.json", "index.html", "styles.css",
+            "app.py.extracted.md", // sees through the .extracted.md sibling suffix
+        ] {
+            assert!(super::is_code_ext(f), "{f} must be code/config-exempt from compression");
+        }
+        // prose stays compressible
+        for f in ["report.txt", "notes.md", "interaction_document_6.txt"] {
+            assert!(!super::is_code_ext(f), "{f} is prose — must NOT be code-exempt");
+        }
+    }
+
 
     #[test]
     fn adaptive_k_empty_is_zero() {
