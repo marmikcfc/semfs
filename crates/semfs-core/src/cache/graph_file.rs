@@ -10,13 +10,68 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::Connection;
 
-use crate::backend::community::{hub_entities, CommunityDetector, Graph, Louvain};
+use crate::backend::community::{hub_entities, CommunityDetector, Graph, Leiden};
 use crate::cache::digest::{render, CommunityView};
 
 const GOD_NODES_PER_TOPIC: usize = 4;
 const FILES_PER_TOPIC: usize = 4;
 const HUB_PCTL: f64 = 0.99;
 const RESOLUTION: f64 = 1.0;
+/// Embedding-kNN densification: connect each file to its `KNN_K` nearest embedding
+/// neighbours so semantically-related files cluster even without a shared entity
+/// (the sparse-edge → singleton fix). Reuses the vectors already in `vchunks`.
+const KNN_K: usize = 6;
+const KNN_WEIGHT: f64 = 1.0;
+
+/// Per-file mean embedding from the `vchunks` vec0 store (rowid = chunk id),
+/// indexed to match `files`. Best-effort: a missing vector store / extension yields
+/// an `Err`, and the caller simply skips kNN densification.
+fn file_mean_embeddings(conn: &Connection, files: &[String]) -> rusqlite::Result<Vec<Vec<f32>>> {
+    let index: HashMap<&str, usize> = files.iter().enumerate().map(|(i, f)| (f.as_str(), i)).collect();
+    let mut sums: Vec<Vec<f32>> = vec![Vec::new(); files.len()];
+    let mut counts = vec![0u32; files.len()];
+    let mut stmt =
+        conn.prepare("SELECT c.filepath, v.embedding FROM vchunks v JOIN chunks c ON c.id = v.rowid")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+    for (fp, blob) in rows.flatten() {
+        let Some(&fi) = index.get(fp.as_str()) else { continue };
+        if blob.len() % 4 != 0 {
+            continue;
+        }
+        let v: Vec<f32> = blob
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        if sums[fi].is_empty() {
+            sums[fi] = v;
+        } else if sums[fi].len() == v.len() {
+            for (s, x) in sums[fi].iter_mut().zip(&v) {
+                *s += x;
+            }
+        }
+        counts[fi] += 1;
+    }
+    for fi in 0..files.len() {
+        if counts[fi] > 1 {
+            let c = counts[fi] as f32;
+            for s in &mut sums[fi] {
+                *s /= c;
+            }
+        }
+    }
+    Ok(sums)
+}
+
+/// The file↔file graph: shared-entity edges densified with embedding-kNN edges.
+fn build_file_graph(conn: &Connection, file_entities: &[HashSet<u32>], files: &[String]) -> Graph {
+    let mut g = Graph::from_file_entities(file_entities);
+    if let Ok(emb) = file_mean_embeddings(conn, files) {
+        if emb.iter().any(|v| !v.is_empty()) {
+            g.add_knn_edges(&emb, KNN_K, KNN_WEIGHT);
+        }
+    }
+    g
+}
 
 /// Label-quality tier for a god-node candidate (lower = better topic label).
 /// Concepts/orgs/projects name a topic; dates (Event), values/codes (Artifact,
@@ -99,8 +154,8 @@ pub fn build_digest(conn: &Connection) -> rusqlite::Result<String> {
     }
 
     // 4. detect communities on the file↔file projection
-    let g = Graph::from_file_entities(&file_entities);
-    let comm = Louvain { leiden_refine: true }.detect(&g, RESOLUTION);
+    let g = build_file_graph(conn, &file_entities, &files);
+    let comm = Leiden.detect(&g, RESOLUTION);
 
     // 5. per community: members + god-nodes (top-degree entities, hubs excluded)
     let mut by_comm: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -214,8 +269,8 @@ pub fn compute_projection(conn: &Connection) -> rusqlite::Result<Vec<ProjView>> 
     let hubs = hub_entities(&ent_degree, HUB_PCTL);
 
     // 3. detect communities on the file↔file projection (hard partition)
-    let g = Graph::from_file_entities(&file_entities);
-    let comm = Louvain { leiden_refine: true }.detect(&g, RESOLUTION);
+    let g = build_file_graph(conn, &file_entities, &files);
+    let comm = Leiden.detect(&g, RESOLUTION);
     let mut by_comm: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (fi, &c) in comm.iter().enumerate() {
         by_comm.entry(c).or_default().push(fi);
@@ -402,8 +457,8 @@ pub fn build_graph_json(conn: &Connection) -> rusqlite::Result<String> {
             }
         }
         let hubs = hub_entities(&ent_degree, HUB_PCTL);
-        let g = Graph::from_file_entities(&file_entities);
-        let comm = Louvain { leiden_refine: true }.detect(&g, RESOLUTION);
+        let g = build_file_graph(conn, &file_entities, &flist);
+        let comm = Leiden.detect(&g, RESOLUTION);
         let mut by_comm: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (fi, &c) in comm.iter().enumerate() {
             by_comm.entry(c).or_default().push(fi);
