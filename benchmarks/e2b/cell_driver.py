@@ -155,7 +155,8 @@ def run_agent(use_openrouter):
             os.environ.pop("USE_CLAUDE_LONG_RUNNING_TOKEN", None)
             ap_ = {"provider_type": "anthropic", "baseUrl": "https://openrouter.ai/api",
                    "apiKey": ORKEY, "model": "anthropic/claude-sonnet-4.6"}
-    return h.run(prompt=wrapped, work_dir=WD, sandbox_dir=sd, timeout_s=1500, api_provider=ap_)
+    agent_timeout = int(os.environ.get("WB_AGENT_TIMEOUT") or 1500)  # raise for grep-heavy/compress runs
+    return h.run(prompt=wrapped, work_dir=WD, sandbox_dir=sd, timeout_s=agent_timeout, api_provider=ap_)
 
 
 def bad(r):

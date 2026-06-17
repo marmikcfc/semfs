@@ -191,8 +191,9 @@ def run_cell(sbx, agent, case, arm, rep, real_rg):
            "WB_OR_MODEL": os.environ.get("WB_OR_MODEL", ""),  # OpenRouter model override (e.g. z-ai/glm-5.1)
            "WB_OUTPUT_FILES": expected_output_files(case)}  # filename hint → cell_driver prompt
     env.update(KNOBS)   # sweep overrides reach the grep client (caps/result-limit/rewrite)
+    cell_timeout = int(os.environ.get("WB_CELL_TIMEOUT") or 1750)  # > WB_AGENT_TIMEOUT (driver wraps the agent)
     o, e = sh(sbx, f"cd /home/user && python3 cell_driver.py --label {label} --agent {agent} "
-                   f"--case {case} --arm {arm} 2>>/tmp/{label}.err", timeout=1750, env=env)
+                   f"--case {case} --arm {arm} 2>>/tmp/{label}.err", timeout=cell_timeout, env=env)
     res = None
     for line in o.splitlines():
         if line.startswith("RESULT="):
