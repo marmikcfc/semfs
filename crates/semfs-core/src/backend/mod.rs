@@ -2,11 +2,12 @@
 //! `grep` query either the cloud (`CloudIndex`) or a future local store without
 //! knowing which.
 
-pub(crate) mod cloud;
 pub mod chunk;
+pub(crate) mod cloud;
 pub mod community;
 pub mod graph;
 pub mod graph_ast;
+pub mod hidden_kg;
 #[cfg(feature = "pg")]
 pub mod pgvector;
 pub mod rank;
@@ -37,8 +38,7 @@ pub struct SearchHit {
 #[async_trait]
 pub trait SemanticIndex: Send + Sync {
     /// Search by meaning. `filepath` optionally scopes to a prefix.
-    async fn search(&self, query: &str, filepath: Option<&str>)
-        -> anyhow::Result<Vec<SearchHit>>;
+    async fn search(&self, query: &str, filepath: Option<&str>) -> anyhow::Result<Vec<SearchHit>>;
 }
 
 #[cfg(test)]
@@ -49,8 +49,11 @@ mod tests {
 
     #[async_trait]
     impl SemanticIndex for FakeIndex {
-        async fn search(&self, query: &str, _filepath: Option<&str>)
-            -> anyhow::Result<Vec<SearchHit>> {
+        async fn search(
+            &self,
+            query: &str,
+            _filepath: Option<&str>,
+        ) -> anyhow::Result<Vec<SearchHit>> {
             Ok(vec![SearchHit {
                 filepath: Some("/notes/a.md".into()),
                 memory: None,

@@ -219,9 +219,8 @@ impl SqliteVecStore {
                 // count invariant BEFORE that mutation and refuse if vectors are
                 // missing — require a rebuild rather than a silent empty repair.
                 let conn = db.conn.lock();
-                let count = |sql: &str| -> i64 {
-                    conn.query_row(sql, [], |r| r.get(0)).unwrap_or(-1)
-                };
+                let count =
+                    |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap_or(-1) };
                 let has = |name: &str| -> bool {
                     conn.query_row(
                         "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
@@ -232,7 +231,11 @@ impl SqliteVecStore {
                     .unwrap_or(false)
                 };
                 let chunk_n = count("SELECT count(*) FROM chunks");
-                let text_n = if has("vchunks") { count("SELECT count(*) FROM vchunks") } else { 0 };
+                let text_n = if has("vchunks") {
+                    count("SELECT count(*) FROM vchunks")
+                } else {
+                    0
+                };
                 let code_n = if has("vchunks_code") {
                     count("SELECT count(*) FROM vchunks_code")
                 } else {
@@ -268,7 +271,9 @@ impl SqliteVecStore {
                 let has_rows = db
                     .conn
                     .lock()
-                    .query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| r.get::<_, i64>(0))
+                    .query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| {
+                        r.get::<_, i64>(0)
+                    })
                     .map(|n| n == 1)
                     .unwrap_or(false);
                 if has_rows {
@@ -434,7 +439,9 @@ impl SqliteVecStore {
         let conn = self.db.conn.lock();
         // (2) Non-empty — nothing to return from a fresh/just-reset cache.
         let non_empty = conn
-            .query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| r.get::<_, i64>(0))
+            .query_row("SELECT EXISTS(SELECT 1 FROM chunks)", [], |r| {
+                r.get::<_, i64>(0)
+            })
             .map(|n| n == 1)
             .unwrap_or(false);
         if !non_empty {
@@ -470,7 +477,9 @@ impl SqliteVecStore {
             .unwrap_or(false);
         let code_rows = code_table
             && conn
-                .query_row("SELECT EXISTS(SELECT 1 FROM vchunks_code)", [], |r| r.get::<_, i64>(0))
+                .query_row("SELECT EXISTS(SELECT 1 FROM vchunks_code)", [], |r| {
+                    r.get::<_, i64>(0)
+                })
                 .map(|n| n == 1)
                 .unwrap_or(false);
         if code_rows && !code_active {
@@ -505,7 +514,11 @@ impl SqliteVecStore {
         let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap_or(-1) };
         let chunk_n = count("SELECT count(*) FROM chunks");
         let text_n = count("SELECT count(*) FROM vchunks");
-        let code_n = if code_table { count("SELECT count(*) FROM vchunks_code") } else { 0 };
+        let code_n = if code_table {
+            count("SELECT count(*) FROM vchunks_code")
+        } else {
+            0
+        };
         if chunk_n < 0 || text_n < 0 || code_n < 0 || chunk_n != text_n + code_n {
             return false;
         }
@@ -517,9 +530,9 @@ impl SqliteVecStore {
     /// code vectors with a different model — silent corruption). Best-effort: a
     /// mismatch/absence simply means text-only results, never a hard failure.
     fn code_lane_active(&self) -> bool {
-        self.code_embedder
-            .as_ref()
-            .is_some_and(|c| self.db.code_embed_identity().as_deref() == Some(c.identity().as_str()))
+        self.code_embedder.as_ref().is_some_and(|c| {
+            self.db.code_embed_identity().as_deref() == Some(c.identity().as_str())
+        })
     }
 
     /// Attach an L5 reranker. Search reranks the post-RRF candidates by their
@@ -575,7 +588,8 @@ impl SqliteVecStore {
                 "content exceeds index cap; indexing head only (partial)"
             );
         }
-        let chunks = super::chunk::recursive_chunks(content, &super::chunk::ChunkOptions::default());
+        let chunks =
+            super::chunk::recursive_chunks(content, &super::chunk::ChunkOptions::default());
         // Route code-like files to the code embedder + `vchunks_code` lane when a
         // code embedder is attached; everything else uses the text lane.
         let use_code = self.code_embedder.is_some() && path_is_code;
@@ -767,11 +781,52 @@ fn is_code_path(filepath: &str) -> bool {
     let ext = base.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     matches!(
         ext.as_str(),
-        "rs" | "py" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "go" | "java" | "kt" | "kts"
-            | "scala" | "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "rb" | "php" | "swift"
-            | "m" | "mm" | "sh" | "bash" | "zsh" | "sql" | "lua" | "r" | "jl" | "pl" | "pm" | "ex"
-            | "exs" | "erl" | "clj" | "cljs" | "hs" | "ml" | "fs" | "dart" | "vue" | "svelte"
-            | "proto" | "tf"
+        "rs" | "py"
+            | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "mjs"
+            | "cjs"
+            | "go"
+            | "java"
+            | "kt"
+            | "kts"
+            | "scala"
+            | "c"
+            | "h"
+            | "cc"
+            | "cpp"
+            | "cxx"
+            | "hpp"
+            | "hh"
+            | "rb"
+            | "php"
+            | "swift"
+            | "m"
+            | "mm"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "sql"
+            | "lua"
+            | "r"
+            | "jl"
+            | "pl"
+            | "pm"
+            | "ex"
+            | "exs"
+            | "erl"
+            | "clj"
+            | "cljs"
+            | "hs"
+            | "ml"
+            | "fs"
+            | "dart"
+            | "vue"
+            | "svelte"
+            | "proto"
+            | "tf"
     )
 }
 
@@ -842,11 +897,7 @@ impl crate::cache::LocalIndexer for SqliteVecStore {
 
 #[async_trait]
 impl SemanticIndex for SqliteVecStore {
-    async fn search(
-        &self,
-        query: &str,
-        filepath: Option<&str>,
-    ) -> anyhow::Result<Vec<SearchHit>> {
+    async fn search(&self, query: &str, filepath: Option<&str>) -> anyhow::Result<Vec<SearchHit>> {
         // The whole search is synchronous: rusqlite (vec0/fts5) plus a blocking
         // embed and rerank (cloud = blocking HTTP). Run it on a blocking thread so
         // the daemon's `tokio::time::timeout` around the IPC search can actually
@@ -941,7 +992,11 @@ impl SqliteVecStore {
         // joined columns, so when scoped we raise k and prefix-filter rather than
         // letting out-of-scope files consume the pool.
         {
-            let k = if scope.is_some() { SCOPED_KNN_POOL } else { SEARCH_POOL };
+            let k = if scope.is_some() {
+                SCOPED_KNN_POOL
+            } else {
+                SEARCH_POOL
+            };
             let mut stmt = conn.prepare(
                 "SELECT c.id, c.filepath, c.text FROM vchunks v \
                  JOIN chunks c ON c.id = v.rowid \
@@ -949,7 +1004,11 @@ impl SqliteVecStore {
                  AND (?3 IS NULL OR instr(c.filepath, ?3) = 1) ORDER BY distance",
             )?;
             let rows = stmt.query_map(rusqlite::params![qblob, k as i64, scope], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
             })?;
             for (rank, row) in rows.enumerate() {
                 let (id, fp, text) = row?;
@@ -966,7 +1025,11 @@ impl SqliteVecStore {
         // corrupted concurrently after the probe) must surface so the caller
         // (grep) falls back to cloud rather than silently serve text-only results.
         if let Some(cqblob) = &code_qblob {
-            let k = if scope.is_some() { SCOPED_KNN_POOL } else { SEARCH_POOL };
+            let k = if scope.is_some() {
+                SCOPED_KNN_POOL
+            } else {
+                SEARCH_POOL
+            };
             let mut stmt = conn.prepare(
                 "SELECT c.id, c.filepath, c.text FROM vchunks_code v \
                  JOIN chunks c ON c.id = v.rowid \
@@ -974,7 +1037,11 @@ impl SqliteVecStore {
                  AND (?3 IS NULL OR instr(c.filepath, ?3) = 1) ORDER BY distance",
             )?;
             let rows = stmt.query_map(rusqlite::params![cqblob, k as i64, scope], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
             })?;
             for (rank, row) in rows.enumerate() {
                 let (id, fp, text) = row?;
@@ -994,13 +1061,23 @@ impl SqliteVecStore {
             ) {
                 if let Ok(rows) =
                     stmt.query_map(rusqlite::params![fq, SEARCH_POOL as i64, scope], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                        ))
                     })
                 {
                     for (rank, row) in rows.enumerate() {
                         if let Ok((id, fp, text)) = row {
                             rep_chunk.entry(fp.clone()).or_insert(id);
-                            super::rank::rrf_bump(&mut by_file, fp, text, rank, super::rank::Lane::Fts);
+                            super::rank::rrf_bump(
+                                &mut by_file,
+                                fp,
+                                text,
+                                rank,
+                                super::rank::Lane::Fts,
+                            );
                             fts_n += 1;
                         }
                     }
@@ -1023,7 +1100,10 @@ impl SqliteVecStore {
         // source is the highest-value signal for an error-detection task, and a
         // tight RESULT_LIMIT must not let a valid-looking look-alike crowd it out.
         let mut error_pinned: Vec<String> = Vec::new();
-        if !matches!(std::env::var("SEMFS_PATH_LANE").ok().as_deref(), Some("off")) {
+        if !matches!(
+            std::env::var("SEMFS_PATH_LANE").ok().as_deref(),
+            Some("off")
+        ) {
             let toks: Vec<String> = query
                 .to_lowercase()
                 .split(|c: char| !c.is_alphanumeric())
@@ -1039,7 +1119,11 @@ impl SqliteVecStore {
                      WHERE (?1 IS NULL OR instr(c.filepath, ?1) = 1)",
                 ) {
                     if let Ok(rows) = stmt.query_map(rusqlite::params![scope], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                        ))
                     }) {
                         let mut scored: Vec<(usize, i64, String, String)> = Vec::new();
                         for row in rows.flatten() {
@@ -1122,7 +1206,11 @@ impl SqliteVecStore {
                        AND (?1 IS NULL OR instr(c.filepath, ?1) = 1)",
                 ) {
                     if let Ok(rows) = stmt.query_map(rusqlite::params![scope], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                        ))
                     }) {
                         for (id, fp, text) in rows.flatten() {
                             if !text.trim_start().to_ascii_lowercase().starts_with("<html") {
@@ -1149,6 +1237,37 @@ impl SqliteVecStore {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        if super::hidden_kg::enabled() && !by_file.is_empty() {
+            let candidate_files: Vec<String> = by_file.keys().cloned().collect();
+            match super::hidden_kg::query_kg_priors(&conn, query, candidate_files) {
+                Ok(result) => {
+                    if std::env::var("SEMFS_DEBUG_RANKING").is_ok() {
+                        let mut top_priors: Vec<(String, f64)> = result
+                            .priors
+                            .iter()
+                            .map(|(fp, score)| (fp.clone(), *score))
+                            .collect();
+                        top_priors.sort_by(|a, b| {
+                            b.1.partial_cmp(&a.1)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                                .then_with(|| a.0.cmp(&b.0))
+                        });
+                        top_priors.truncate(8);
+                        tracing::info!(
+                            matched_entities = ?result.matched_entities,
+                            matched_communities = ?result.matched_communities,
+                            top_priors = ?top_priors,
+                            "HIDDEN_KG"
+                        );
+                    }
+                    super::rank::apply_file_priors(&mut by_file, &result.priors);
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "hidden KG priors unavailable; continuing without them");
                 }
             }
         }
@@ -1201,7 +1320,11 @@ impl SqliteVecStore {
                     "HTTP error"
                 };
                 let fname = fp.rsplit('/').next().unwrap_or(fp.as_str());
-                let ext = fname.rsplit('.').next().filter(|e| *e != fname).unwrap_or("");
+                let ext = fname
+                    .rsplit('.')
+                    .next()
+                    .filter(|e| *e != fname)
+                    .unwrap_or("");
                 let label = if ext.is_empty() {
                     String::new()
                 } else {
@@ -1297,16 +1420,21 @@ impl SqliteVecStore {
             // delete+insert assigns new ids). Skip on query error (don't nuke).
             let rep_ids: Vec<i64> = hits
                 .iter()
-                .filter_map(|h| h.filepath.as_ref().and_then(|fp| rep_chunk.get(fp).copied()))
+                .filter_map(|h| {
+                    h.filepath
+                        .as_ref()
+                        .and_then(|fp| rep_chunk.get(fp).copied())
+                })
                 .collect();
             if !rep_ids.is_empty() {
                 let placeholders = vec!["?"; rep_ids.len()].join(",");
                 let sql = format!("SELECT id, filepath FROM chunks WHERE id IN ({placeholders})");
                 if let Ok(mut stmt) = conn.prepare(&sql) {
-                    if let Ok(rows) = stmt.query_map(
-                        rusqlite::params_from_iter(rep_ids.iter()),
-                        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
-                    ) {
+                    if let Ok(rows) = stmt
+                        .query_map(rusqlite::params_from_iter(rep_ids.iter()), |r| {
+                            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                        })
+                    {
                         let live: HashMap<i64, String> = rows.filter_map(|r| r.ok()).collect();
                         hits.retain(|h| {
                             h.filepath.as_ref().is_some_and(|fp| {
@@ -1426,15 +1554,17 @@ impl SqliteVecStore {
         {
             let lim = result_limit();
             if lim >= 2 && !error_pinned.is_empty() {
-                let in_window = hits
-                    .iter()
-                    .take(lim)
-                    .any(|h| h.filepath.as_deref().is_some_and(|p| error_pinned.iter().any(|e| e == p)));
+                let in_window = hits.iter().take(lim).any(|h| {
+                    h.filepath
+                        .as_deref()
+                        .is_some_and(|p| error_pinned.iter().any(|e| e == p))
+                });
                 if !in_window {
-                    if let Some(pos) = hits
-                        .iter()
-                        .position(|h| h.filepath.as_deref().is_some_and(|p| error_pinned.iter().any(|e| e == p)))
-                    {
+                    if let Some(pos) = hits.iter().position(|h| {
+                        h.filepath
+                            .as_deref()
+                            .is_some_and(|p| error_pinned.iter().any(|e| e == p))
+                    }) {
                         if pos >= lim {
                             let h = hits.remove(pos);
                             hits.insert(lim - 1, h);
@@ -1480,7 +1610,9 @@ impl SqliteVecStore {
                     conn.prepare("SELECT text FROM chunks WHERE filepath = ?1 ORDER BY ord");
                 if let Ok(mut stmt) = prepared {
                     for h in hits.iter_mut() {
-                        let Some(fp) = h.filepath.clone() else { continue };
+                        let Some(fp) = h.filepath.clone() else {
+                            continue;
+                        };
                         if let Ok(rows) = stmt.query_map([&fp], |r| r.get::<_, String>(0)) {
                             let parts: Vec<String> = rows.filter_map(|r| r.ok()).collect();
                             if !parts.is_empty() {
@@ -1652,7 +1784,11 @@ mod tests {
         // 60 files (> RERANK_CANDIDATES) all matching the query term.
         for i in 0..60u64 {
             store
-                .index(i + 1, &format!("/f{i}.md"), "shared keyword alpha beta gamma")
+                .index(
+                    i + 1,
+                    &format!("/f{i}.md"),
+                    "shared keyword alpha beta gamma",
+                )
                 .unwrap();
         }
 
@@ -1669,10 +1805,18 @@ mod tests {
     #[tokio::test]
     async fn index_then_search_finds_file_by_overlap() {
         let s = store();
-        s.index(2, "/notes/auth.md", "user login and credential verification flow")
-            .unwrap();
-        s.index(3, "/notes/cooking.md", "banana bread recipe with walnuts and sugar")
-            .unwrap();
+        s.index(
+            2,
+            "/notes/auth.md",
+            "user login and credential verification flow",
+        )
+        .unwrap();
+        s.index(
+            3,
+            "/notes/cooking.md",
+            "banana bread recipe with walnuts and sugar",
+        )
+        .unwrap();
 
         let hits = s.search("credential login", None).await.unwrap();
         assert!(!hits.is_empty(), "expected at least one hit");
@@ -1690,16 +1834,24 @@ mod tests {
         let s = store();
         // 120 out-of-scope files (> SEARCH_POOL=80) all matching the query term.
         for i in 0..120 {
-            s.index(1000 + i, &format!("/noise/{i}.md"), "alpha shared keyword here")
-                .unwrap();
+            s.index(
+                1000 + i,
+                &format!("/noise/{i}.md"),
+                "alpha shared keyword here",
+            )
+            .unwrap();
         }
         // One in-scope file with the same term.
         s.index(2, "/scope/target.md", "alpha shared keyword here")
             .unwrap();
 
-        let hits = s.search("alpha shared keyword", Some("/scope/")).await.unwrap();
+        let hits = s
+            .search("alpha shared keyword", Some("/scope/"))
+            .await
+            .unwrap();
         assert!(
-            hits.iter().any(|h| h.filepath.as_deref() == Some("/scope/target.md")),
+            hits.iter()
+                .any(|h| h.filepath.as_deref() == Some("/scope/target.md")),
             "scoped search dropped the in-scope file under crowding: {hits:?}"
         );
         assert!(
@@ -1725,37 +1877,60 @@ mod tests {
 
         // .rs → code lane (256-d); .md → text lane (384-d). Both must succeed.
         store
-            .index(2, "/src/parser.rs", "fn tokenize(input: &str) -> Vec<Token> { todo!() }")
+            .index(
+                2,
+                "/src/parser.rs",
+                "fn tokenize(input: &str) -> Vec<Token> { todo!() }",
+            )
             .unwrap();
         store
-            .index(3, "/docs/overview.md", "the parser turns source text into tokens")
+            .index(
+                3,
+                "/docs/overview.md",
+                "the parser turns source text into tokens",
+            )
             .unwrap();
 
         {
             let conn = db.conn.lock();
             let files: i64 = conn
-                .query_row("SELECT count(DISTINCT filepath) FROM chunks", [], |r| r.get(0))
+                .query_row("SELECT count(DISTINCT filepath) FROM chunks", [], |r| {
+                    r.get(0)
+                })
                 .unwrap();
             assert_eq!(files, 2, "both files indexed");
         }
-        assert!(store.is_searchable(), "dual-lane index with matching identities");
+        assert!(
+            store.is_searchable(),
+            "dual-lane index with matching identities"
+        );
 
         // Both lanes are queried + fused: each file is findable by its own terms.
         let code_hits = store.search("tokenize tokens parser", None).await.unwrap();
-        assert!(code_hits.iter().any(|h| h.filepath.as_deref() == Some("/src/parser.rs")));
+        assert!(code_hits
+            .iter()
+            .any(|h| h.filepath.as_deref() == Some("/src/parser.rs")));
         let text_hits = store.search("source text into tokens", None).await.unwrap();
-        assert!(text_hits.iter().any(|h| h.filepath.as_deref() == Some("/docs/overview.md")));
+        assert!(text_hits
+            .iter()
+            .any(|h| h.filepath.as_deref() == Some("/docs/overview.md")));
 
         // Re-indexing the code file replaces (not accumulates) its code-lane rows.
         store
-            .index(2, "/src/parser.rs", "fn parse(tokens: Vec<Token>) -> Ast { todo!() }")
+            .index(
+                2,
+                "/src/parser.rs",
+                "fn parse(tokens: Vec<Token>) -> Ast { todo!() }",
+            )
             .unwrap();
         let n: i64 = db
             .conn
             .lock()
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/parser.rs'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/src/parser.rs'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 1, "re-index replaces code-lane chunks");
     }
@@ -1783,22 +1958,31 @@ mod tests {
     async fn code_model_swap_disables_code_lane_nondestructively() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-A:256".into() }))
-            .unwrap();
+        w.enable_code_indexing(Arc::new(TaggedEmbedder {
+            dims: 256,
+            id: "code-A:256".into(),
+        }))
+        .unwrap();
         w.index(2, "/src/a.rs", "fn a() {}").unwrap();
         drop(w);
 
         // Reopen with the SAME width (256) but a DIFFERENT code model → must bail.
         let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        let res =
-            w2.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-B:256".into() }));
+        let res = w2.enable_code_indexing(Arc::new(TaggedEmbedder {
+            dims: 256,
+            id: "code-B:256".into(),
+        }));
         assert!(res.is_err(), "same-width code-model swap must be refused");
 
         // The old code lane + its vectors are preserved (not dropped or mixed).
         let n: i64 = db
             .conn
             .lock()
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/a.rs'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/src/a.rs'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 1, "old code-lane chunks preserved");
     }
@@ -1819,7 +2003,10 @@ mod tests {
             .execute("DELETE FROM fs_config WHERE key='text_embed_model'", [])
             .unwrap();
         let res = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384)));
-        assert!(res.is_err(), "must refuse a populated index with no text stamp");
+        assert!(
+            res.is_err(),
+            "must refuse a populated index with no text stamp"
+        );
     }
 
     /// Same for the code lane: vchunks_code rows present but the code stamp gone
@@ -1828,7 +2015,8 @@ mod tests {
     async fn writer_refuses_code_lane_with_rows_but_no_code_stamp() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
         w.index(2, "/a.rs", "fn a() {}").unwrap(); // populates vchunks_code
         drop(w);
         db.conn
@@ -1838,7 +2026,10 @@ mod tests {
         // new() succeeds (text stamp intact); enable_code_indexing must refuse.
         let mut w2 = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap();
         let res = w2.enable_code_indexing(Arc::new(StubEmbedder::new(256)));
-        assert!(res.is_err(), "must refuse a populated code lane with no code stamp");
+        assert!(
+            res.is_err(),
+            "must refuse a populated code lane with no code stamp"
+        );
     }
 
     /// Fail-open writer (code lane advertised, but no active code embedder) must
@@ -1850,7 +2041,8 @@ mod tests {
         let db = Arc::new(Db::open_in_memory().unwrap());
         // Writer 1 establishes the code lane (stamp), no files yet.
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
         drop(w);
 
         // Writer 2: fail-open — code lane advertised but NO code embedder attached.
@@ -1860,12 +2052,23 @@ mod tests {
 
         let conn = db.conn.lock();
         let code_n: i64 = conn
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/x.rs'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/src/x.rs'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let text_n: i64 = conn
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/docs/y.md'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/docs/y.md'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(code_n, 0, "code file must be skipped, not stranded in the text lane");
+        assert_eq!(
+            code_n, 0,
+            "code file must be skipped, not stranded in the text lane"
+        );
         assert_eq!(text_n, 1, "text file still indexes");
     }
 
@@ -1879,10 +2082,13 @@ mod tests {
             .unwrap()
             .index(2, "/a.md", "hello")
             .unwrap(); // chunks + vchunks populated, stamp present
-        // Corrupt: drop vchunks (vectors gone) but keep chunks + the stamp.
+                       // Corrupt: drop vchunks (vectors gone) but keep chunks + the stamp.
         db.conn.lock().execute_batch("DROP TABLE vchunks;").unwrap();
         let res = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384)));
-        assert!(res.is_err(), "stamped cache with chunks but missing vchunks must be refused");
+        assert!(
+            res.is_err(),
+            "stamped cache with chunks but missing vchunks must be refused"
+        );
     }
 
     /// Corrupt `text_embed_dims` metadata (identity stamp + counts still
@@ -1897,7 +2103,10 @@ mod tests {
             .unwrap();
         db.conn
             .lock()
-            .execute("UPDATE fs_config SET value='256' WHERE key='text_embed_dims'", [])
+            .execute(
+                "UPDATE fs_config SET value='256' WHERE key='text_embed_dims'",
+                [],
+            )
             .unwrap();
         let res = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384)));
         assert!(res.is_err(), "corrupt text_embed_dims must be refused");
@@ -1916,12 +2125,16 @@ mod tests {
     async fn writer_refuses_corrupt_code_embed_dims() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
         w.index(2, "/a.rs", "fn a() {}").unwrap();
         drop(w);
         db.conn
             .lock()
-            .execute("UPDATE fs_config SET value='128' WHERE key='code_embed_dims'", [])
+            .execute(
+                "UPDATE fs_config SET value='128' WHERE key='code_embed_dims'",
+                [],
+            )
             .unwrap();
         let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
         let res = w2.enable_code_indexing(Arc::new(StubEmbedder::new(256)));
@@ -1931,7 +2144,10 @@ mod tests {
             .lock()
             .query_row("SELECT count(*) FROM vchunks_code", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(n, 1, "vchunks_code rows preserved (no destructive recreate)");
+        assert_eq!(
+            n, 1,
+            "vchunks_code rows preserved (no destructive recreate)"
+        );
     }
 
     /// Missing (not just mismatched) text_embed_dims on a stamped cache must be
@@ -1959,7 +2175,8 @@ mod tests {
     async fn writer_refuses_missing_code_embed_dims() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
         w.index(2, "/a.rs", "fn a() {}").unwrap();
         drop(w);
         db.conn
@@ -1986,14 +2203,22 @@ mod tests {
     async fn search_errors_when_active_code_lane_fails_at_query_time() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        store.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
+        store
+            .enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
         store.index(2, "/src/a.rs", "fn a() {}").unwrap();
         store.index(3, "/docs/b.md", "prose").unwrap();
         assert!(store.is_searchable(), "healthy dual cache is searchable");
         // Simulate a concurrent corruption AFTER the readiness check.
-        db.conn.lock().execute_batch("DROP TABLE vchunks_code;").unwrap();
+        db.conn
+            .lock()
+            .execute_batch("DROP TABLE vchunks_code;")
+            .unwrap();
         let res = store.search("anything", None).await;
-        assert!(res.is_err(), "active code-lane query failure must propagate, not be swallowed");
+        assert!(
+            res.is_err(),
+            "active code-lane query failure must propagate, not be swallowed"
+        );
     }
 
     /// A rename crossing the code/text extension boundary drops the index entry
@@ -2003,25 +2228,38 @@ mod tests {
     async fn lane_crossing_rename_drops_entry() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        store.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
-        store.index(2, "/notes/readme.md", "documentation about parsing tokens").unwrap();
+        store
+            .enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
+        store
+            .index(2, "/notes/readme.md", "documentation about parsing tokens")
+            .unwrap();
 
         // Cross-lane (.md text → .rs code): drop, not relabel.
-        store.rename("/notes/readme.md", "/notes/readme.rs").unwrap();
+        store
+            .rename("/notes/readme.md", "/notes/readme.rs")
+            .unwrap();
         {
             let conn = db.conn.lock();
             let old_n: i64 = conn
-                .query_row("SELECT count(*) FROM chunks WHERE filepath='/notes/readme.md'", [], |r| {
-                    r.get(0)
-                })
+                .query_row(
+                    "SELECT count(*) FROM chunks WHERE filepath='/notes/readme.md'",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap();
             let new_n: i64 = conn
-                .query_row("SELECT count(*) FROM chunks WHERE filepath='/notes/readme.rs'", [], |r| {
-                    r.get(0)
-                })
+                .query_row(
+                    "SELECT count(*) FROM chunks WHERE filepath='/notes/readme.rs'",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap();
             assert_eq!(old_n, 0, "old path cleared");
-            assert_eq!(new_n, 0, "lane-cross rename drops (re-index on next write), not relabel");
+            assert_eq!(
+                new_n, 0,
+                "lane-cross rename drops (re-index on next write), not relabel"
+            );
         }
 
         // Same-lane (.md → .md): relabel (kept).
@@ -2030,9 +2268,11 @@ mod tests {
         let kept: i64 = db
             .conn
             .lock()
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/notes/manual.md'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/notes/manual.md'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(kept, 1, "same-lane rename relabels (kept)");
     }
@@ -2046,27 +2286,44 @@ mod tests {
         let db = Arc::new(Db::open_in_memory().unwrap());
         // Writer 1: code lane with model A; index a .rs file into the code lane.
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-A:256".into() }))
-            .unwrap();
+        w.enable_code_indexing(Arc::new(TaggedEmbedder {
+            dims: 256,
+            id: "code-A:256".into(),
+        }))
+        .unwrap();
         w.index(2, "/src/lib.rs", "fn f() {}").unwrap();
         drop(w);
 
         // Writer 2: mismatched code model → enable fails open (code_embedder stays
         // None), but vchunks_code + the .rs vectors persist.
         let mut w2 = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        let _ = w2.enable_code_indexing(Arc::new(TaggedEmbedder { dims: 256, id: "code-B:256".into() }));
+        let _ = w2.enable_code_indexing(Arc::new(TaggedEmbedder {
+            dims: 256,
+            id: "code-B:256".into(),
+        }));
 
         // .rs → .md: persisted lane is code, new path is text → must DROP.
         w2.rename("/src/lib.rs", "/src/lib.md").unwrap();
         let conn = db.conn.lock();
         let old_n: i64 = conn
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/lib.rs'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/src/lib.rs'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let new_n: i64 = conn
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/src/lib.md'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/src/lib.md'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(old_n, 0, "old path cleared");
-        assert_eq!(new_n, 0, "dropped even though the code embedder is inert (persisted lane)");
+        assert_eq!(
+            new_n, 0,
+            "dropped even though the code embedder is inert (persisted lane)"
+        );
     }
 
     /// A code-only cache (all content in the code lane) must NOT report local
@@ -2077,7 +2334,8 @@ mod tests {
     async fn code_only_cache_unsearchable_when_code_lane_inactive() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
         w.index(2, "/src/only.rs", "fn only() {}").unwrap(); // code lane only
         drop(w);
 
@@ -2102,8 +2360,10 @@ mod tests {
     async fn mixed_cache_with_populated_inactive_code_lane_falls_back() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
-        w.index(2, "/docs/readme.md", "prose content about the project").unwrap(); // text lane
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
+        w.index(2, "/docs/readme.md", "prose content about the project")
+            .unwrap(); // text lane
         w.index(3, "/src/lib.rs", "fn lib() {}").unwrap(); // code lane (has rows)
         drop(w);
 
@@ -2128,12 +2388,16 @@ mod tests {
     async fn active_but_broken_code_lane_falls_back() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let mut w = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
-        w.enable_code_indexing(Arc::new(StubEmbedder::new(256))).unwrap();
+        w.enable_code_indexing(Arc::new(StubEmbedder::new(256)))
+            .unwrap();
         w.index(2, "/src/a.rs", "fn a() {}").unwrap(); // code lane only
         drop(w);
 
         // Corrupt: drop the code vec0 table but keep `chunks` + the code stamp.
-        db.conn.lock().execute_batch("DROP TABLE vchunks_code;").unwrap();
+        db.conn
+            .lock()
+            .execute_batch("DROP TABLE vchunks_code;")
+            .unwrap();
 
         // Reader WITH the matching code embedder → code lane "active", but the
         // vec0 table is gone → the readiness probe errors → not searchable.
@@ -2183,7 +2447,10 @@ mod tests {
         // (a same-dimension model swap would silently corrupt relevance).
         let other_model = SqliteVecStore::open_existing(
             db.clone(),
-            Arc::new(TaggedEmbedder { dims: 384, id: "other-model:384".into() }),
+            Arc::new(TaggedEmbedder {
+                dims: 384,
+                id: "other-model:384".into(),
+            }),
         );
         assert!(!other_model.is_searchable());
 
@@ -2212,8 +2479,10 @@ mod tests {
                 // content (delete+insert ⇒ new chunk ids), as a concurrent writer
                 // would. The lock is released during rerank, so this succeeds.
                 if !self.fired.swap(true, Ordering::SeqCst) {
-                    let w =
-                        SqliteVecStore::open_existing(self.db.clone(), Arc::new(StubEmbedder::new(384)));
+                    let w = SqliteVecStore::open_existing(
+                        self.db.clone(),
+                        Arc::new(StubEmbedder::new(384)),
+                    );
                     w.index(2, "/a.md", "totally different replacement content zzz")
                         .unwrap();
                 }
@@ -2232,7 +2501,8 @@ mod tests {
 
         let hits = store.search("alpha", None).await.unwrap();
         assert!(
-            hits.iter().all(|h| h.chunk.as_deref() != Some("original alpha content")),
+            hits.iter()
+                .all(|h| h.chunk.as_deref() != Some("original alpha content")),
             "returned a stale chunk that was reindexed mid-search: {hits:?}"
         );
     }
@@ -2246,13 +2516,18 @@ mod tests {
         // `/x/a.md` matches the GLOB pattern `/x/[a]*` but not the literal prefix.
         s.index(3, "/x/a.md", "alpha shared keyword").unwrap();
 
-        let hits = s.search("alpha shared keyword", Some("/x/[a]/")).await.unwrap();
+        let hits = s
+            .search("alpha shared keyword", Some("/x/[a]/"))
+            .await
+            .unwrap();
         assert!(
-            hits.iter().any(|h| h.filepath.as_deref() == Some("/x/[a]/f.md")),
+            hits.iter()
+                .any(|h| h.filepath.as_deref() == Some("/x/[a]/f.md")),
             "literal in-scope file missing: {hits:?}"
         );
         assert!(
-            hits.iter().all(|h| h.filepath.as_deref() != Some("/x/a.md")),
+            hits.iter()
+                .all(|h| h.filepath.as_deref() != Some("/x/a.md")),
             "GLOB metachar prefix over-matched a sibling: {hits:?}"
         );
     }
@@ -2326,10 +2601,16 @@ mod tests {
         let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384)))
             .unwrap()
             .with_graph_extractor(llm);
-        let q = store.graph_queue().expect("graph queue present with extractor");
+        let q = store
+            .graph_queue()
+            .expect("graph queue present with extractor");
         assert!(q.is_idle());
         store.index(7, "/notes/a.md", "hello world").unwrap();
-        assert_eq!(q.depth(), 1, "index() must enqueue the file for L7 extraction");
+        assert_eq!(
+            q.depth(),
+            1,
+            "index() must enqueue the file for L7 extraction"
+        );
         // A store WITHOUT an extractor has no queue and enqueues nothing.
         let plain = SqliteVecStore::new(
             Arc::new(Db::open_in_memory().unwrap()),
@@ -2360,11 +2641,16 @@ mod tests {
                 "/old.md relabeled away"
             );
             let dest_text: String = conn
-                .query_row("SELECT text FROM chunks WHERE filepath='/dest.md'", [], |r| {
-                    r.get(0)
-                })
+                .query_row(
+                    "SELECT text FROM chunks WHERE filepath='/dest.md'",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap();
-            assert_eq!(dest_text, "alpha beta gamma", "/dest.md holds the moved content");
+            assert_eq!(
+                dest_text, "alpha beta gamma",
+                "/dest.md holds the moved content"
+            );
             assert_eq!(
                 count("SELECT count(*) FROM chunks WHERE text LIKE '%delta%'"),
                 0,
@@ -2486,13 +2772,22 @@ mod tests {
             Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         let fs = CacheFs::new(db).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
 
-        let (_attr, handle) = fs.create_file(ROOT_INO, "report.docx", 0o644, 0, 0).await.unwrap();
+        let (_attr, handle) = fs
+            .create_file(ROOT_INO, "report.docx", 0o644, 0, 0)
+            .await
+            .unwrap();
         handle.write(0, DOCX).await.unwrap();
         handle.flush().await.unwrap();
 
         // The CJK title now lives in the index — extraction happened on flush.
-        let hits = store.search("数据安全风险整改进度月度汇总报告", None).await.unwrap();
-        assert!(!hits.is_empty(), "docx text was not extracted+indexed on flush");
+        let hits = store
+            .search("数据安全风险整改进度月度汇总报告", None)
+            .await
+            .unwrap();
+        assert!(
+            !hits.is_empty(),
+            "docx text was not extracted+indexed on flush"
+        );
         assert_eq!(hits[0].filepath.as_deref(), Some("/report.docx"));
         // A successfully extracted file is not in the unindexed bucket.
         assert_eq!(fs.unindexed_count(), 0);
@@ -2593,16 +2888,33 @@ mod tests {
 
         // 0xFF is never a valid UTF-8 lead byte → fails the text path, sniffs
         // Unknown → no extractor → unindexed.
-        let (_attr, handle) = fs.create_file(ROOT_INO, "blob.bin", 0o644, 0, 0).await.unwrap();
-        handle.write(0, &[0xFF, 0xFE, 0x00, 0x01, 0x02]).await.unwrap();
+        let (_attr, handle) = fs
+            .create_file(ROOT_INO, "blob.bin", 0o644, 0, 0)
+            .await
+            .unwrap();
+        handle
+            .write(0, &[0xFF, 0xFE, 0x00, 0x01, 0x02])
+            .await
+            .unwrap();
         handle.flush().await.unwrap();
 
-        assert_eq!(fs.unindexed_count(), 1, "unextractable binary must be counted");
+        assert_eq!(
+            fs.unindexed_count(),
+            1,
+            "unextractable binary must be counted"
+        );
 
         // A later flush that yields text clears the marker.
-        handle.write(0, b"now i am plain searchable text").await.unwrap();
+        handle
+            .write(0, b"now i am plain searchable text")
+            .await
+            .unwrap();
         handle.flush().await.unwrap();
-        assert_eq!(fs.unindexed_count(), 0, "successful re-flush must clear the marker");
+        assert_eq!(
+            fs.unindexed_count(),
+            0,
+            "successful re-flush must clear the marker"
+        );
     }
 
     /// Regression (Codex HIGH): a previously-indexed text file overwritten by an
@@ -2618,8 +2930,13 @@ mod tests {
             Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         let fs = CacheFs::new(db).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
 
-        let (_a, h) = fs.create_file(ROOT_INO, "note.md", 0o644, 0, 0).await.unwrap();
-        h.write(0, b"alpha sentinel beta gamma delta").await.unwrap();
+        let (_a, h) = fs
+            .create_file(ROOT_INO, "note.md", 0o644, 0, 0)
+            .await
+            .unwrap();
+        h.write(0, b"alpha sentinel beta gamma delta")
+            .await
+            .unwrap();
         h.flush().await.unwrap();
         assert!(!store.search("sentinel", None).await.unwrap().is_empty());
 
@@ -2660,7 +2977,10 @@ mod tests {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let fs = CacheFs::new(db).with_indexer(Arc::new(FailingIndexer) as Arc<dyn LocalIndexer>);
 
-        let (_a, h) = fs.create_file(ROOT_INO, "r.docx", 0o644, 0, 0).await.unwrap();
+        let (_a, h) = fs
+            .create_file(ROOT_INO, "r.docx", 0o644, 0, 0)
+            .await
+            .unwrap();
         h.write(0, DOCX).await.unwrap();
         h.flush().await.unwrap(); // extraction OK, index() errors
 
@@ -2693,7 +3013,9 @@ mod tests {
 
         // Overwrite a.bin with b.bin: destination marker cleared in-tx, source
         // marker relabeled to the destination path.
-        fs.rename(ROOT_INO, "b.bin", ROOT_INO, "a.bin").await.unwrap();
+        fs.rename(ROOT_INO, "b.bin", ROOT_INO, "a.bin")
+            .await
+            .unwrap();
         assert_eq!(
             fs.unindexed_count(),
             1,
@@ -2801,15 +3123,24 @@ mod tests {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap();
         store
-            .index(2, "/notes/auth.md", "reset your password via the emailed link")
+            .index(
+                2,
+                "/notes/auth.md",
+                "reset your password via the emailed link",
+            )
             .unwrap();
         store
-            .index(3, "/model_output/answer.md", "reset your password via the emailed link")
+            .index(
+                3,
+                "/model_output/answer.md",
+                "reset your password via the emailed link",
+            )
             .unwrap();
         let hits = store.search("password reset", None).await.unwrap();
         assert!(!hits.is_empty(), "the real source should still be found");
         assert!(
-            hits.iter().all(|h| h.filepath.as_deref() != Some("/model_output/answer.md")),
+            hits.iter()
+                .all(|h| h.filepath.as_deref() != Some("/model_output/answer.md")),
             "model_output/ (agent's own output) must be excluded from search"
         );
     }
@@ -2825,7 +3156,11 @@ mod tests {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap();
         store
-            .index(2, "/notes/auth.md", "reset your password via the emailed link")
+            .index(
+                2,
+                "/notes/auth.md",
+                "reset your password via the emailed link",
+            )
             .unwrap();
         let hits = store.search("password reset", None).await.unwrap();
         std::env::remove_var("SEMFS_RETURN_MODE");
@@ -2834,7 +3169,10 @@ mod tests {
             hits[0].memory.is_none(),
             "snippet mode must leave memory None so grep uses the chunk presenter"
         );
-        assert!(hits[0].chunk.is_some(), "chunk must be preserved for the presenter");
+        assert!(
+            hits[0].chunk.is_some(),
+            "chunk must be preserved for the presenter"
+        );
     }
 
     // The whole local pipeline to the reranker stage (real fastembed embed →
@@ -2853,14 +3191,21 @@ mod tests {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let store =
             Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
-        let filler = (0..300).map(|n| format!("filler{n}")).collect::<Vec<_>>().join(" ");
+        let filler = (0..300)
+            .map(|n| format!("filler{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let content = format!("{filler} unicornmarker zebraquux {filler}");
         store.index(2, "/big.md", &content).unwrap();
 
         let n: i64 = db
             .conn
             .lock()
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/big.md'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/big.md'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(n >= 2, "long doc must split into multiple chunks, got {n}");
 
@@ -2879,7 +3224,9 @@ mod tests {
         {
             let db = Arc::new(Db::open(&path).unwrap());
             let store = SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap();
-            store.index(2, "/p.md", "persistent alpha beta content").unwrap();
+            store
+                .index(2, "/p.md", "persistent alpha beta content")
+                .unwrap();
         } // store + db dropped — simulates a daemon restart
 
         let db2 = Arc::new(Db::open(&path).unwrap());
@@ -2899,7 +3246,10 @@ mod tests {
             Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         let fs = CacheFs::new(db).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
 
-        let (_, h) = fs.create_file(ROOT_INO, "doc.md", 0o644, 0, 0).await.unwrap();
+        let (_, h) = fs
+            .create_file(ROOT_INO, "doc.md", 0o644, 0, 0)
+            .await
+            .unwrap();
         h.write(0, b"credential renewal flow").await.unwrap();
         h.flush().await.unwrap();
         assert_eq!(
@@ -2909,13 +3259,21 @@ mod tests {
             Some("/doc.md")
         );
 
-        fs.rename(ROOT_INO, "doc.md", ROOT_INO, "renamed.md").await.unwrap();
+        fs.rename(ROOT_INO, "doc.md", ROOT_INO, "renamed.md")
+            .await
+            .unwrap();
         let after = store.search("credential renewal", None).await.unwrap();
         assert_eq!(after[0].filepath.as_deref(), Some("/renamed.md"));
-        assert!(after.iter().all(|x| x.filepath.as_deref() != Some("/doc.md")));
+        assert!(after
+            .iter()
+            .all(|x| x.filepath.as_deref() != Some("/doc.md")));
 
         fs.unlink(ROOT_INO, "renamed.md").await.unwrap();
-        assert!(store.search("credential renewal", None).await.unwrap().is_empty());
+        assert!(store
+            .search("credential renewal", None)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     /// C7: a binary (non-UTF-8) file is skipped by the indexer and never crashes.
@@ -2928,14 +3286,23 @@ mod tests {
             Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
         let fs = CacheFs::new(db.clone()).with_indexer(store.clone() as Arc<dyn LocalIndexer>);
 
-        let (_, h) = fs.create_file(ROOT_INO, "blob.bin", 0o644, 0, 0).await.unwrap();
-        h.write(0, &[0xff, 0xfe, 0x00, 0x01, 0x80, 0x90]).await.unwrap();
+        let (_, h) = fs
+            .create_file(ROOT_INO, "blob.bin", 0o644, 0, 0)
+            .await
+            .unwrap();
+        h.write(0, &[0xff, 0xfe, 0x00, 0x01, 0x80, 0x90])
+            .await
+            .unwrap();
         h.flush().await.unwrap(); // must not panic
 
         let n: i64 = db
             .conn
             .lock()
-            .query_row("SELECT count(*) FROM chunks WHERE filepath='/blob.bin'", [], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM chunks WHERE filepath='/blob.bin'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 0, "binary file must not be indexed");
     }
@@ -2957,7 +3324,11 @@ mod tests {
                 let store = SqliteVecStore::open_existing(db, Arc::new(StubEmbedder::new(384)));
                 for i in 0..10u64 {
                     store
-                        .index(w * 100 + i + 2, &format!("/w{w}-{i}.md"), &format!("alpha {w} {i}"))
+                        .index(
+                            w * 100 + i + 2,
+                            &format!("/w{w}-{i}.md"),
+                            &format!("alpha {w} {i}"),
+                        )
                         .unwrap();
                 }
             }));
@@ -2969,7 +3340,9 @@ mod tests {
         let n: i64 = db
             .conn
             .lock()
-            .query_row("SELECT count(DISTINCT filepath) FROM chunks", [], |r| r.get(0))
+            .query_row("SELECT count(DISTINCT filepath) FROM chunks", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(n, 20, "all concurrent writes must land");
     }
@@ -2979,15 +3352,22 @@ mod tests {
     #[tokio::test]
     async fn scale_hundreds_of_files() {
         let db = Arc::new(Db::open_in_memory().unwrap());
-        let store =
-            Arc::new(SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap());
+        let store = Arc::new(SqliteVecStore::new(db, Arc::new(StubEmbedder::new(384))).unwrap());
         for i in 0..300u64 {
             store
-                .index(i + 2, &format!("/f{i}.md"), &format!("document {i} about topic{}", i % 7))
+                .index(
+                    i + 2,
+                    &format!("/f{i}.md"),
+                    &format!("document {i} about topic{}", i % 7),
+                )
                 .unwrap();
         }
         store
-            .index(9999, "/needle.md", "the singular zebraquux marker lives here alone")
+            .index(
+                9999,
+                "/needle.md",
+                "the singular zebraquux marker lives here alone",
+            )
             .unwrap();
         let hits = store.search("zebraquux marker", None).await.unwrap();
         assert_eq!(

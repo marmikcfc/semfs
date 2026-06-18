@@ -64,6 +64,10 @@ fn rerank_chunks_per_file() -> usize {
 pub struct FileAcc {
     /// Best (lowest) rank seen per lane; `None` = the file never matched that lane.
     pub best_rank: [Option<usize>; N_LANES],
+    /// Hidden KG v1: a bounded file-level prior applied before rerank. This is
+    /// additive to RRF so it can rescue near-ties without overpowering exact
+    /// lexical/path evidence.
+    pub prior: f64,
     pub chunks: Vec<(usize, String)>,
 }
 
@@ -75,7 +79,8 @@ impl FileAcc {
             .iter()
             .filter_map(|r| *r)
             .map(|r| 1.0 / (RRF_K + r as f64))
-            .sum()
+            .sum::<f64>()
+            + self.prior.clamp(0.0, 0.15)
     }
 }
 
@@ -94,6 +99,16 @@ pub fn rrf_bump(
     let slot = &mut e.best_rank[lane as usize];
     *slot = Some(slot.map_or(rank, |best| best.min(rank)));
     e.chunks.push((rank, chunk));
+}
+
+/// Apply bounded file-level priors to the already retrieved candidate set.
+/// Missing files are ignored: v1 hidden KG only reorders existing candidates.
+pub fn apply_file_priors(acc: &mut HashMap<String, FileAcc>, priors: &HashMap<String, f64>) {
+    for (fp, prior) in priors {
+        if let Some(file) = acc.get_mut(fp) {
+            file.prior = prior.clamp(0.0, 0.15);
+        }
+    }
 }
 
 /// A file's top-`n` DISTINCT chunks by best (lowest) rank, concatenated in rank
@@ -211,7 +226,11 @@ pub fn apply_comention_boost(hits: &mut [SearchHit], entities: impl Fn(&str) -> 
 
 /// L6: multiply each hit by its salience. `stats(filepath)` returns
 /// `(last_accessed_ms, access_count)` (storage-specific lookup).
-pub fn apply_salience(hits: &mut [SearchHit], now_ms: i64, stats: impl Fn(&str) -> (Option<i64>, i64)) {
+pub fn apply_salience(
+    hits: &mut [SearchHit],
+    now_ms: i64,
+    stats: impl Fn(&str) -> (Option<i64>, i64),
+) {
     for h in hits.iter_mut() {
         if let Some(fp) = &h.filepath {
             let (last, count) = stats(fp);
@@ -234,7 +253,12 @@ mod tests {
         let day = 86_400_000i64;
         assert!(salience(now, Some(now), 0) > salience(now, Some(now - 60 * day), 0));
         assert!(salience(now, Some(now), 25) > salience(now, Some(now), 0));
-        for (last, acc) in [(Some(now), 0i64), (Some(now - 365 * day), 0), (Some(now), 1000), (None, 0)] {
+        for (last, acc) in [
+            (Some(now), 0i64),
+            (Some(now - 365 * day), 0),
+            (Some(now), 1000),
+            (None, 0),
+        ] {
             let s = salience(now, last, acc);
             assert!(s > 0.85 && s < 1.5, "salience {s} escaped the nudge band");
         }
@@ -282,10 +306,22 @@ mod tests {
         let mut acc: HashMap<String, FileAcc> = HashMap::new();
         // High-chunk file: 50 chunks in the code lane, best rank 5.
         for rank in 5..55 {
-            rrf_bump(&mut acc, "/many.py".into(), format!("c{rank}"), rank, Lane::Code);
+            rrf_bump(
+                &mut acc,
+                "/many.py".into(),
+                format!("c{rank}"),
+                rank,
+                Lane::Code,
+            );
         }
         // Low-chunk file: a single chunk in the text lane at the top rank.
-        rrf_bump(&mut acc, "/answer.xlsx".into(), "best".into(), 0, Lane::Text);
+        rrf_bump(
+            &mut acc,
+            "/answer.xlsx".into(),
+            "best".into(),
+            0,
+            Lane::Text,
+        );
 
         // Each file scores once for its lane at its best rank — chunk count ignored.
         assert!((acc["/many.py"].score() - 1.0 / (RRF_K + 5.0)).abs() < 1e-12);
@@ -312,5 +348,32 @@ mod tests {
         assert_eq!(e.best_rank[Lane::Code as usize], None);
         let expected = 1.0 / (RRF_K + 2.0) + 1.0 / (RRF_K + 3.0);
         assert!((e.score() - expected).abs() < 1e-12);
+    }
+
+    #[test]
+    fn file_priors_raise_existing_candidates_only() {
+        let mut acc: HashMap<String, FileAcc> = HashMap::new();
+        rrf_bump(&mut acc, "/a".into(), "alpha".into(), 0, Lane::Text);
+        rrf_bump(&mut acc, "/b".into(), "beta".into(), 1, Lane::Text);
+        let mut priors = HashMap::new();
+        priors.insert("/b".to_string(), 0.15);
+        priors.insert("/missing".to_string(), 0.15);
+        apply_file_priors(&mut acc, &priors);
+        assert!(acc["/b"].score() > acc["/a"].score());
+        assert!(!acc.contains_key("/missing"));
+    }
+
+    #[test]
+    fn file_priors_are_bounded() {
+        let mut acc: HashMap<String, FileAcc> = HashMap::new();
+        rrf_bump(&mut acc, "/strong".into(), "best".into(), 0, Lane::Text);
+        rrf_bump(&mut acc, "/weak".into(), "later".into(), 20, Lane::Text);
+        let weak_base = acc["/weak"].score();
+        let strong_base = acc["/strong"].score();
+        let mut priors = HashMap::new();
+        priors.insert("/weak".to_string(), 99.0);
+        apply_file_priors(&mut acc, &priors);
+        assert!((acc["/weak"].score() - (weak_base + 0.15)).abs() < 1e-12);
+        assert!(acc["/strong"].score() > strong_base - 1e-12);
     }
 }

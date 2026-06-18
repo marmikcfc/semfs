@@ -28,6 +28,8 @@ import shutil
 import socket
 import subprocess
 import time
+import tarfile
+import tempfile
 from pathlib import Path
 
 import modal
@@ -118,9 +120,12 @@ image = (
         # Seed-build examples (dir→seed indexer + dual-lane KG builder). These
         # compile the 14 tree-sitter C grammars (cc from build-essential).
         ". $HOME/.cargo/env && cd /opt/semfs-src && "
-        "cargo build --release -p semfs-core --example seed_dir --example build_kg",
+        "cargo build --release -p semfs-core --example seed_dir --example build_kg "
+        "--example materialize_kg --example surface_clean_seed",
         "cp /opt/semfs-src/target/release/examples/seed_dir /usr/local/bin/seed_dir",
         "cp /opt/semfs-src/target/release/examples/build_kg /usr/local/bin/build_kg",
+        "cp /opt/semfs-src/target/release/examples/materialize_kg /usr/local/bin/materialize_kg",
+        "cp /opt/semfs-src/target/release/examples/surface_clean_seed /usr/local/bin/surface_clean_seed",
         f"printf '%s\\n' '{SEMFS_LOCAL_REF}+local' > /usr/local/share/semfs-git-sha",
     )
     # Node 20 + codex CLI (the agent under test).
@@ -138,7 +143,7 @@ image = (
         "test -f /opt/semfs-src/benchmarks/vendor/Workspace-Bench/evaluation/"
         "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs && echo CLAUDE_SDK_OK",
     )
-    .pip_install("pyyaml", "tqdm", "requests")
+    .pip_install("pyyaml", "tqdm", "requests", "e2b")
 )
 
 
@@ -158,6 +163,296 @@ def _local_modal_preflight() -> None:
         raise RuntimeError(
             "local DNS cannot resolve api.modal.com; run this from a network-enabled shell"
         ) from exc
+
+
+def _clean_surface_artifacts(db_path: str) -> dict:
+    """Remove KG surface artifacts from fs_dentry/fs_inode/fs_data in-place.
+
+    Deletes /AGENTS.md, /CLAUDE.md, and the entire /kg/ subtree from the
+    filesystem layer of the seed so the mount shows no surface contamination.
+    The edges/graph_community/graph_god_node tables are untouched — only the
+    agent-visible filesystem entries are removed.
+
+    Returns counts of what was deleted for verification.
+    """
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    deleted = {
+        "agents_md": 0,
+        "claude_md": 0,
+        "kg_children": 0,
+        "kg_dir": 0,
+        "chunks": 0,
+        "ffts": 0,
+        "vchunks": 0,
+        "vchunks_code": 0,
+    }
+    try:
+        # /kg/ children: fs_data + fs_inode + fs_dentry
+        kg_row = conn.execute(
+            "SELECT ino FROM fs_dentry WHERE parent_ino = 1 AND name = 'kg'"
+        ).fetchone()
+        if kg_row:
+            kg_ino = kg_row[0]
+            child_inodes = [r[0] for r in conn.execute(
+                "SELECT ino FROM fs_dentry WHERE parent_ino = ?", [kg_ino]
+            ).fetchall()]
+            for ino in child_inodes:
+                conn.execute("DELETE FROM fs_data WHERE ino = ?", [ino])
+                conn.execute("DELETE FROM fs_inode WHERE ino = ?", [ino])
+                deleted["kg_children"] += 1
+            conn.execute("DELETE FROM fs_dentry WHERE parent_ino = ?", [kg_ino])
+            conn.execute("DELETE FROM fs_inode WHERE ino = ?", [kg_ino])
+            conn.execute("DELETE FROM fs_dentry WHERE parent_ino = 1 AND name = 'kg'")
+            deleted["kg_dir"] = 1
+
+        # /AGENTS.md and /CLAUDE.md
+        for name, key in [("AGENTS.md", "agents_md"), ("CLAUDE.md", "claude_md")]:
+            row = conn.execute(
+                "SELECT d.ino FROM fs_dentry d JOIN fs_inode i ON d.ino = i.ino "
+                "WHERE d.parent_ino = 1 AND d.name = ? AND i.derived = 1", [name]
+            ).fetchone()
+            if row:
+                conn.execute("DELETE FROM fs_data WHERE ino = ?", [row[0]])
+                conn.execute("DELETE FROM fs_inode WHERE ino = ?", [row[0]])
+                conn.execute("DELETE FROM fs_dentry WHERE parent_ino = 1 AND name = ?", [name])
+                deleted[key] = 1
+
+        # Safety sweep: delete any indexed rows tied to surface-only paths. We
+        # must remove vec0/fts rows by the same chunk ids or the local index
+        # becomes count-inconsistent and grep disables local search.
+        chunk_ids = [
+            r[0]
+            for r in conn.execute(
+                "SELECT id FROM chunks WHERE filepath LIKE '/kg/%' "
+                "OR filepath IN ('/AGENTS.md', '/CLAUDE.md')"
+            ).fetchall()
+        ]
+        if chunk_ids:
+            marks = ",".join("?" for _ in chunk_ids)
+            c = conn.execute(
+                f"DELETE FROM chunks WHERE id IN ({marks})",
+                chunk_ids,
+            )
+            deleted["chunks"] = c.rowcount
+            try:
+                c = conn.execute(f"DELETE FROM ffts WHERE rowid IN ({marks})", chunk_ids)
+                deleted["ffts"] = c.rowcount
+            except Exception:
+                deleted["ffts"] = "MISSING"
+            try:
+                c = conn.execute(f"DELETE FROM vchunks WHERE rowid IN ({marks})", chunk_ids)
+                deleted["vchunks"] = c.rowcount
+            except Exception:
+                deleted["vchunks"] = "MISSING"
+            try:
+                c = conn.execute(f"DELETE FROM vchunks_code WHERE rowid IN ({marks})", chunk_ids)
+                deleted["vchunks_code"] = c.rowcount
+            except Exception:
+                deleted["vchunks_code"] = "MISSING"
+
+        conn.commit()
+    finally:
+        conn.close()
+    return deleted
+
+
+def _verify_surface_clean(db_path: str) -> bool:
+    """Return True if no surface artifacts remain in fs_dentry."""
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT name FROM fs_dentry WHERE parent_ino = 1 AND name IN ('AGENTS.md', 'CLAUDE.md', 'kg')"
+        ).fetchall()
+        return len(rows) == 0
+    finally:
+        conn.close()
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    timeout=1800,
+    cpu=2,
+    memory=4096,
+)
+def build_4arm_seed(
+    source: str = "chanpin-leanhint3.db",
+    dest: str = "chanpin-4arm.db",
+) -> dict:
+    """Build the single shared seed for all 4 hidden-KG experiment arms.
+
+    Takes an existing seed that already has chunks + vchunks + edges
+    (chanpin-leanhint3.db), rebuilds graph_community + graph_god_node using
+    the current Leiden code (materialize_kg), then SQL-cleans all surface
+    artifacts so the mount shows no /kg/, AGENTS.md, or CLAUDE.md.
+
+    The output seed is usable for all four semfs arms by varying env flags:
+      best             SEMFS_COMENTION=off  (edges/communities ignored)
+      hiddenkg_edges   SEMFS_COMENTION=on   (edges-based L7 boost)
+      hiddenkg_leiden  SEMFS_COMENTION=leiden (graph_community-based L7 boost, new)
+      hiddenkg_routing SEMFS_KG_ROUTING=on  (community-scoped retrieval, new)
+    """
+    import shutil, sqlite3
+    src = Path(f"{VOL}/seeds/{source}")
+    dst = Path(f"{VOL}/seeds/{dest}")
+
+    if not src.exists():
+        raise RuntimeError(f"source seed not found: {src}")
+    print(f"[build_4arm_seed] copying {src} → {dst}  ({src.stat().st_size // (1024*1024)} MB)", flush=True)
+    shutil.copy2(src, dst)
+
+    # Rebuild graph_community + graph_god_node using the current Leiden code.
+    # materialize_kg reads existing edges, runs Leiden, writes back — no LLM needed.
+    print("[build_4arm_seed] running materialize_kg (Leiden community rebuild)…", flush=True)
+    r = _sh(f"materialize_kg {dst}")
+    print(r.stdout.strip(), flush=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"materialize_kg failed:\n{r.stderr[:800]}")
+
+    # Clean surface artifacts through the Rust/sqlite-vec path so vec0 rows stay
+    # aligned with chunks. Python's sqlite3 cannot operate on the vec0 vtabs.
+    print("[build_4arm_seed] cleaning surface artifacts through surface_clean_seed…", flush=True)
+    r = _sh(f"surface_clean_seed {dst}")
+    print(r.stdout.strip(), flush=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"surface_clean_seed failed:\n{r.stderr[:800]}")
+    clean_info = json.loads(r.stdout.strip())
+    deleted = clean_info["deleted"]
+    stats = clean_info["table_counts"]
+    clean = bool(clean_info.get("surface_clean"))
+
+    if stats.get("edges", 0) == 0:
+        raise RuntimeError("edges table is empty — co-mention and routing arms will be no-ops")
+    if stats.get("graph_community", 0) == 0:
+        raise RuntimeError("graph_community is empty — Leiden rebuild produced no communities")
+    data_volume.commit()
+    print(f"[build_4arm_seed] committed {dest} to Modal volume", flush=True)
+    return {"source": source, "dest": dest, "size_mb": dst.stat().st_size // (1024*1024),
+            "table_counts": stats, "surface_clean": clean, "deleted": deleted}
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    secrets=[modal.Secret.from_name("e2b")],
+    timeout=7200,
+    cpu=4,
+    memory=8192,
+)
+def build_e2b_template_v2_modal(template_name: str = "semfs-baked-v2") -> dict:
+    """Build the E2B template entirely from Modal volume assets.
+
+    This avoids staging multi-GB seed files on the local machine. Required on
+    the Modal volume:
+      - /data/seeds/chanpin-gemma-q4.db
+      - /data/seeds/chanpin-clean.db
+      - /data/seeds/chanpin-leanhint3.db
+      - /data/seeds/chanpin-4arm.db
+      - /data/corpus/chanpin_standard/
+
+    Required Modal secret:
+      - e2b with E2B_API_KEY=...
+    """
+    from e2b import Template
+
+    print(f"[build_e2b_template_v2_modal] template_name={template_name}", flush=True)
+    corpus = Path(f"{VOL}/corpus/chanpin_standard")
+    seeds = {
+        "chanpin-gemma-q4.db": Path(f"{VOL}/seeds/chanpin-gemma-q4.db"),
+        "chanpin-clean.db": Path(f"{VOL}/seeds/chanpin-clean.db"),
+        "chanpin-leanhint3.db": Path(f"{VOL}/seeds/chanpin-leanhint3.db"),
+        "chanpin-4arm.db": Path(f"{VOL}/seeds/chanpin-4arm.db"),
+    }
+
+    missing = [str(p) for p in [corpus, *seeds.values()] if not p.exists()]
+    if missing:
+        raise RuntimeError(f"missing Modal volume assets for E2B template build: {missing}")
+    print("[build_e2b_template_v2_modal] volume assets present", flush=True)
+    print(f"  corpus={corpus}", flush=True)
+    for name, src in seeds.items():
+        print(f"  seed={name} size={src.stat().st_size}", flush=True)
+
+    with tempfile.TemporaryDirectory(prefix="e2b_ctx_") as td:
+        ctx = Path(td)
+        print(f"[build_e2b_template_v2_modal] ctx={ctx}", flush=True)
+        corpus_tgz = ctx / "corpus.tgz"
+        print("[build_e2b_template_v2_modal] creating corpus.tgz", flush=True)
+        with tarfile.open(corpus_tgz, "w:gz") as tar:
+            tar.add(corpus, arcname="chanpin_standard")
+        print(f"[build_e2b_template_v2_modal] corpus.tgz size={corpus_tgz.stat().st_size}", flush=True)
+        for name, src in seeds.items():
+            print(f"[build_e2b_template_v2_modal] copying {name}", flush=True)
+            shutil.copy2(src, ctx / name)
+            print(f"  copied {name} size={(ctx / name).stat().st_size}", flush=True)
+
+        t = Template(file_context_path=str(ctx))
+        b = (
+            t.from_template("semfs-baked")
+             .copy("corpus.tgz", "/opt/corpus.tgz", user="root")
+             .copy("chanpin-gemma-q4.db", "/opt/chanpin-gemma-q4.db", user="root")
+             .copy("chanpin-clean.db", "/opt/chanpin-clean.db", user="root")
+             .copy("chanpin-leanhint3.db", "/opt/chanpin-leanhint3.db", user="root")
+             .copy("chanpin-4arm.db", "/opt/chanpin-4arm.db", user="root")
+        )
+        print("[build_e2b_template_v2_modal] calling E2B Template.build", flush=True)
+        try:
+            info = Template.build(
+                b,
+                name=template_name,
+                cpu_count=4,
+                memory_mb=8192,
+                request_timeout=1800.0,
+                on_build_logs=lambda e: print("  >", getattr(e, "message", str(e))[:400], flush=True),
+            )
+        except Exception as exc:
+            print(f"[build_e2b_template_v2_modal] E2B build failed: {repr(exc)}", flush=True)
+            raise
+        out = {"template": template_name, "build_info": info}
+        print("[build_e2b_template_v2_modal] build finished", flush=True)
+        print(json.dumps(out, default=str), flush=True)
+        return out
+
+
+@app.function(image=image, volumes={VOL: data_volume}, timeout=120)
+def inspect_seed_tables(seed: str = "chanpin-4arm.db") -> dict:
+    """Query table row counts for a seed DB on the Modal volume."""
+    import sqlite3
+    path = f"{VOL}/seeds/{seed}"
+    if not os.path.exists(path):
+        raise RuntimeError(f"seed not found: {path}")
+    conn = sqlite3.connect(path)
+    tables = [
+        "chunks", "vchunks", "edges", "graph_entity", "graph_relation",
+        "graph_community", "graph_god_node",
+    ]
+    counts = {}
+    for t in tables:
+        try:
+            counts[t] = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        except Exception as e:
+            counts[t] = f"ERROR: {e}"
+    # entity kind breakdown if graph_entity has rows
+    if isinstance(counts.get("graph_entity"), int) and counts["graph_entity"] > 0:
+        try:
+            rows = conn.execute(
+                "SELECT kind, COUNT(*) FROM graph_entity GROUP BY kind ORDER BY 2 DESC"
+            ).fetchall()
+            counts["graph_entity_by_kind"] = {k: n for k, n in rows}
+        except Exception:
+            pass
+    conn.close()
+    print(json.dumps({"seed": seed, "counts": counts}, indent=2))
+    return {"seed": seed, "counts": counts}
+
+
+@app.local_entrypoint()
+def inspect_seed(seed: str = "chanpin-4arm.db"):
+    """Print table row counts for a seed DB stored on the Modal volume."""
+    _local_modal_preflight()
+    result = inspect_seed_tables.remote(seed)
+    print(json.dumps(result, indent=2))
 
 
 @app.function(image=image, timeout=600)

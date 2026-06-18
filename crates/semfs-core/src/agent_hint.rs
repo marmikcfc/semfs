@@ -128,7 +128,7 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
          The directory `{path_str}/` is a dynamic semantic index (Supermemory mount).\n\
          {kg_line}\
          \n\
-         \u{0020}   semfs grep \"<2-4 key terms, in the corpus language>\" {path_str}/\n\
+         \u{0020}   semfs grep \"<2-4 key terms>\" {path_str}/\n\
          \n\
          \u{0020} It returns ranked excerpts: each result names WHICH file and shows its\n\
          \u{0020} content. A line marked `# ^ COMPLETE FILE` is that file's entire content.\n\
@@ -189,7 +189,7 @@ pub fn render_workspace_root() -> String {
          {graph_section}\
          To FIND content, semantic search is available:\n\
          \n\
-         \u{0020}   semfs grep \"<2-4 key terms, in the corpus language>\" .\n\
+         \u{0020}   semfs grep \"<2-4 key terms>\" .\n\
          \n\
          It returns ranked excerpts: each result names WHICH file and shows its\n\
          content. A line marked `# ^ COMPLETE FILE` is that file's entire content. A\n\
@@ -485,7 +485,10 @@ mod tests {
         let block = render_block("t", Path::new("/m/ws"));
         env::remove_var("SEMFS_GRAPH_FS");
         env::remove_var("SEMFS_KG");
-        assert!(block.contains("/m/ws/by-topic/"), "home block names overlay with absolute path");
+        assert!(
+            block.contains("/m/ws/by-topic/"),
+            "home block names overlay with absolute path"
+        );
     }
 
     #[test]

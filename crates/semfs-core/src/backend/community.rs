@@ -124,13 +124,11 @@ impl Graph {
             }
         }
         // apply: accumulate weight into an existing edge, else add it
-        let mut bump = |adj: &mut Vec<(usize, f64)>, nb: usize| match adj
-            .iter_mut()
-            .find(|(x, _)| *x == nb)
-        {
-            Some(e) => e.1 += weight,
-            None => adj.push((nb, weight)),
-        };
+        let mut bump =
+            |adj: &mut Vec<(usize, f64)>, nb: usize| match adj.iter_mut().find(|(x, _)| *x == nb) {
+                Some(e) => e.1 += weight,
+                None => adj.push((nb, weight)),
+            };
         for (a, b) in new_edges {
             bump(&mut self.adj[a], b);
             bump(&mut self.adj[b], a);
@@ -382,8 +380,11 @@ fn split_oversized(g: &Graph, mut comm: Vec<usize>, resolution: f64) -> Vec<usiz
                 continue;
             }
             // induced subgraph over this community's nodes (local indices)
-            let local: HashMap<usize, usize> =
-                nodes.iter().enumerate().map(|(li, &orig)| (orig, li)).collect();
+            let local: HashMap<usize, usize> = nodes
+                .iter()
+                .enumerate()
+                .map(|(li, &orig)| (orig, li))
+                .collect();
             let mut sub = Graph::new(nodes.len());
             for &u in &nodes {
                 let ui = local[&u];
@@ -524,7 +525,11 @@ fn densify(comm: &[usize]) -> Vec<usize> {
     }
     let mut order: Vec<usize> = size.keys().copied().collect();
     order.sort_by(|a, b| size[b].cmp(&size[a]).then(a.cmp(b)));
-    let remap: HashMap<usize, usize> = order.iter().enumerate().map(|(new, &old)| (old, new)).collect();
+    let remap: HashMap<usize, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(new, &old)| (old, new))
+        .collect();
     comm.iter().map(|c| remap[c]).collect()
 }
 
@@ -584,13 +589,21 @@ mod tests {
         // so the detector forms two communities (the singleton fix for related-but-no-shared-entity).
         let fe = vec![hs(&[10]), hs(&[11]), hs(&[12]), hs(&[13])];
         let mut g = Graph::from_file_entities(&fe);
-        assert!(g.adj.iter().all(|a| a.is_empty()), "no shared entities → no edges before kNN");
+        assert!(
+            g.adj.iter().all(|a| a.is_empty()),
+            "no shared entities → no edges before kNN"
+        );
         let emb = vec![
-            vec![1.0, 0.0], vec![0.98, 0.05], // cluster A
-            vec![0.0, 1.0], vec![0.05, 0.98], // cluster B
+            vec![1.0, 0.0],
+            vec![0.98, 0.05], // cluster A
+            vec![0.0, 1.0],
+            vec![0.05, 0.98], // cluster B
         ];
         g.add_knn_edges(&emb, 1, 1.0);
-        let comm = Louvain { leiden_refine: true }.detect(&g, 1.0);
+        let comm = Louvain {
+            leiden_refine: true,
+        }
+        .detect(&g, 1.0);
         assert_eq!(comm[0], comm[1], "embedding-near files 0,1 must cluster");
         assert_eq!(comm[2], comm[3], "embedding-near files 2,3 must cluster");
         assert_ne!(comm[0], comm[2], "the two embedding clusters stay distinct");
@@ -623,7 +636,14 @@ mod tests {
 
     #[test]
     fn leiden_two_clusters_separate() {
-        let fe = vec![hs(&[100]), hs(&[100]), hs(&[100]), hs(&[200]), hs(&[200]), hs(&[200])];
+        let fe = vec![
+            hs(&[100]),
+            hs(&[100]),
+            hs(&[100]),
+            hs(&[200]),
+            hs(&[200]),
+            hs(&[200]),
+        ];
         let g = Graph::from_file_entities(&fe);
         let comm = Leiden.detect(&g, 1.0);
         assert_eq!(comm[0], comm[1]);
@@ -638,7 +658,12 @@ mod tests {
         let fe = vec![hs(&[1]), hs(&[2]), hs(&[3])];
         let g = Graph::from_file_entities(&fe);
         assert_eq!(
-            Leiden.detect(&g, 1.0).iter().copied().collect::<HashSet<_>>().len(),
+            Leiden
+                .detect(&g, 1.0)
+                .iter()
+                .copied()
+                .collect::<HashSet<_>>()
+                .len(),
             3
         );
     }
@@ -646,8 +671,14 @@ mod tests {
     #[test]
     fn leiden_deterministic() {
         let fe = vec![
-            hs(&[1, 2]), hs(&[2, 3]), hs(&[3, 1]), hs(&[9]), hs(&[9]),
-            hs(&[5, 6]), hs(&[6, 7]), hs(&[7, 5]),
+            hs(&[1, 2]),
+            hs(&[2, 3]),
+            hs(&[3, 1]),
+            hs(&[9]),
+            hs(&[9]),
+            hs(&[5, 6]),
+            hs(&[6, 7]),
+            hs(&[7, 5]),
         ];
         let g = Graph::from_file_entities(&fe);
         assert_eq!(Leiden.detect(&g, 1.0), Leiden.detect(&g, 1.0));
@@ -657,11 +688,22 @@ mod tests {
     fn leiden_modularity_at_least_louvain() {
         // two tight triangles, weakly bridged — multi-level Leiden must not do worse.
         let fe = vec![
-            hs(&[1, 2]), hs(&[2, 3]), hs(&[3, 1]),
-            hs(&[5, 6]), hs(&[6, 7]), hs(&[7, 5]),
+            hs(&[1, 2]),
+            hs(&[2, 3]),
+            hs(&[3, 1]),
+            hs(&[5, 6]),
+            hs(&[6, 7]),
+            hs(&[7, 5]),
         ];
         let g = Graph::from_file_entities(&fe);
-        let ql = modularity(&g, &Louvain { leiden_refine: true }.detect(&g, 1.0), 1.0);
+        let ql = modularity(
+            &g,
+            &Louvain {
+                leiden_refine: true,
+            }
+            .detect(&g, 1.0),
+            1.0,
+        );
         let qle = modularity(&g, &Leiden.detect(&g, 1.0), 1.0);
         assert!(qle >= ql - 1e-9, "leiden modularity {qle} < louvain {ql}");
     }
@@ -669,12 +711,20 @@ mod tests {
     #[test]
     fn leiden_communities_internally_connected() {
         let fe = vec![
-            hs(&[1, 2]), hs(&[2, 3]), hs(&[3, 1]),
-            hs(&[5, 6]), hs(&[6, 7]), hs(&[7, 5]), hs(&[9]),
+            hs(&[1, 2]),
+            hs(&[2, 3]),
+            hs(&[3, 1]),
+            hs(&[5, 6]),
+            hs(&[6, 7]),
+            hs(&[7, 5]),
+            hs(&[9]),
         ];
         let g = Graph::from_file_entities(&fe);
         let comm = Leiden.detect(&g, 1.0);
-        assert!(each_community_connected(&g, &comm), "every Leiden community must be connected");
+        assert!(
+            each_community_connected(&g, &comm),
+            "every Leiden community must be connected"
+        );
     }
 
     #[test]
@@ -689,7 +739,10 @@ mod tests {
             hs(&[200]),
         ];
         let g = Graph::from_file_entities(&fe);
-        let comm = Louvain { leiden_refine: true }.detect(&g, 1.0);
+        let comm = Louvain {
+            leiden_refine: true,
+        }
+        .detect(&g, 1.0);
         // {0,1,2} in one community, {3,4,5} in another
         assert_eq!(comm[0], comm[1]);
         assert_eq!(comm[1], comm[2]);
@@ -702,20 +755,38 @@ mod tests {
     fn deterministic_across_runs() {
         let fe = vec![hs(&[1, 2]), hs(&[2, 3]), hs(&[3, 1]), hs(&[9]), hs(&[9])];
         let g = Graph::from_file_entities(&fe);
-        let a = Louvain { leiden_refine: true }.detect(&g, 1.0);
-        let b = Louvain { leiden_refine: true }.detect(&g, 1.0);
+        let a = Louvain {
+            leiden_refine: true,
+        }
+        .detect(&g, 1.0);
+        let b = Louvain {
+            leiden_refine: true,
+        }
+        .detect(&g, 1.0);
         assert_eq!(a, b);
     }
 
     #[test]
     fn refinement_does_not_lower_modularity() {
         let fe = vec![
-            hs(&[1]), hs(&[1]), hs(&[1, 2]), hs(&[2]), hs(&[2]),
-            hs(&[3]), hs(&[3]), hs(&[3]),
+            hs(&[1]),
+            hs(&[1]),
+            hs(&[1, 2]),
+            hs(&[2]),
+            hs(&[2]),
+            hs(&[3]),
+            hs(&[3]),
+            hs(&[3]),
         ];
         let g = Graph::from_file_entities(&fe);
-        let plain = Louvain { leiden_refine: false }.detect(&g, 1.0);
-        let refined = Louvain { leiden_refine: true }.detect(&g, 1.0);
+        let plain = Louvain {
+            leiden_refine: false,
+        }
+        .detect(&g, 1.0);
+        let refined = Louvain {
+            leiden_refine: true,
+        }
+        .detect(&g, 1.0);
         let qp = modularity(&g, &plain, 1.0);
         let qr = modularity(&g, &refined, 1.0);
         // refinement only splits disconnected pieces; modularity stays close
@@ -726,7 +797,10 @@ mod tests {
     fn isolated_nodes_each_own_community() {
         let fe = vec![hs(&[1]), hs(&[2]), hs(&[3])]; // no shared entities
         let g = Graph::from_file_entities(&fe);
-        let comm = Louvain { leiden_refine: true }.detect(&g, 1.0);
+        let comm = Louvain {
+            leiden_refine: true,
+        }
+        .detect(&g, 1.0);
         assert_eq!(comm.iter().copied().collect::<HashSet<_>>().len(), 3);
     }
 
@@ -746,7 +820,10 @@ mod tests {
         fe[0].insert(300); // one weak bridge between the two cliques
         fe[12].insert(300);
         let g = Graph::from_file_entities(&fe);
-        let comm = Louvain { leiden_refine: true }.detect(&g, 1.0);
+        let comm = Louvain {
+            leiden_refine: true,
+        }
+        .detect(&g, 1.0);
         for i in 1..12 {
             assert_eq!(comm[0], comm[i], "A node {i} split off");
         }
@@ -754,7 +831,13 @@ mod tests {
             assert_eq!(comm[12], comm[i], "B node {i} split off");
         }
         assert_ne!(comm[0], comm[12], "cliques merged");
-        assert_eq!(comm, Louvain { leiden_refine: true }.detect(&g, 1.0));
+        assert_eq!(
+            comm,
+            Louvain {
+                leiden_refine: true
+            }
+            .detect(&g, 1.0)
+        );
     }
 
     #[test]

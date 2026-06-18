@@ -1,6 +1,118 @@
 # Current State — semfs / Workspace-Bench instance
 
-_Last updated: 2026-06-17. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
+_Last updated: 2026-06-18. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
+
+## ⮕ Latest (2026-06-18 evening) — chanpin-4arm.db seed verified; hidden-KG architecture decided; implementation ticket reviewed
+
+### Seed: `chanpin-4arm.db` — fully verified, on Modal volume
+
+Built from `chanpin-leanhint3.db` with Leiden communities rebuilt (`materialize_kg`) and all surface artifacts SQL-cleaned. Verified table counts:
+
+| Table | Rows | Notes |
+|---|---|---|
+| `chunks` | 7,134 | text content |
+| `edges` | 13,322 | file → entity paths (`to_path = /memories/<slug>.md`) |
+| `graph_entity` | 9,300 | entity names (CJK preserved); Concept 3698 · Org 1683 · Artifact 1355 · Person 730 · Project 713 · Task 457 · Event 408 · Decision 256 |
+| `graph_relation` | 5,139 | entity → entity typed relations |
+| `graph_community` | 636 | 32 Leiden communities, one row per file |
+| `graph_god_node` | 128 | 4 ranked god nodes per community (rank 0 = most central) |
+
+Surface clean: no `/AGENTS.md`, `/CLAUDE.md`, `/kg/` visible on mount. One seed covers all 4 experiment arms via env flags:
+
+- `best` → `SEMFS_COMENTION=off`
+- `hiddenkg_edges` → `SEMFS_COMENTION=on` (current proxy)
+- `hiddenkg_leiden` → `SEMFS_COMENTION=leiden` (not yet implemented)
+- `hiddenkg_routing` → `SEMFS_KG_ROUTING=on` (not yet implemented)
+
+### "in the corpus language" hint removed — 4 locations
+
+The phrase instructed agents to search in Chinese (corpus-specific overfitting). Removed from:
+
+1. `crates/semfs-core/src/agent_hint.rs` — home-level hint (`render_block`)
+2. `crates/semfs-core/src/agent_hint.rs` — workspace-root hint (`render_workspace_root`)
+3. `benchmarks/e2b/cell_driver.py` — `SEMFS_HINT` constant (semfs arms)
+4. `benchmarks/e2b/cell_driver.py` — cloud arm hint
+
+### Hidden KG architecture decided
+
+Reviewed `tickets/workspace-bench-5arm-matrix/HIDDEN_KG_IMPLEMENTATION_TICKET.md`. Architecture is a **bounded soft prior** (0.0–0.15 score boost), not a hard filter:
+
+```
+kg_prior(file) = entity_overlap_score
+               + community_match_score
+               + neighbor_file_score
+               - giant_community_penalty
+```
+
+Applied after all retrieval lanes (vec KNN + code KNN + BM25 + path lane) complete, before cross-encoder rerank. Controlled by `SEMFS_HIDDEN_KG=on`. The `chanpin-4arm.db` seed has all four data sources needed (`edges`, `graph_entity`, `graph_community`, `graph_god_node`).
+
+Current proxy arm (`SEMFS_COMENTION=on`) is the existing L7 co-mention boost — a post-rerank nudge, not the full hidden KG prior. The real implementation requires `hidden_kg.rs`.
+
+### New Modal utilities added
+
+- `benchmarks/modal/semfs_modal.py::build_4arm_seed` — builds the shared 4-arm seed (copy → Leiden rebuild → surface clean → verify)
+- `benchmarks/modal/semfs_modal.py::inspect_seed_tables` + `::inspect_seed` — queries table row counts on any seed in the Modal volume (used to verify `graph_entity`)
+
+## ⮕ Latest (2026-06-18) — hidden-KG E2B template rebuilt on Modal; seeds now baked; preflight blocked by surface contamination in `best`
+
+- **Experiment target clarified:** the desired 3-arm PM experiment is now
+  `plain` vs `best_exp0002` vs `best_exp0002 + hidden internal KG only (proxy)`.
+  The proxy arm is current `SEMFS_COMENTION=on` with surfaced KG off; the true
+  hidden-routing KG design still does **not** exist in product.
+- **E2B harness cleaned for that experiment** in `benchmarks/e2b/run_matrix.py` and
+  `benchmarks/e2b/cell_driver.py`:
+  - new arms: `best`, `hiddenkg`
+  - **arm-specific remount per cell**
+  - `SEMFS_SEARCH_ONLY=off`
+  - arm-specific seed contract:
+    - `best` → `/opt/chanpin-leanhint3.db`
+    - `hiddenkg` / `nokg` / `nokgAK` → `/opt/chanpin-clean.db`
+    - `kg` → `/opt/chanpin-gemma-q4.db`
+  - explicit `--preflight`
+  - **hard fail** if seeds are missing or surfaced KG artifacts remain in a surface-off arm
+- **Template contract updated** in `benchmarks/e2b/bake_template_v2.py`:
+  `semfs-baked-v2` should now bake:
+  - `/opt/corpus.tgz`
+  - `/opt/chanpin-gemma-q4.db`
+  - `/opt/chanpin-clean.db`
+  - `/opt/chanpin-leanhint3.db`
+- **Local-disk issue addressed:** the first attempt staged ~2.5 GB under
+  `/private/tmp/e2b_ctx` (3 seeds + corpus tarball). That directory has been
+  **removed**. The rebuild path was moved to **Modal → E2B** instead:
+  `benchmarks/modal/semfs_modal.py::build_e2b_template_v2_modal`.
+  It reads the seeds and corpus from the Modal volume `semfs-bench-data`,
+  builds `corpus.tgz` inside Modal, and calls `e2b.Template.build(...)` there.
+  Modal secret `e2b` was created with `E2B_API_KEY`.
+- **What is verified right now:**
+  - Modal volume **does contain**:
+    - `seeds/chanpin-gemma-q4.db`
+    - `seeds/chanpin-clean.db`
+    - `seeds/chanpin-leanhint3.db`
+  - Modal-side E2B build succeeded from [benchmarks/modal/semfs_modal.py::build_e2b_template_v2_modal](/Users/marmikpandya/semantic-filesystem/benchmarks/modal/semfs_modal.py:165):
+    `semfs-baked-v2` now includes `/opt/corpus.tgz`, `/opt/chanpin-gemma-q4.db`,
+    `/opt/chanpin-clean.db`, and `/opt/chanpin-leanhint3.db`
+  - fresh E2B preflight now gets past seed inventory and reaches mount-time checks
+  - the current failure is:
+    `surface contamination persists for arm=best; rebuild or replace the seed`
+  - therefore the remaining blocker is **seed surface cleanliness for the best arm**, not template plumbing or local disk
+- **Open blocker / next step:** inspect what `best` is still surfacing on mount
+  (`kg/`, root hint files, or another derived artifact), then decide whether to:
+  1. rebuild `chanpin-leanhint3.db` as a surface-clean seed, or
+  2. relax the contamination check if the surfaced artifact is intentionally harmless
+     and does not affect the agent-visible experiment.
+
+## ⮕ Next experiments to run
+
+Once the surface contamination issue is resolved, run these in order:
+
+1. `python3 benchmarks/e2b/run_matrix.py --preflight --arms best,hiddenkg --knobs benchmarks/e2b/knobs/best_exp0002.json`
+2. Cheap validation:
+   - cases `53,171`
+   - arms `plain,best,hiddenkg`
+   - `n=1`
+3. Real experiment:
+   - same arms
+   - increase reps only after the preflight and validation are clean
 
 ## ⮕ Latest (2026-06-17) — kg-quality SHIPPED: full Leiden + embedding-kNN → singletons 38%→3%
 

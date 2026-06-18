@@ -59,11 +59,15 @@ scripts/.or_client_cookie
 
 # secrets / auth / logs — NEVER commit
 codex_auth.json
+codex-home/
 claude_auth_config.json
 openrouter_logs.csv
 claude_auth_config.json
 *.session.txt
 2026-*-this-session-is-being-continued*.txt
+ANTHROPIC_API_KEY=*
+OPENAI_API_KEY=*
+sk-*
 
 # evo workspace + harness artifacts
 .evo/

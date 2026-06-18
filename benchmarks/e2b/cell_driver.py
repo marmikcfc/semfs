@@ -11,7 +11,7 @@ Patched vs the baked driver (see tickets/workspace-bench-5arm-matrix/E2B_RUNBOOK
      so the patched ClaudeCode.js re-enables mount access + the grep shim even though
      cwd is OUTSIDE the mount (write-outside design). RCA 2026-06-13 (parity).
 
-Usage:  python3 cell_driver.py --label L --agent {claude|codex} --case N --arm {plain|nokg|nokgAK}
+Usage:  python3 cell_driver.py --label L --agent {claude|codex} --case N --arm {plain|nokg|nokgAK|best|hiddenkg|hiddenkg_edges}
 Emits one line:  RESULT=<json>
 """
 import json, os, time, importlib.util, argparse
@@ -32,7 +32,7 @@ PLAIN = "/home/user/ws/plain"     # raw corpus tree (plain arm)
 
 SEMFS_HINT = (
     f"The directory {WS}/ is a DYNAMIC SEMANTIC INDEX, not a normal tree. To FIND anything, use semantic search:\n"
-    f'    semfs grep "<2-4 key terms, in the corpus language>" {WS}/\n'
+    f'    semfs grep "<2-4 key terms>" {WS}/\n'
     "It returns ranked excerpts naming WHICH file + its content. `# ^ COMPLETE FILE` = that file's entire content; "
     "`# ^ TRUNCATED` = open that file with cat/sed for the rest. "
     "COST: a broad crawl (find/os.walk/rg over the tree) or opening many files costs far more context than a focused "
@@ -65,7 +65,7 @@ elif a.arm == "cloud":
     CLOUD_TAG = "workspace-bench-chanpin"
     note = (f"Your working directory is {WD}. There is NO local file tree. To FIND content, use the "
             f"Supermemory cloud semantic index:\n"
-            f'    semfs grep "<2-4 key terms, in the corpus language>" --tag {CLOUD_TAG}\n'
+            f'    semfs grep "<2-4 key terms>" --tag {CLOUD_TAG}\n'
             "It returns ranked excerpts naming WHICH file + its content (top = best match). Rely on those "
             "results — there are no local files to open. Do NOT repeat a search you already ran; its "
             "results are already in your context.")
@@ -79,17 +79,41 @@ elif a.arm == "cloud":
         os.environ["SEMFS_SHIM_DIR"] = "/home/user/semfs-shims"
         os.environ.setdefault("SEMFS_REAL_RG", os.environ.get("WB_REAL_RG", "rg"))
 else:
-    # semfs arms: kg (KG overlay surfaced) | nokg (no KG line) | nokgAK (+adaptive-K)
+    # semfs arms:
+    #   kg        = surfaced KG
+    #   nokg      = no KG surface, no co-mention
+    #   nokgAK    = nokg + adaptive-K
+    #   best           = best_exp0002 knobs + no KG surface + no hidden KG
+    #   hiddenkg       = best_exp0002 knobs + hidden internal KG on, no surface
+    #   hiddenkg_edges = best_exp0002 knobs + old co-mention-only proxy, no surface
     note = f"Your working directory is {WD}.\n{SEMFS_HINT}"
     if a.arm == "kg":
         note += "\n" + SEMFS_KG_LINE
-    elif a.arm == "nokg":
-        os.environ["SEMFS_KG"] = "off"   # no KG overlay/hint (matches the mount)
     os.environ.update({
         "SEMFS_EMBED_MODEL": "gemma-q4", "SEMFS_EMBED_ONNX_DIR": "/home/user/gemma_q4",
         "SUPERMEMORY_API_KEY": "dummy-local", "SEMFS_NO_PUSH": "1", "SEMFS_NO_SYNC": "1",
-        "SEMFS_SEARCH_ONLY": "on",            # E2B 8GB cap forces =on (ledger §1)
+        # Keep this aligned with the mount-side env; do not re-force search-only.
+        "SEMFS_SEARCH_ONLY": "off",
     })
+    if a.arm in {"nokg", "nokgAK", "best"}:
+        os.environ["SEMFS_KG"] = "off"
+        os.environ["SEMFS_COMENTION"] = "off"
+        os.environ["SEMFS_HIDDEN_KG"] = "off"
+        os.environ["SEMFS_GRAPH_FS"] = "off"
+    elif a.arm == "hiddenkg":
+        os.environ["SEMFS_KG"] = "off"
+        os.environ["SEMFS_COMENTION"] = "off"
+        os.environ["SEMFS_HIDDEN_KG"] = "on"
+        os.environ["SEMFS_GRAPH_FS"] = "off"
+    elif a.arm == "hiddenkg_edges":
+        os.environ["SEMFS_KG"] = "off"
+        os.environ["SEMFS_COMENTION"] = "on"
+        os.environ["SEMFS_HIDDEN_KG"] = "off"
+        os.environ["SEMFS_GRAPH_FS"] = "off"
+    elif a.arm == "kg":
+        os.environ["SEMFS_KG"] = "on"
+        os.environ["SEMFS_COMENTION"] = "on"
+        os.environ["SEMFS_HIDDEN_KG"] = "off"
     # Tunable knobs — respect an external override (run_matrix --knobs sweep) over the
     # default, so optimization can vary them without editing this file.
     for _k, _v in (("SEMFS_RESULT_LIMIT", "5"), ("SEMFS_GREP_RESULT_CAP", "6144"),
