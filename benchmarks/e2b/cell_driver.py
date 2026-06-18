@@ -133,16 +133,28 @@ def run_agent(use_openrouter):
     if a.agent == "codex":
         # native = ChatGPT subscription; fallback = OpenRouter
         os.environ["CODEX_SANDBOX_MODE"] = "danger-full-access"
-        os.environ["CODEX_API_KEY"] = ORKEY
-        if not use_openrouter:
-            os.environ["CODEX_USE_CHATGPT"] = "1"
-            ap_ = {"model": "gpt-5.5"}
-        else:
+        if os.environ.get("WB_MODAL_GLM") == "1":
+            # Modal self-hosted GLM-5.1 (vLLM, 8xH200): point codex straight at the vLLM endpoint.
+            # The WB codex harness auto-starts its local responses->chat adapter for non-"gpt-"
+            # models AND drops the type:"namespace" multi_agent tool — so neither the LiteLLM proxy
+            # nor `codex exec --disable multi_agent` is needed (both handled in-harness).
             os.environ.pop("CODEX_USE_CHATGPT", None)
-            # OpenRouter model is env-overridable (WB_OR_MODEL) so the optimization campaign
-            # can pin a model (e.g. z-ai/glm-5.1) without editing this file. Empty → default.
-            ap_ = {"baseUrl": "https://openrouter.ai/api/v1", "apiKey": ORKEY,
-                   "model": os.environ.get("WB_OR_MODEL") or "openai/gpt-5.4"}
+            _mk = os.environ.get("MODAL_VLLM_API_KEY", "")
+            os.environ["CODEX_API_KEY"] = _mk
+            ap_ = {"baseUrl": (os.environ.get("WB_MODAL_BASE")
+                               or "https://ada-diffusion-llm--glm51-vllm-serve.modal.run/v1"),
+                   "apiKey": _mk, "model": "glm-5.1"}
+        else:
+            os.environ["CODEX_API_KEY"] = ORKEY
+            if not use_openrouter:
+                os.environ["CODEX_USE_CHATGPT"] = "1"
+                ap_ = {"model": "gpt-5.5"}
+            else:
+                os.environ.pop("CODEX_USE_CHATGPT", None)
+                # OpenRouter model is env-overridable (WB_OR_MODEL) so the optimization campaign
+                # can pin a model (e.g. z-ai/glm-5.1) without editing this file. Empty → default.
+                ap_ = {"baseUrl": "https://openrouter.ai/api/v1", "apiKey": ORKEY,
+                       "model": os.environ.get("WB_OR_MODEL") or "openai/gpt-5.4"}
     else:
         # Claude: native Claude Code subscription FIRST (CLAUDE_CODE_OAUTH_TOKEN injected by
         # the orchestrator); OpenRouter only as fallback. Native = free (subscription) + the
@@ -173,7 +185,9 @@ t0 = time.time()
 # fallback only if native fails. Keeps the big agent spend on subscriptions, not OpenRouter.
 # WB_FORCE_OPENROUTER=1 skips the native attempt and runs OpenRouter directly
 # (explicit OpenRouter A/B; avoids the native→fallback two-attempt path).
-if os.environ.get("WB_FORCE_OPENROUTER") == "1" and ORKEY:
+if os.environ.get("WB_MODAL_GLM") == "1":
+    res = run_agent(use_openrouter=False); auth = "modal-glm51"   # codex branch routes to the vLLM endpoint
+elif os.environ.get("WB_FORCE_OPENROUTER") == "1" and ORKEY:
     res = run_agent(use_openrouter=True); auth = "openrouter(forced)"
 else:
     res = run_agent(use_openrouter=False)

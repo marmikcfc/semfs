@@ -46,6 +46,10 @@ def expected_output_files(case):
     except Exception:
         return ""
 CORPUS = str(REPO / "benchmarks/e2b/assets/chanpin_standard")   # plain-arm tree (persistent; pulled from Modal 2026-06-15)
+# E2B template. `semfs-baked-v2` bakes the plain corpus tarball (/opt/corpus.tgz) + the dense-KG
+# decontaminated seed (/opt/chanpin-gemma-q4.db) so plain arms boot 0-upload. Falls back to upload
+# if /opt/corpus.tgz is absent (i.e. on the old `semfs-baked`).
+TEMPLATE = os.environ.get("WB_E2B_TEMPLATE", "semfs-baked")
 OUT = REPO / "tickets/workspace-bench-5arm-matrix/artifacts/e2b_runs"
 CASES_FULL = ["15", "44", "45", "53", "55", "95", "171", "175", "386", "388"]   # 289 excluded (seed leak)
 ARMS = ["plain", "nokg", "nokgAK"]
@@ -139,24 +143,32 @@ def boot_prep(sbx, need_plain, need_mount=True):
         ls, _ = sh(sbx, "ls /home/user/ws/mnt 2>&1 | head -5")
         print(f"  mount ls: {ls.strip()[:200]}  | live={mount_live(sbx)}", flush=True)
     if need_plain:
-        import subprocess, tempfile
-        tf = tempfile.mktemp(suffix=".tgz")
-        subprocess.run(["tar", "czf", tf, "-C", os.path.dirname(CORPUS), os.path.basename(CORPUS)], check=True)
-        data = pathlib.Path(tf).read_bytes()
-        pathlib.Path(tf).unlink(missing_ok=True)   # free the 442MB local tarball now (ENOSPC leak fix)
-        # CHUNKED upload: a single 442MB files.write hangs (E2B single-call ceiling).
-        # Split into ~32MB parts, write each, reassemble in the sandbox. RCA 2026-06-15.
-        CHUNK = 32 * 1024 * 1024
-        nparts = (len(data) + CHUNK - 1) // CHUNK
-        print(f"  uploading plain corpus ({len(data)//(1024*1024)}MB in {nparts} chunks)…", flush=True)
-        sh(sbx, "rm -f /tmp/corpus.tgz /tmp/corpus.part_*", timeout=30)
-        for i in range(nparts):
-            sbx.files.write(f"/tmp/corpus.part_{i:03d}", data[i * CHUNK:(i + 1) * CHUNK])
-            print(f"    part {i + 1}/{nparts}", flush=True)
-        sh(sbx, "cat /tmp/corpus.part_* > /tmp/corpus.tgz && rm -f /tmp/corpus.part_*", timeout=120)
-        sh(sbx, "mkdir -p ~/ws/plain && tar xzf /tmp/corpus.tgz -C ~/ws/plain --strip-components=1", timeout=300)
-        n, _ = sh(sbx, "find ~/ws/plain -type f | wc -l")
-        print("  plain files:", n.strip(), flush=True)
+        # Prefer the corpus tarball BAKED into the template (/opt/corpus.tgz on semfs-baked-v2):
+        # extract in-sandbox → 0 upload. Fall back to the chunked upload on the old semfs-baked.
+        baked, _ = sh(sbx, "test -f /opt/corpus.tgz && echo BAKED || echo NOBAKE", timeout=20)
+        if "BAKED" in baked:
+            sh(sbx, "mkdir -p ~/ws/plain && tar xzf /opt/corpus.tgz -C ~/ws/plain --strip-components=1", timeout=300)
+            n, _ = sh(sbx, "find ~/ws/plain -type f | wc -l")
+            print("  plain files (baked /opt/corpus.tgz, 0-upload):", n.strip(), flush=True)
+        else:
+            import subprocess, tempfile
+            tf = tempfile.mktemp(suffix=".tgz")
+            subprocess.run(["tar", "czf", tf, "-C", os.path.dirname(CORPUS), os.path.basename(CORPUS)], check=True)
+            data = pathlib.Path(tf).read_bytes()
+            pathlib.Path(tf).unlink(missing_ok=True)   # free the 442MB local tarball now (ENOSPC leak fix)
+            # CHUNKED upload: a single 442MB files.write hangs (E2B single-call ceiling).
+            # Split into ~32MB parts, write each, reassemble in the sandbox. RCA 2026-06-15.
+            CHUNK = 32 * 1024 * 1024
+            nparts = (len(data) + CHUNK - 1) // CHUNK
+            print(f"  uploading plain corpus ({len(data)//(1024*1024)}MB in {nparts} chunks)…", flush=True)
+            sh(sbx, "rm -f /tmp/corpus.tgz /tmp/corpus.part_*", timeout=30)
+            for i in range(nparts):
+                sbx.files.write(f"/tmp/corpus.part_{i:03d}", data[i * CHUNK:(i + 1) * CHUNK])
+                print(f"    part {i + 1}/{nparts}", flush=True)
+            sh(sbx, "cat /tmp/corpus.part_* > /tmp/corpus.tgz && rm -f /tmp/corpus.part_*", timeout=120)
+            sh(sbx, "mkdir -p ~/ws/plain && tar xzf /tmp/corpus.tgz -C ~/ws/plain --strip-components=1", timeout=300)
+            n, _ = sh(sbx, "find ~/ws/plain -type f | wc -l")
+            print("  plain files:", n.strip(), flush=True)
     return real_rg
 
 
@@ -189,6 +201,12 @@ def run_cell(sbx, agent, case, arm, rep, real_rg):
            "SUPERMEMORY_API_URL": os.environ.get("SUPERMEMORY_API_URL", ""),
            "WB_FORCE_OPENROUTER": os.environ.get("WB_FORCE_OPENROUTER", ""),  # 1 = skip native, use OpenRouter
            "WB_OR_MODEL": os.environ.get("WB_OR_MODEL", ""),  # OpenRouter model override (e.g. z-ai/glm-5.1)
+           # Modal self-hosted GLM-5.1 (vLLM) path: WB_MODAL_GLM=1 routes codex at the vLLM endpoint;
+           # the WB codex harness's chat-adapter (auto-on for non-"gpt-" models) bridges responses->chat
+           # AND drops the multi_agent namespace tool, so no LiteLLM hop / --disable multi_agent needed.
+           "WB_MODAL_GLM": os.environ.get("WB_MODAL_GLM", ""),
+           "MODAL_VLLM_API_KEY": os.environ.get("MODAL_VLLM_API_KEY", ""),
+           "WB_MODAL_BASE": os.environ.get("WB_MODAL_BASE", ""),  # optional vLLM /v1 base override
            "WB_OUTPUT_FILES": expected_output_files(case)}  # filename hint → cell_driver prompt
     env.update(KNOBS)   # sweep overrides reach the grep client (caps/result-limit/rewrite)
     cell_timeout = int(os.environ.get("WB_CELL_TIMEOUT") or 1750)  # > WB_AGENT_TIMEOUT (driver wraps the agent)
@@ -251,7 +269,7 @@ def _should_skip(label, force):
 
 def worker(wid, cells_q, need_plain, need_mount, rep):
     """One sandbox; pull cells from the shared queue until empty; reboot on death."""
-    sbx = Sandbox.create(template="semfs-baked", timeout=3600)
+    sbx = Sandbox.create(template=TEMPLATE, timeout=3600)
     print(f"[w{wid}] sandbox {sbx.sandbox_id}", flush=True)
     try:
         real_rg = boot_prep(sbx, need_plain, need_mount)
@@ -259,7 +277,7 @@ def worker(wid, cells_q, need_plain, need_mount, rep):
         print(f"[w{wid}] boot-prep failed: {repr(ex)[:150]} — retrying once", flush=True)
         try: sbx.kill()
         except Exception: pass
-        sbx = Sandbox.create(template="semfs-baked", timeout=3600)
+        sbx = Sandbox.create(template=TEMPLATE, timeout=3600)
         real_rg = boot_prep(sbx, need_plain, need_mount)
     try:
         while True:
@@ -281,7 +299,7 @@ def worker(wid, cells_q, need_plain, need_mount, rep):
                         try: sbx.kill()
                         except Exception: pass
                         try:
-                            sbx = Sandbox.create(template="semfs-baked", timeout=3600)
+                            sbx = Sandbox.create(template=TEMPLATE, timeout=3600)
                             real_rg = boot_prep(sbx, need_plain, need_mount)
                         except Exception as ex2:
                             print(f"[w{wid}] reboot failed: {repr(ex2)[:120]}", flush=True)
