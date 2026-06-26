@@ -153,7 +153,20 @@ if EXPECTED_FILES:
 # Optional turn-brake (WB_TURNBRAKE env, set via --knobs): cut re-reads/over-exploration
 # WITHOUT cutting retrieval — attacks the cache-read tax from the turn-count side.
 turnbrake = ("\n" + os.environ["WB_TURNBRAKE"]) if os.environ.get("WB_TURNBRAKE") else ""
-wrapped = (f"{note}\n\n{task}\n[Note] Save deliverables under ./model_output/ (relative to your "
+# Optional WORKSPACE MAP (WB_WORKSPACE_MAP=<file>): a cached, always-present index of the
+# workspace (dirs + topic clusters + key entities) so the agent navigates to the right place
+# itself instead of relying on ranked retrieval. Placed as a STABLE PREFIX (after the system
+# note, before the per-case task) so the prefix cache keeps it ~free across a persona's cells.
+wsmap = ""
+_mapf = os.environ.get("WB_WORKSPACE_MAP", "")
+if _mapf and os.path.exists(_mapf):
+    _mp = open(_mapf, encoding="utf-8").read().strip()
+    if _mp:
+        wsmap = ("[WORKSPACE MAP] An index of this workspace is below — directories (file counts, "
+                 "types, sample files) and topic clusters (label + key entities). USE IT FIRST to "
+                 "decide which directory/files hold the answer, then go straight there (grep scoped "
+                 "to that dir, or cat the file) rather than broad searching.\n" + _mp + "\n\n")
+wrapped = (f"{note}\n\n{wsmap}{task}\n[Note] Save deliverables under ./model_output/ (relative to your "
            "working directory) and end by printing the file paths as a Python list." + fname_hint + turnbrake)
 
 

@@ -23,12 +23,13 @@ _JSONL_LOCK = threading.Lock()   # serialize results.jsonl appends across parall
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CLAUDECODE_JS = REPO / "benchmarks/vendor/Workspace-Bench/evaluation/baselines/ClaudeCode.js"
 CELL_DRIVER = REPO / "benchmarks/e2b/cell_driver.py"
+SEMFS_MAP = REPO / "benchmarks/e2b/semfs_map.py"   # workspace-map generator (ppr_map arm)
 CODEX_AUTH = REPO / "codex_auth.json"
 # Optional semfs binary override. Use ONLY when explicitly requested via WB_FIXED_BIN;
 # the baked template binary is the default/stable path for routine E2B runs.
 FIXED_BIN = pathlib.Path(os.environ["WB_FIXED_BIN"]) if os.environ.get("WB_FIXED_BIN") else None
 KNOBS = {}   # SEMFS_* knob overrides for the optimization sweep (loaded from --knobs JSON)
-WB_LITE = pathlib.Path(os.environ.get("WB_LITE_DIR") or (REPO / "benchmarks/e2b/assets/wb_lite/task_lite_clean_en"))  # judge metadata (output_files etc.); WB_LITE_DIR overrides for non-chanpin personas (kaifa, etc.)
+WB_LITE = pathlib.Path(os.environ.get("WB_LITE_DIR") or (REPO / "benchmarks/e2b/assets/wb_lite_all/lite_all/task_lite_clean_en"))  # judge metadata (output_files etc.) — the COMPLETE all-persona set (the chanpin-only assets/wb_lite/ copy lacked houqin/yunying output_files → filename-hint missed → ~15% nested-output zeroing, 2026-06-26). WB_LITE_DIR still overrides.
 
 
 def expected_output_files(case):
@@ -54,7 +55,7 @@ OUT = (pathlib.Path(os.environ["WB_OUT"]).resolve() if os.environ.get("WB_OUT")
 OUT.mkdir(parents=True, exist_ok=True)
 CASES_FULL = ["15", "44", "45", "53", "55", "95", "171", "175", "386", "388"]   # 289 excluded (seed leak)
 DEFAULT_ARMS = ["plain", "best", "hiddenkg"]
-SUPPORTED_ARMS = {"plain", "cloud", "kg", "nokg", "nokgAK", "best", "hiddenkg", "hiddenkg_edges", "hiddenkg_l7", "hiddenkg_retrieval", "hiddenkg_retrieval_l7", "ppr_off", "ppr_on"}
+SUPPORTED_ARMS = {"plain", "cloud", "kg", "nokg", "nokgAK", "best", "hiddenkg", "hiddenkg_edges", "hiddenkg_l7", "hiddenkg_retrieval", "hiddenkg_retrieval_l7", "ppr_off", "ppr_on", "ppr_map"}
 # codex (OpenAI, on the ChatGPT subscription = no per-token $) runs FIRST; Claude
 # (OpenRouter = real $) only after all codex cells complete. Override with --agents.
 AGENTS = ["codex", "claude"]
@@ -93,8 +94,8 @@ def is_sandbox_dead(exc):
     return any(x in s for x in ("SandboxNotFoundException","404","not found","CLOSED","LocalProtocolError","ConnectionInputs"))
 
 
-MOUNT_ARMS = {"kg", "nokg", "nokgAK", "best", "hiddenkg", "hiddenkg_edges", "hiddenkg_l7", "hiddenkg_retrieval", "hiddenkg_retrieval_l7", "ppr_off", "ppr_on"}   # arms that depend on a live semfs FUSE mount
-SURFACE_OFF_ARMS = {"nokg", "nokgAK", "best", "hiddenkg", "hiddenkg_edges", "hiddenkg_l7", "hiddenkg_retrieval", "hiddenkg_retrieval_l7", "ppr_off", "ppr_on"}
+MOUNT_ARMS = {"kg", "nokg", "nokgAK", "best", "hiddenkg", "hiddenkg_edges", "hiddenkg_l7", "hiddenkg_retrieval", "hiddenkg_retrieval_l7", "ppr_off", "ppr_on", "ppr_map"}   # arms that depend on a live semfs FUSE mount
+SURFACE_OFF_ARMS = {"nokg", "nokgAK", "best", "hiddenkg", "hiddenkg_edges", "hiddenkg_l7", "hiddenkg_retrieval", "hiddenkg_retrieval_l7", "ppr_off", "ppr_on", "ppr_map"}
 DEFAULT_SEED_SOURCES = {
     "kg": "/opt/chanpin-gemma-q4.db",
     "nokg": "/opt/chanpin-clean.db",
@@ -108,6 +109,7 @@ DEFAULT_SEED_SOURCES = {
     # PPR A/B: per-persona seed supplied via WB_E2B_SEED_DEFAULT; this is the fallback.
     "ppr_off": "/opt/chanpin-gemma-q4.db",
     "ppr_on": "/opt/chanpin-gemma-q4.db",
+    "ppr_map": "/opt/chanpin-gemma-q4.db",
 }
 
 
@@ -149,14 +151,16 @@ def arm_mount_env(arm):
         me["SEMFS_COMENTION"] = "on"
         me["SEMFS_HIDDEN_KG"] = "on"
         me["SEMFS_HIDDEN_KG_RETRIEVAL"] = "off"
-    elif arm in {"ppr_off", "ppr_on"}:
+    elif arm in {"ppr_off", "ppr_on", "ppr_map"}:
         # PPR A/B — identical to hiddenkg_l7 (hidden KG + co-mention, no surface);
         # the ONLY difference is the graph-prior algorithm: 1-hop (off) vs PPR (on).
+        # ppr_map == ppr_on retrieval PLUS a cached workspace map injected into the prompt
+        # (run_cell) — so map-vs-no-map is the only variable isolated against ppr_on.
         me["SEMFS_KG"] = "off"
         me["SEMFS_COMENTION"] = "on"
         me["SEMFS_HIDDEN_KG"] = "on"
         me["SEMFS_HIDDEN_KG_RETRIEVAL"] = "off"
-        me["SEMFS_KG_PPR"] = "on" if arm == "ppr_on" else "off"
+        me["SEMFS_KG_PPR"] = "on" if arm in ("ppr_on", "ppr_map") else "off"
     elif arm == "hiddenkg_retrieval":
         me["SEMFS_KG"] = "off"
         me["SEMFS_COMENTION"] = "off"
@@ -265,6 +269,7 @@ def boot_prep(sbx, need_plain, need_mount=True):
     print("  semfs-shims: fixed grep/rg/_fmt pushed + chmod +x", flush=True)
     # upload patched files
     sbx.files.write("/home/user/cell_driver.py", CELL_DRIVER.read_text())
+    sbx.files.write("/home/user/semfs_map.py", SEMFS_MAP.read_text())   # workspace-map generator (ppr_map)
     sbx.files.write("/home/user/ClaudeCode.js", CLAUDECODE_JS.read_text())
     sh(sbx, "sudo cp /home/user/ClaudeCode.js /opt/wb/evaluation/baselines/ClaudeCode.js")
     if CODEX_AUTH.exists():
@@ -453,7 +458,17 @@ def run_cell(sbx, agent, case, arm, rep, real_rg, remount=True):
         log_start = int((_ls or "0").split()[0]) + 1
     except Exception:
         log_start = 1
+    # ppr_map arm: generate the cached workspace map from the seed ONCE per sandbox, then
+    # inject it into the agent prompt (cell_driver reads WB_WORKSPACE_MAP). Same retrieval as
+    # ppr_on → map-vs-no-map is the only variable.
+    wsmap_path = ""
+    if arm == "ppr_map":
+        seed = arm_seed_source(arm)
+        sh(sbx, f"test -f /home/user/workspace_map.txt || python3 /home/user/semfs_map.py {seed} "
+                f"--out /home/user/workspace_map.txt 2>/tmp/map.err", timeout=240)
+        wsmap_path = "/home/user/workspace_map.txt"
     env = {"OPENROUTER_API_KEY": ORKEY, "WB_REAL_RG": real_rg, "HOME": "/home/user",
+           "WB_WORKSPACE_MAP": wsmap_path,
            "CLAUDE_CODE_OAUTH_TOKEN": CLAUDE_OAUTH,
            "SUPERMEMORY_API_KEY": os.environ.get("SUPERMEMORY_API_KEY", ""),
            "SUPERMEMORY_API_URL": os.environ.get("SUPERMEMORY_API_URL", ""),
