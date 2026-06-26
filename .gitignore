@@ -74,3 +74,4 @@ sk-*
 .evo_bench_metrics.json
 benchmarks/e2b/assets/.evo_bin_cache/
 tickets/workspace-bench-5arm-matrix/artifacts/
+tickets/wblite-ppr-ab/artifacts/

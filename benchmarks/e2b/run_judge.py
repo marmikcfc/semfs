@@ -16,7 +16,8 @@ import json, os, sys, shutil, subprocess, pathlib
 REPO = pathlib.Path(__file__).resolve().parents[2]
 EVAL = REPO / "benchmarks/vendor/Workspace-Bench/evaluation"
 JUDGE_YAML = EVAL / "runs/judge.yaml"
-RUNS = REPO / "tickets/workspace-bench-5arm-matrix/artifacts/e2b_runs"
+RUNS = (pathlib.Path(os.environ["WB_OUT"]).resolve() if os.environ.get("WB_OUT")
+        else REPO / "tickets/workspace-bench-5arm-matrix/artifacts/e2b_runs")
 WBLITE = pathlib.Path("/tmp/wb_lite/task_lite_clean_en")
 
 env = dict(os.environ)

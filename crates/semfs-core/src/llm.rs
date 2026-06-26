@@ -95,7 +95,7 @@ impl LlmClient {
             ],
             response_format,
         };
-        let resp: ChatResponse = crate::http::timeout_agent()
+        let resp: ChatResponse = crate::http::llm_agent()
             .post(&format!("{}/chat/completions", self.base_url))
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json")
@@ -155,7 +155,8 @@ struct ChoiceMessage {
 /// abbreviations, add synonyms/related terms). Output is the rewritten query
 /// only. Callers use this **opt-in** and fail-open to the original on error.
 pub fn rewrite_query(client: &LlmClient, query: &str) -> anyhow::Result<String> {
-    let system = "You rewrite a user's search query to maximize semantic document retrieval over a \
+    let system =
+        "You rewrite a user's search query to maximize semantic document retrieval over a \
         possibly MULTILINGUAL corpus (documents may be in Chinese, English, or other languages). \
         Expand abbreviations and add closely-related terms and synonyms. CRITICALLY: if the query \
         is in one language but documents may be in another, also append the key search terms \

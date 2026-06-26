@@ -31,11 +31,11 @@ WS = "/home/user/ws/mnt"          # semfs mount (semfs arms)
 PLAIN = "/home/user/ws/plain"     # raw corpus tree (plain arm)
 
 SEMFS_HINT = (
-    f"The directory {WS}/ is a DYNAMIC SEMANTIC INDEX, not a normal tree. To FIND anything, use semantic search:\n"
-    f'    semfs grep "<2-4 key terms>" {WS}/\n'
-    "It returns ranked excerpts naming WHICH file + its content. `# ^ COMPLETE FILE` = that file's entire content; "
-    "`# ^ TRUNCATED` = open that file with cat/sed for the rest. "
-    "COST: a broad crawl (find/os.walk/rg over the tree) or opening many files costs far more context than a focused "
+    f"The workspace is the directory {WS}/. To find anything, search by MEANING — a plain\n"
+    f'    grep "<2-4 key terms>"\n'
+    "returns ranked excerpts naming WHICH file + its content (top = best match). `# ^ COMPLETE FILE` = that "
+    "file's entire content; `# ^ TRUNCATED` = open that file with cat/sed for the rest. "
+    "COST: a broad crawl (find/os.walk over the tree) or opening many files costs far more context than a focused "
     "search plus the few reads you actually need. Do NOT repeat a search you already ran — its results are already in your context."
 )
 # KG-on arm only: point the agent at the knowledge-graph overlay (built from the
@@ -121,15 +121,21 @@ else:
         os.environ.setdefault(_k, _v)
     if a.arm == "nokgAK":
         os.environ["SEMFS_ADAPTIVE_K"] = "on"
-    # Claude parity (RCA 2026-06-13): re-enable the semfs kit + mount read access
-    # even though cwd is outside the mount.
-    if a.agent == "claude":
-        os.environ["SEMFS_MOUNT_PATH"] = WS
-        os.environ["WB_READ_PATHS"] = WS
-        os.environ["SEMFS_BIN"] = "/usr/local/bin/semfs"
-        os.environ["SEMFS_REAL_HOME"] = "/home/user"
-        os.environ["SEMFS_SHIM_DIR"] = "/home/user/semfs-shims"
-        os.environ.setdefault("SEMFS_REAL_RG", os.environ.get("WB_REAL_RG", "rg"))
+    # semfs kit + mount read access — for BOTH agents now (Claude got this via the
+    # RCA 2026-06-13 parity fix; codex now gets it too). With the shim dir first on
+    # PATH, codex's NATURAL `grep "terms"` routes to semantic: SEMFS_MOUNT_PATH lets
+    # a path-less grep scope to the mount even though cwd stays writable (outside it).
+    os.environ["SEMFS_MOUNT_PATH"] = WS
+    os.environ["WB_READ_PATHS"] = WS
+    os.environ["SEMFS_BIN"] = "/usr/local/bin/semfs"
+    os.environ["SEMFS_REAL_HOME"] = "/home/user"
+    os.environ["SEMFS_REAL_GREP"] = "/usr/bin/grep"
+    os.environ["SEMFS_SHIM_DIR"] = "/home/user/semfs-shims"
+    os.environ.setdefault("SEMFS_REAL_RG", os.environ.get("WB_REAL_RG", "rg"))
+    # Put the shim dir FIRST on PATH so a bare `grep`/`rg` resolves to the shim.
+    # (codex runs its Bash tool non-interactively and inherits this process env.)
+    os.environ["PATH"] = "/opt/semfs-shims:" + os.environ.get(
+        "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin")
 
 task = open(f"/home/user/cases/{a.case}.task", encoding="utf-8").read().strip()
 # Inject the EXPECTED output filename(s) the judge grades against. Upstream WB never tells
@@ -166,8 +172,9 @@ def run_agent(use_openrouter):
             _mk = os.environ.get("MODAL_VLLM_API_KEY", "")
             os.environ["CODEX_API_KEY"] = _mk
             ap_ = {"baseUrl": (os.environ.get("WB_MODAL_BASE")
-                               or "https://ada-diffusion-llm--glm51-vllm-serve.modal.run/v1"),
-                   "apiKey": _mk, "model": "glm-5.1"}
+                               or "https://ada-diffusion-llm--glm51-nvfp4-vllm-serve.modal.run/v1"),
+                   "apiKey": _mk,
+                   "model": os.environ.get("WB_MODAL_MODEL") or "glm-5.1-nvfp4"}
         else:
             os.environ["CODEX_API_KEY"] = ORKEY
             if not use_openrouter:

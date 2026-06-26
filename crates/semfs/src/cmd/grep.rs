@@ -139,7 +139,10 @@ enum DaemonSearch {
     /// would return stale cloud results that omit unsynced local writes and mask
     /// the real fault. Carries the daemon's authoritative backend (from the SAME
     /// response — no separate Status RPC to race) so the policy is decided right.
-    Failed { message: String, backend: Option<String> },
+    Failed {
+        message: String,
+        backend: Option<String>,
+    },
     /// No daemon reachable for this tag → caller falls back to direct/cloud.
     Unreachable,
 }
@@ -153,10 +156,16 @@ async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> Daemon
         filepath: filepath.map(|s| s.to_string()),
     };
     match semfs_core::daemon::client::send_request_classified(tag, req).await {
-        Ok(Response::SearchHits { hits, searchable: true, .. }) => DaemonSearch::Hits(hits),
-        Ok(Response::SearchHits { searchable: false, backend, .. }) => {
-            DaemonSearch::NoIndex { backend }
-        }
+        Ok(Response::SearchHits {
+            hits,
+            searchable: true,
+            ..
+        }) => DaemonSearch::Hits(hits),
+        Ok(Response::SearchHits {
+            searchable: false,
+            backend,
+            ..
+        }) => DaemonSearch::NoIndex { backend },
         // Genuine search fault from a daemon that DID understand the request. The
         // backend rides on this same response, so the fail-closed decision needs
         // no separate (race-prone) Status lookup.
@@ -176,7 +185,10 @@ async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> Daemon
         }
         // Any other generic error / wrong-type response from a live daemon is a
         // protocol fault — surface it (no backend carried → policy uses the marker).
-        Ok(Response::Error { message }) => DaemonSearch::Failed { message, backend: None },
+        Ok(Response::Error { message }) => DaemonSearch::Failed {
+            message,
+            backend: None,
+        },
         Ok(other) => DaemonSearch::Failed {
             message: format!("unexpected daemon response: {other:?}"),
             backend: None,
@@ -197,10 +209,7 @@ async fn daemon_search(tag: &str, query: &str, filepath: Option<&str>) -> Daemon
 /// isn't usable (missing tables / incompatible model). Hard init failures
 /// (cache open, embedder build) return `Err` so the caller falls back to cloud;
 /// reranker construction failure is non-fatal — we search without reranking.
-fn build_local_store(
-    env: &super::resolve::ResolveEnv,
-    p: &str,
-) -> Result<Option<SqliteVecStore>> {
+fn build_local_store(env: &super::resolve::ResolveEnv, p: &str) -> Result<Option<SqliteVecStore>> {
     let db = Arc::new(semfs_core::cache::Db::open(Path::new(p))?);
     let embedder = super::resolve::build_embedder(env)?;
     let mut store = SqliteVecStore::open_existing(db.clone(), embedder);
@@ -434,7 +443,9 @@ fn grep_result_cap() -> usize {
 fn print_block(fp: &str, content: &str) {
     println!("=== {} ===", fp);
     print!("{}", content);
-    if !content.ends_with('\n') { println!(); }
+    if !content.ends_with('\n') {
+        println!();
+    }
     println!("=== end {} ===", fp);
 }
 
@@ -532,10 +543,10 @@ fn is_code_ext(filepath: &str) -> bool {
     let base = lower.strip_suffix(".extracted.md").unwrap_or(&lower);
     const CODE_EXTS: &[&str] = &[
         // programming languages
-        ".rs", ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".java",
-        ".c", ".h", ".cpp", ".cc", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash", ".zsh",
-        ".sql", ".swift", ".kt", ".scala", ".lua", ".pl", ".r", ".dart", ".ex", ".exs",
-        ".clj", ".hs", ".ml", ".vue", ".svelte",
+        ".rs", ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".java", ".c", ".h",
+        ".cpp", ".cc", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash", ".zsh", ".sql", ".swift",
+        ".kt", ".scala", ".lua", ".pl", ".r", ".dart", ".ex", ".exs", ".clj", ".hs", ".ml", ".vue",
+        ".svelte",
         // structured config / markup (compression would corrupt the structure)
         ".toml", ".yaml", ".yml", ".json", ".xml", ".html", ".htm", ".css", ".scss",
     ];
@@ -552,9 +563,11 @@ fn maybe_compress(filepath: &str, text: &str) -> Option<String> {
     {
         return None;
     }
-    let key = std::env::var("OPENROUTER_API_KEY").ok().filter(|k| !k.is_empty())?;
-    let model = std::env::var("SEMFS_COMPRESS_MODEL")
-        .unwrap_or_else(|_| "openai/gpt-4.1-mini".to_string());
+    let key = std::env::var("OPENROUTER_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())?;
+    let model =
+        std::env::var("SEMFS_COMPRESS_MODEL").unwrap_or_else(|_| "openai/gpt-4.1-mini".to_string());
     let client =
         semfs_core::llm::LlmClient::new(key, "https://openrouter.ai/api/v1".to_string(), model);
     match semfs_core::llm::compress_excerpt(&client, text) {
@@ -879,8 +892,12 @@ pub async fn run(args: Args) -> Result<()> {
     let (tag, api_url) = resolve_tag_url(
         args.tag.as_deref(),
         args.api_url.as_deref(),
-        marker.as_ref().map(|m| (m.tag.as_str(), m.api_url.as_str())),
-        path_marker.as_ref().map(|m| (m.tag.as_str(), m.api_url.as_str())),
+        marker
+            .as_ref()
+            .map(|m| (m.tag.as_str(), m.api_url.as_str())),
+        path_marker
+            .as_ref()
+            .map(|m| (m.tag.as_str(), m.api_url.as_str())),
     )?;
 
     // Bind ALL fallback metadata to the RESOLVED tag, not to CWD/path marker
@@ -997,7 +1014,9 @@ pub async fn run(args: Args) -> Result<()> {
     // daemon is reachable (e.g. grepping a persisted cache after unmount).
     let hits = match daemon_search(&tag, &effective_query, filepath.as_deref()).await {
         DaemonSearch::Hits(hits) => hits,
-        DaemonSearch::NoIndex { backend: resp_backend } => {
+        DaemonSearch::NoIndex {
+            backend: resp_backend,
+        } => {
             // Daemon up but reports no usable local index. For sqlite/hash that's
             // the cloud path. A pglite daemon can never report this (an index-build
             // failure is mount-fatal), but guard anyway: prefer the daemon's
@@ -1014,7 +1033,10 @@ pub async fn run(args: Args) -> Result<()> {
                 .search(&effective_query, filepath.as_deref())
                 .await?
         }
-        DaemonSearch::Failed { message, backend: resp_backend } => {
+        DaemonSearch::Failed {
+            message,
+            backend: resp_backend,
+        } => {
             // The daemon was REACHABLE and the search FAILED. Cloud fallback is
             // allowed ONLY with POSITIVE evidence of a cloud-safe backend
             // (sqlite/pgvector) plus a key. Anything else fails closed:
@@ -1096,7 +1118,10 @@ pub async fn run(args: Args) -> Result<()> {
     };
     // K=0 under adaptive (no confident match) → honest empty, no noise dump.
     if adaptive && !explicit && render_n == 0 {
-        eprintln!("# no high-confidence match in the index for {:?}", args.query);
+        eprintln!(
+            "# no high-confidence match in the index for {:?}",
+            args.query
+        );
         eprintln!(
             "# do not re-search with reworded queries; read the most relevant directory directly if needed."
         );
@@ -1118,9 +1143,7 @@ pub async fn run(args: Args) -> Result<()> {
     eprintln!("#   grep \"2-4 key terms\"                    short focused queries rank best");
     eprintln!("#   grep \"query\" path/to/dir/              search within directory");
     eprintln!("# output: <filepath>:<line_start>-<line_end>:<chunk>  — RANKED BY RELEVANCE (top = best match)");
-    eprintln!(
-        "# chunk text is verbatim from the file (the matched line range is shown above)."
-    );
+    eprintln!("# chunk text is verbatim from the file (the matched line range is shown above).");
     eprintln!();
 
     // Open the DB once for binary-file inline: binary hits (xlsx/pdf/docx/etc.)
@@ -1411,7 +1434,10 @@ pub async fn run(args: Args) -> Result<()> {
     } else if mode == RenderMode::TwoTier {
         if let Some(top) = top_sim {
             println!();
-            println!("{}", confidence_line(top, second_sim, min_sim, top_is_complete));
+            println!(
+                "{}",
+                confidence_line(top, second_sim, min_sim, top_is_complete)
+            );
         }
     }
 
@@ -1438,7 +1464,10 @@ mod tests {
     #[test]
     fn render_mode_defaults_to_inline() {
         // No env mutation here (parallel tests) — exercise the parser via match arms.
-        assert!(matches!(super::render_mode(), RenderMode::Inline | RenderMode::TwoTier | RenderMode::Paths));
+        assert!(matches!(
+            super::render_mode(),
+            RenderMode::Inline | RenderMode::TwoTier | RenderMode::Paths
+        ));
     }
 
     #[test]
@@ -1454,39 +1483,75 @@ mod tests {
         // nearly-flat (RRF-compressed) scores → no winner → big cluster, capped at k_max=10
         let sims: Vec<f64> = (0..12).map(|i| 0.5 - i as f64 * 0.001).collect();
         let (k, t) = super::adaptive_k(&sims);
-        assert!((2..=10).contains(&k), "flat scores should return a capped cluster, got {k}");
+        assert!(
+            (2..=10).contains(&k),
+            "flat scores should return a capped cluster, got {k}"
+        );
         assert!(t == super::AdaptiveTier::Cluster);
     }
 
     #[test]
     fn sufficiency_fires_on_high_overlap_and_lists_files() {
-        let paths = vec!["/a.txt".to_string(), "/b.txt".to_string(), "/c.txt".to_string()];
+        let paths = vec![
+            "/a.txt".to_string(),
+            "/b.txt".to_string(),
+            "/c.txt".to_string(),
+        ];
         // 3 of 4 rendered already seen → fire a STOP verdict that names the files
         let v = super::sufficiency_verdict(4, 3, &paths).expect("high overlap must fire");
-        assert!(v.contains("COMPLETE SET"), "verdict should signal completeness");
-        assert!(v.contains("/a.txt") && v.contains("/c.txt"), "must list the already-seen files");
-        assert!(v.to_uppercase().contains("STOP"), "must tell the agent to stop searching");
+        assert!(
+            v.contains("COMPLETE SET"),
+            "verdict should signal completeness"
+        );
+        assert!(
+            v.contains("/a.txt") && v.contains("/c.txt"),
+            "must list the already-seen files"
+        );
+        assert!(
+            v.to_uppercase().contains("STOP"),
+            "must tell the agent to stop searching"
+        );
         // low overlap or too-few-seen → stay silent (don't falsely stop a real search)
-        assert!(super::sufficiency_verdict(5, 1, &["/a.txt".to_string()]).is_none(), "1/5 seen → silent");
-        assert!(super::sufficiency_verdict(0, 0, &[]).is_none(), "no hits → silent");
+        assert!(
+            super::sufficiency_verdict(5, 1, &["/a.txt".to_string()]).is_none(),
+            "1/5 seen → silent"
+        );
+        assert!(
+            super::sufficiency_verdict(0, 0, &[]).is_none(),
+            "no hits → silent"
+        );
     }
 
     #[test]
     fn code_and_config_files_are_compress_exempt() {
         // source code + structured config must never be sent to the compressor
         for f in [
-            "src/lib.rs", "app.py", "server.ts", "main.go", "Query.java", "build.sh",
-            "config.toml", "k8s.yaml", "pkg.json", "index.html", "styles.css",
+            "src/lib.rs",
+            "app.py",
+            "server.ts",
+            "main.go",
+            "Query.java",
+            "build.sh",
+            "config.toml",
+            "k8s.yaml",
+            "pkg.json",
+            "index.html",
+            "styles.css",
             "app.py.extracted.md", // sees through the .extracted.md sibling suffix
         ] {
-            assert!(super::is_code_ext(f), "{f} must be code/config-exempt from compression");
+            assert!(
+                super::is_code_ext(f),
+                "{f} must be code/config-exempt from compression"
+            );
         }
         // prose stays compressible
         for f in ["report.txt", "notes.md", "interaction_document_6.txt"] {
-            assert!(!super::is_code_ext(f), "{f} is prose — must NOT be code-exempt");
+            assert!(
+                !super::is_code_ext(f),
+                "{f} is prose — must NOT be code-exempt"
+            );
         }
     }
-
 
     #[test]
     fn adaptive_k_empty_is_zero() {
