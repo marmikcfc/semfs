@@ -633,6 +633,18 @@ def worker(wid, cells_q, need_plain, need_mount, rep):
         print(f"[w{wid}] done, sandbox killed.", flush=True)
 
 
+def mount_sig(arm):
+    """Mount identity of an arm — arms with the SAME signature share a FUSE mount, so the queue
+    worker need NOT re-mount between them (e.g. ppr_on vs ppr_map differ only in the prompt-level
+    map, not the mount). Re-mount fires only when this changes → continuous dequeue across
+    same-mount arms (no batch barrier) AND no needless big-seed re-mount (the crash, 2026-06-25)."""
+    if arm not in MOUNT_ARMS:
+        return ("plain",)
+    e = arm_mount_env(arm)
+    return (arm_seed_source(arm), e.get("SEMFS_KG"), e.get("SEMFS_COMENTION"),
+            e.get("SEMFS_HIDDEN_KG"), e.get("SEMFS_HIDDEN_KG_RETRIEVAL"), e.get("SEMFS_KG_PPR"))
+
+
 def worker_batch(wid, cells_q, need_plain, need_mount):
     """Per-persona QUEUE worker: boots the sandbox ONCE, then dequeues (ag,c,arm,rep) across
     ALL reps + arms, re-mounting ONLY when the arm changes (run_cell remount=...). Removes
@@ -653,7 +665,7 @@ def worker_batch(wid, cells_q, need_plain, need_mount):
         try: sbx.kill()
         except Exception: pass
         sbx = create_sandbox(); real_rg = boot(sbx)
-    cur_arm = None  # arm the sandbox is currently mounted for (None → must mount)
+    cur_sig = None  # mount signature currently mounted (None → must mount); re-mount only on change
     try:
         while True:
             try:
@@ -664,8 +676,9 @@ def worker_batch(wid, cells_q, need_plain, need_mount):
             try:
                 for attempt in range(3):
                     try:
-                        res = run_cell(sbx, ag, c, arm, rep, real_rg, remount=(arm != cur_arm))
-                        cur_arm = arm if res.get("status") != "infra_fail_mount" else None
+                        sig = mount_sig(arm)
+                        res = run_cell(sbx, ag, c, arm, rep, real_rg, remount=(sig != cur_sig))
+                        cur_sig = sig if res.get("status") != "infra_fail_mount" else None
                         break
                     except Exception as ex:
                         if not is_sandbox_dead(ex) or attempt == 2:
@@ -675,7 +688,7 @@ def worker_batch(wid, cells_q, need_plain, need_mount):
                         try: sbx.kill()
                         except Exception: pass
                         try:
-                            sbx = create_sandbox(); real_rg = boot_prep(sbx, need_plain, need_mount); cur_arm = None
+                            sbx = create_sandbox(); real_rg = boot_prep(sbx, need_plain, need_mount); cur_sig = None
                         except Exception as ex2:
                             print(f"[w{wid}] reboot failed: {repr(ex2)[:120]}", flush=True)
             finally:
