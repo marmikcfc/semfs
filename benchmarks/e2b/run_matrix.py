@@ -270,6 +270,13 @@ def boot_prep(sbx, need_plain, need_mount=True):
     # upload patched files
     sbx.files.write("/home/user/cell_driver.py", CELL_DRIVER.read_text())
     sbx.files.write("/home/user/semfs_map.py", SEMFS_MAP.read_text())   # workspace-map generator (ppr_map)
+    # Pre-ship a known-good workspace map (depends only on the seed → identical for every cell of a
+    # persona) so the ppr_map arm SKIPS the fragile per-sandbox gen, which exited 2 on ~79% of houqin
+    # cells (RCA 2026-06-27). Shipping once is robust AND scientifically cleaner (byte-identical map).
+    _pmap = os.environ.get("WB_PRESHIP_MAP", "")
+    if _pmap and pathlib.Path(_pmap).exists():
+        sbx.files.write("/home/user/workspace_map.txt", pathlib.Path(_pmap).read_text())
+        print(f"  pre-shipped workspace_map.txt ({len(pathlib.Path(_pmap).read_text()) // 4} tok)", flush=True)
     sbx.files.write("/home/user/ClaudeCode.js", CLAUDECODE_JS.read_text())
     sh(sbx, "sudo cp /home/user/ClaudeCode.js /opt/wb/evaluation/baselines/ClaudeCode.js")
     if CODEX_AUTH.exists():
@@ -464,8 +471,10 @@ def run_cell(sbx, agent, case, arm, rep, real_rg, remount=True):
     wsmap_path = ""
     if arm == "ppr_map":
         seed = arm_seed_source(arm)
+        # Pre-shipped map (boot_prep) makes `test -f` pass → gen is skipped. If it's absent we fall
+        # back to in-sandbox gen, but capture stderr to the exception (2>&1) so a failure is visible.
         sh(sbx, f"test -f /home/user/workspace_map.txt || python3 /home/user/semfs_map.py {seed} "
-                f"--out /home/user/workspace_map.txt 2>/tmp/map.err", timeout=240)
+                f"--out /home/user/workspace_map.txt 2>&1", timeout=240)
         wsmap_path = "/home/user/workspace_map.txt"
     env = {"OPENROUTER_API_KEY": ORKEY, "WB_REAL_RG": real_rg, "HOME": "/home/user",
            "WB_WORKSPACE_MAP": wsmap_path,

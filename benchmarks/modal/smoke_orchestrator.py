@@ -37,6 +37,9 @@ image = (
     .add_local_dir(str(REPO / "benchmarks/e2b/assets/wb_lite_all"), f"{A}/assets/wb_lite_all")
     .add_local_file(str(REPO / VENDOR_JS), f"/work/{VENDOR_JS}")
     .add_local_file(str(REPO / "codex_auth.json"), "/work/codex_auth.json")
+    # pre-generated workspace map (seed-only) — shipped to each sandbox so ppr_map skips the
+    # fragile per-sandbox gen that exited 2 on ~79% of houqin cells (RCA 2026-06-27)
+    .add_local_file(str(REPO / "tickets/wblite-ppr-ab/houqin_map_preflight.txt"), "/work/maps/houqin.txt")
 )
 
 out_vol = modal.Volume.from_name("wblite-map-smoke-out", create_if_missing=True)
@@ -58,6 +61,7 @@ def run_smoke(engine="openrouter", cases="358", arms="ppr_map", reps="1", par="8
         "WB_E2B_SEED_DEFAULT": f"/opt/{persona}-gemma-q4.db",
         "WB_BOOT_SEED": f"/opt/{persona}-gemma-q4.db",
         "WB_PERSONA": persona,
+        "WB_PRESHIP_MAP": f"/work/maps/{persona}.txt",   # ship known-good map → skip per-sandbox gen
         "WB_SEARCH_ONLY": "off",
         "WB_AGENT_TIMEOUT": "2000", "WB_CELL_TIMEOUT": "2300", "WB_MOUNT_STARTUP_TIMEOUT": "240",
     })
@@ -85,6 +89,16 @@ def run_smoke(engine="openrouter", cases="358", arms="ppr_map", reps="1", par="8
     r = subprocess.run(cmd, env=e)
     stop["v"] = True
     out_vol.commit()
+    # completeness check — so "DONE" can't hide missing cells (RCA 2026-06-27, ppr_map gen failures)
+    try:
+        import json as _json
+        rows = [_json.loads(l) for l in open("/out/map_smoke/results.jsonl") if l.strip()]
+        have = {(x.get("case"), x.get("arm"), str(x.get("rep"))) for x in rows}
+        want = {(c, a, str(rp)) for c in cases.split(",") for a in arms.split(",") for rp in reps.split(",")}
+        missing = sorted(want - have)
+        print(f"COMPLETENESS: {len(have & want)}/{len(want)} present | MISSING {len(missing)}: {missing}", flush=True)
+    except Exception as ce:
+        print(f"COMPLETENESS check failed: {ce}", flush=True)
     print(f"######## SMOKE (modal, {engine}) DONE exit={r.returncode} ########", flush=True)
 
 
