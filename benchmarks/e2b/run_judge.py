@@ -75,9 +75,17 @@ def judge(label):
     shutil.copy(md, td / "metadata.json")
     if (cell / "result.json").exists():
         shutil.copy(cell / "result.json", td / "result.json")
-    for f in deliv.iterdir():
+    # recurse: agents sometimes nest deliverables in subdirs (e.g. report/fy2019/x.docx).
+    # the judge matches on basename, so flatten the whole tree into work/ (prefix on collision)
+    # — a top-level-only copy silently zeroed nested-directory deliverables.
+    seen = set()
+    for f in sorted(deliv.rglob("*")):
         if f.is_file():
-            shutil.copy(f, td / "work" / f.name)
+            name = f.name
+            if name in seen:
+                name = f"{f.parent.name}__{f.name}"
+            seen.add(name)
+            shutil.copy(f, td / "work" / name)
     # run the real judge, retry the Seed-2.0 infra flakes
     for attempt in range(4):
         subprocess.run(["python3", "src/agent_eval.py", "--task-dir", str(td),
