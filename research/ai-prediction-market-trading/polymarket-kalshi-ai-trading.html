@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI-Led Trading on Polymarket & Kalshi — Deep Research</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121723; --panel2:#0f1420; --ink:#e6edf3; --mut:#8b97a7;
+    --line:#222c3d; --acc:#3fb6ff; --acc2:#7c5cff; --good:#37d39b; --bad:#ff6b6b;
+    --warn:#ffb454; --chip:#1b2333;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;
+    background-image:radial-gradient(900px 500px at 80% -10%,rgba(124,92,255,.10),transparent),
+                     radial-gradient(800px 500px at -10% 10%,rgba(63,182,255,.08),transparent);}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 22px 90px}
+  header.top{padding:26px 0 10px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--acc);text-transform:uppercase}
+  h1{font-size:clamp(26px,4.5vw,42px);line-height:1.12;margin:.3em 0 .25em;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(100deg,var(--acc),var(--acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{color:var(--mut);font-size:15px;max-width:760px}
+  .meta{font-family:var(--mono);font-size:11.5px;color:var(--mut);margin-top:14px;display:flex;gap:14px;flex-wrap:wrap}
+  .meta span{background:var(--chip);border:1px solid var(--line);padding:4px 9px;border-radius:6px}
+  h2{font-size:24px;margin:46px 0 6px;letter-spacing:-.01em;display:flex;align-items:center;gap:10px}
+  h2 .n{font-family:var(--mono);font-size:13px;color:var(--acc);border:1px solid var(--line);border-radius:7px;padding:3px 8px;background:var(--chip)}
+  h3{font-size:17px;margin:26px 0 6px;color:#cdd7e2}
+  p{color:#c6d0dc}
+  a{color:var(--acc);text-decoration:none;border-bottom:1px dotted #2c4a63}
+  a:hover{border-bottom-style:solid}
+  .lead{font-size:16.5px;color:#d6dee7}
+  code{font-family:var(--mono);background:#0c1119;border:1px solid var(--line);padding:1px 6px;border-radius:5px;font-size:.86em;color:#bfe3ff}
+  .panel{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:18px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  pre{font-family:var(--mono);font-size:12.5px;background:#0a0e16;border:1px solid var(--line);border-radius:10px;padding:14px;overflow:auto;color:#aab9c9;line-height:1.45}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);margin:2px 4px 2px 0;background:var(--chip);color:var(--mut)}
+  .callout{border-left:3px solid var(--warn);background:rgba(255,180,84,.06);border-radius:0 10px 10px 0;padding:13px 16px;margin:16px 0}
+  .callout.bad{border-color:var(--bad);background:rgba(255,107,107,.06)}
+  .callout.good{border-color:var(--good);background:rgba(55,211,155,.06)}
+  .callout b{color:var(--ink)}
+  /* ELI5 stepper */
+  .levels{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}
+  .lvbtn{font-family:var(--mono);font-size:12px;padding:8px 14px;border-radius:10px;border:1px solid var(--line);background:var(--chip);color:var(--mut);cursor:pointer;transition:all .18s;user-select:none}
+  .lvbtn:hover{color:var(--ink);border-color:#3a4e68}
+  .lvbtn.on{background:linear-gradient(110deg,var(--acc),var(--acc2));color:#06101a;border-color:transparent;font-weight:700;box-shadow:0 0 18px rgba(63,182,255,.25)}
+  .lvbody{min-height:110px;position:relative}
+  .lvbody .step{display:none;animation:fade .3s ease}
+  .lvbody .step.on{display:block}
+  .step-inner{background:#0a0e18;border:1px solid var(--line);border-radius:12px;padding:18px 20px;font-size:14.5px;line-height:1.7;color:#d0dae6}
+  .step-inner .step-label{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.13em;color:var(--acc);margin-bottom:10px}
+  .step-inner b{color:#e8f2ff}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  /* calculator */
+  .calc{display:grid;grid-template-columns:1fr 300px;gap:22px;align-items:center}
+  @media(max-width:760px){.calc{grid-template-columns:1fr}}
+  .slider{margin:14px 0}
+  .slider label{font-family:var(--mono);font-size:12.5px;color:var(--mut);display:flex;justify-content:space-between}
+  .slider label b{color:var(--acc)}
+  input[type=range]{width:100%;-webkit-appearance:none;height:6px;border-radius:6px;background:#1c2636;margin-top:8px;outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:linear-gradient(100deg,var(--acc),var(--acc2));cursor:pointer;border:2px solid #06101a}
+  .readout{background:#0a0e16;border:1px solid var(--line);border-radius:12px;padding:18px;text-align:center}
+  .readout .big{font-family:var(--mono);font-size:34px;font-weight:700;letter-spacing:-.02em}
+  .readout .lab{font-family:var(--mono);font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.12em}
+  .kr{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12.5px;padding:5px 0;border-top:1px dashed var(--line);color:var(--mut)}
+  .kr b{color:var(--ink)}
+  .verdict{margin-top:10px;font-family:var(--mono);font-size:12.5px;padding:8px;border-radius:8px}
+  /* census */
+  .filters{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 12px}
+  .fbtn{font-family:var(--mono);font-size:12px;padding:6px 12px;border-radius:20px;border:1px solid var(--line);background:var(--chip);color:var(--mut);cursor:pointer}
+  .fbtn.on{background:#15324a;color:var(--acc);border-color:#2a567a}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut)}
+  tr.hide{display:none}
+  .pill{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:20px;white-space:nowrap}
+  .pill.bot{background:rgba(63,182,255,.12);color:#9bd6ff}
+  .pill.aca{background:rgba(124,92,255,.14);color:#c3b4ff}
+  .pill.whale{background:rgba(55,211,155,.12);color:#8af0cd}
+  .pill.infra{background:rgba(255,180,84,.12);color:#ffd49b}
+  .proof.no{color:var(--bad)} .proof.yes{color:var(--good)} .proof.mid{color:var(--warn)}
+  /* strategy cards */
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:8px}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card h4{margin:0 0 4px;font-size:14.5px;display:flex;gap:7px;align-items:center}
+  .card .em{font-size:18px}
+  .card p{margin:4px 0 0;font-size:12.8px;color:var(--mut)}
+  .risk{display:inline-block;margin-top:8px;font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:6px;background:#0c1119;border:1px solid var(--line);color:var(--mut)}
+  .foot{margin-top:60px;border-top:1px solid var(--line);padding-top:16px;font-size:12.5px;color:var(--mut)}
+  .t& {}
+  .twocol{columns:2;column-gap:26px;font-size:13px}
+  @media(max-width:680px){.twocol{columns:1}}
+  .src{font-family:var(--mono);font-size:11.5px;break-inside:avoid;margin-bottom:5px}
+  ul.tight li{margin:3px 0}
+  .hl{color:#fff;font-weight:600}
+  .quietnote{font-size:12px;color:var(--mut);font-style:italic}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="kicker">Deep Research · First-Principles Synthesis</div>
+  <h1>Can you make money trading <span class="grad">Polymarket &amp; Kalshi</span> with AI?</h1>
+  <p class="sub">A holistic, source-verified look at AI-led and algorithmic prediction-market trading: who's actually doing it, what they tried, what the math says, and how you'd design a system that approximates "always profit." Built from Reddit + Exa/web (Composio) and a 3-vote adversarial verification harness.</p>
+  <div class="meta">
+    <span>2026-06-14</span><span>Camps: bots · academia · whales</span><span>Verified: 19 ✓ / 3 ✗</span><span>⚠ X/Twitter API credits depleted — Reddit+web only</span>
+  </div>
+</header>
+
+<p class="lead" style="margin-top:22px">
+<span class="hl">The whole game in one line:</span> a YES share pays $1 if the event happens and $0 if not, so its price <code>p</code> <i>is</i> the crowd's probability. You only profit when your own estimate <code>q</code> beats it. Everything else — Kelly, arbitrage, agents — is machinery around <code>q − p</code>.
+</p>
+
+<!-- ELI5 -->
+<h2><span class="n">A</span> From ELI5 → Expert in 5 steps</h2>
+<div class="panel">
+  <div class="levels">
+    <span class="lvbtn on" data-step="0">🧒 ELI5</span>
+    <span class="lvbtn"     data-step="1">🧑‍🎓 Beginner</span>
+    <span class="lvbtn"     data-step="2">💼 Intermediate</span>
+    <span class="lvbtn"     data-step="3">🧪 Advanced</span>
+    <span class="lvbtn"     data-step="4">🔬 Expert</span>
+  </div>
+  <div class="lvbody">
+
+    <div class="step on">
+      <div class="step-inner">
+        <div class="step-label">Level 1 — ELI5</div>
+        It's a betting slip worth <b>$1 if you're right, $0 if you're wrong.</b>
+        If lots of people think something will happen, the slip costs more — like 80¢.
+        You only win money when you think the real chance is <b>higher</b> than what the slip costs.
+        That's the whole game. Everything else is just machinery around that one idea.
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-inner">
+        <div class="step-label">Level 2 — Beginner</div>
+        The price of a YES share (say 0.65) is the market saying <b>&#8220;65% chance.&#8221;</b>
+        Buy it only if <em>you</em> think the true chance <code>q</code> is above 0.65.
+        Your average profit per share is <code>q − p</code>.
+        Do that many times and the math works in your favor — <em>if your guesses are actually good.</em>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-inner">
+        <div class="step-label">Level 3 — Intermediate</div>
+        You size bets with <b>Kelly</b>: <code>f* = (q−p)/(1−p)</code> of your bankroll,
+        but use only ¼–½ of it because your <code>q</code> has estimation error.
+        You diversify across <b>uncorrelated</b> markets so variance falls
+        (Grinold's Law: skill × √breadth = your Sharpe ratio).
+        And you grab <b>arbitrage</b> when YES + NO &lt; $1 — that's as close to free money as it gets.
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-inner">
+        <div class="step-label">Level 4 — Advanced</div>
+        Forecasting (make <code>q &gt; p</code>) and execution (capture it without ruin) are
+        <em>separable</em> skills. Score <code>q</code> with <b>Brier / log-loss</b>;
+        update it with <b>Bayes</b>; respect <b>microstructure</b> (Kyle λ, adverse selection)
+        and <b>resolution risk</b> (UMA oracle disputes, capital lock-up).
+        Correlation — not individual edge — is what actually blows accounts up.
+        Twenty &#8220;different&#8221; election markets are one bet wearing twenty hats.
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-inner">
+        <div class="step-label">Level 5 — Expert</div>
+        Edge is a systems problem: reinforcing efficiency loops kill alpha in deep liquid markets,
+        so it concentrates in niche / newly-listed / ambiguous / illiquid markets and in the
+        seconds after news before the book reprices.
+        The legitimate &#8220;auto-research&#8221; loop is a <b>calibration-feedback loop</b>
+        that optimises measured Brier — not research volume, which
+        <a href="https://arxiv.org/abs/2604.07355">Prediction Arena</a> showed is uncorrelated
+        with returns. Engineer a portfolio: arb floor + √N breadth + fractional-Kelly
+        + correlation caps + Brier-graded self-improvement.
+      </div>
+    </div>
+
+  </div><!-- /lvbody -->
+</div>
+
+<!-- CALCULATOR -->
+<h2><span class="n">B</span> Play with the only equation that matters</h2>
+<p>Edge = <code>q − p</code>. Bet size = <b>Kelly</b>: <code>f* = (q − p) / (1 − p)</code> of your bankroll. Drag the sliders — notice how Kelly screams "bet huge" on a tiny edge, which is exactly why pros use <span class="hl">fractional</span> Kelly (your <code>q</code> is never as good as you think).</p>
+<div class="panel calc">
+  <div>
+    <div class="slider">
+      <label>Your probability estimate &nbsp;<b id="qv">0.60</b><span> q</span></label>
+      <input type="range" id="q" min="1" max="99" value="60">
+    </div>
+    <div class="slider">
+      <label>Market price (YES) &nbsp;<b id="pv">0.50</b><span> p</span></label>
+      <input type="range" id="p" min="1" max="99" value="50">
+    </div>
+    <div class="slider">
+      <label>Kelly fraction (discipline) &nbsp;<b id="fkv">0.25×</b><span> safety</span></label>
+      <input type="range" id="fk" min="5" max="100" value="25">
+    </div>
+    <p class="quietnote" id="story"></p>
+  </div>
+  <div class="readout">
+    <div class="lab">Edge (q − p)</div>
+    <div class="big" id="edge">+10.0%</div>
+    <div class="kr"><span>Full Kelly</span><b id="kfull">20.0%</b></div>
+    <div class="kr"><span>Your fractional Kelly</span><b id="kfrac">5.0%</b></div>
+    <div class="kr"><span>On a $10k bankroll</span><b id="kdollar">$500</b></div>
+    <div class="verdict" id="verdict"></div>
+  </div>
+</div>
+
+<!-- HONEST HEADLINE -->
+<h2><span class="n">C</span> The finding the hype skips</h2>
+<div class="callout bad">
+<b>The only real-capital benchmark of autonomous AI traders lost money.</b> In <a href="https://arxiv.org/abs/2604.07355">Prediction Arena</a>, six frontier models traded real $10k accounts on Kalshi &amp; Polymarket for 57 days. Every model finished <b>−16.0% to −30.8%</b> on Kalshi — and the paper found <b>research volume had little correlation with returns</b>. The bottleneck isn't generating ideas; it's <i>calibration</i> and <i>monetizing</i> a correct view.
+</div>
+<div class="grid2">
+  <div class="callout">
+    <b>Edge is brutally concentrated.</b> ~<span class="hl">67% of Polymarket profit</span> goes to the top 0.1% of accounts (WSJ). The top-10 wallets hold ~21% of all profit and are ~0.07% of accounts (<a href="https://0xinsider.com/research/polymarket-highest-earners-top-10">0xinsider</a>).
+  </div>
+  <div class="callout good">
+    <b>The biggest winner was human, not a bot.</b> France's "Théo" made ~$48–85M on Trump 2024 from a <i>contrarian thesis</i> that polls undercounted Trump — not an LLM loop (<a href="https://www.polytrackhq.app/blog/polymarket-french-whale-case-study">PolyTrack</a>).
+  </div>
+</div>
+<div class="callout bad">
+<b>Shared "profitable bots" usually don't replicate.</b> A viral "+39% Kalshi World Cup bot (with code)" was rebuilt by a commenter who reported <b>"IT DOESN'T WORK!!"</b>; others called the repo a coin-stealer. Community law: <i>"if you had a money-printer, why post it on Reddit?"</i>
+</div>
+
+<!-- CENSUS -->
+<h2><span class="n">D</span> The census — who is actually doing this</h2>
+<p>Three camps. Conflating them is how people botch the "how many folks" question. Filter:</p>
+<div class="filters" id="filters">
+  <span class="fbtn on" data-f="all">All</span>
+  <span class="fbtn" data-f="bot">🤖 Open-source bots</span>
+  <span class="fbtn" data-f="aca">🎓 Academic</span>
+  <span class="fbtn" data-f="whale">🐋 Pro whales</span>
+  <span class="fbtn" data-f="infra">🧩 Agent infra</span>
+</div>
+<table id="census">
+  <thead><tr><th>Name</th><th>Camp</th><th>What it is / did</th><th>P&amp;L proof</th></tr></thead>
+  <tbody id="ctb"></tbody>
+</table>
+<p class="quietnote">P&amp;L proof = is there verifiable profit (on-chain wallet / audited returns), not just a README or star count? Verified via 3-vote adversarial check; the CloddsBot "trades 5 venues" claim and "research→returns" were <b>refuted</b>.</p>
+
+<!-- STRATEGY MENU -->
+<h2><span class="n">E</span> The strategy menu (what "trading" means here)</h2>
+<div class="cards" id="cards"></div>
+
+<!-- TOOLKIT -->
+<h2><span class="n">F</span> The quant toolkit → mapped to the system</h2>
+<div class="panel">
+<table>
+<thead><tr><th>Principle</th><th>What it does</th><th>The honest caveat</th></tr></thead>
+<tbody>
+<tr><td><b>Edge <code>q−p</code></b></td><td>the only source of profit</td><td>imaginary unless your <code>q</code> is calibrated</td></tr>
+<tr><td><b>Kelly</b> <code>f*=(q−p)/(1−p)</code></td><td>growth-optimal bet size</td><td>use ¼–½ Kelly; full Kelly + bad q = ruin</td></tr>
+<tr><td><b>Grinold's Law</b> <code>IR≈IC·√N</code></td><td>many uncorrelated edges &gt; one big bet</td><td>breadth is fake if bets correlate</td></tr>
+<tr><td><b>Brier / log-loss</b></td><td>the only honest scorecard for q</td><td>Halawi: LLM .179 vs crowd .149 — <i>below</i> the crowd</td></tr>
+<tr><td><b>Bayesian updating</b></td><td>fold news into q in real time</td><td>this <i>is</i> the legit "auto-research" loop</td></tr>
+<tr><td><b>No-arbitrage</b> (YES+NO=1)</td><td>violations = free money</td><td>tiny, fleeting, capacity-bound</td></tr>
+<tr><td><b>Markowitz / shrinkage cov.</b></td><td>correlation-aware sizing</td><td>the anti-blow-up: 20 election mkts = 1 bet</td></tr>
+<tr><td><b>Kyle λ / Glosten–Milgrom</b></td><td>market-making, adverse selection</td><td>you're the dumb money till proven otherwise</td></tr>
+<tr><td><b>Optimal stopping</b></td><td>hold-to-resolve vs sell early</td><td>UMA finalization strands capital for weeks</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout good">
+<b>Can you "always make money at the end of the day"?</b> Literally only <b>arbitrage</b> is always-profit (and it's small &amp; competitive). The engineering approximation: a <b>risk-free arb floor</b> + <b>many uncorrelated +EV bets</b> (variance ∝ 1/N ⇒ Sharpe ∝ √N) + <b>fractional-Kelly sizing</b> + <b>correlation caps</b> + a <b>Brier calibration loop</b>.
+</div>
+
+<!-- FUND DESIGN -->
+<h2><span class="n">G</span> The "infinite resources" design — a multi-desk fund</h2>
+<p>With unlimited compute you wouldn't build "a bot." You'd build <span class="hl">one shared belief engine feeding four desks</span>, because that's what Grinold + Kelly + no-arbitrage actually reward:</p>
+<pre>
+                ┌──────────────────────────────────────────────┐
+   DATA LAKE →  │  BAYESIAN BELIEF ENGINE  (calibrated q for      │
+  (all feeds)   │  every live market, every minute)              │
+                └───────────────┬──────────────────────────────┘
+                                │  q vs p  →  edge map
+        ┌───────────────┬───────┴────────┬────────────────┐
+        ▼               ▼                ▼                ▼
+   ARB DESK        FORECAST DESK     MM / MICRO DESK   BEHAVIORAL DESK
+   YES+NO, Σ,      breadth of many   quote spread,     fade longshot/
+   cross-venue     small +EV bets    earn rebates      partisan bias
+   (risk-free      (Grinold √N)      (Kyle λ aware)    (EVT tails)
+    FLOOR)
+        └───────────────┴───────┬────────┴────────────────┘
+                                ▼
+        CORRELATION-AWARE  FRACTIONAL-KELLY  ALLOCATOR
+        (shrinkage covariance; per-event & per-theme caps;
+         reserve for UMA/oracle + regulatory risk)
+                                ▼
+        EXECUTION  (CLOB APIs · leg-risk hedged · slippage-modeled)
+                                ▼
+        CALIBRATION LOOP → Brier/log-loss every resolution →
+        retrain priors · prune dead strategies   ← the REAL auto-research loop
+</pre>
+<p class="quietnote">Prediction Arena's lesson, encoded: spend compute on <b>better-calibrated q and better monetization/sizing</b>, not raw "research volume" — which was uncorrelated with returns.</p>
+
+<!-- DATA SOURCES -->
+<h2><span class="n">H</span> Data sources — the full taxonomy</h2>
+<div class="grid2">
+  <div class="panel"><h3 style="margin-top:0">Market / price (the <code>p</code> side)</h3>
+    <ul class="tight" style="font-size:13.5px;color:#c6d0dc">
+      <li>Polymarket <b>Gamma API</b> + <b>CLOB API</b> + <code>py-clob-client</code></li>
+      <li>Kalshi REST/WebSocket Trade API (book, trades, candles)</li>
+      <li>On-chain: Polygon subgraph, Dune; <a href="https://archive.pmxt.dev/Polymarket">pmxt 10TB+ orderbook archive</a></li>
+      <li>Aggregators: Adjacent News, PolyTrack, Polyloly, 0xinsider; Betfair/Manifold/Metaculus</li>
+    </ul></div>
+  <div class="panel"><h3 style="margin-top:0">Ground truth (the <code>q</code> side)</h3>
+    <ul class="tight" style="font-size:13.5px;color:#c6d0dc">
+      <li><b>Sports</b> → Pinnacle (sharpest book), The Odds API — closing line = benchmark q</li>
+      <li><b>Macro/rates</b> → FRED, BLS, <b>CME FedWatch</b>, SOFR futures</li>
+      <li><b>Elections</b> → 538 / Silver Bulletin, RCP, state pollsters</li>
+      <li><b>Weather</b> → NOAA/ECMWF · <b>Crypto</b> → CEX + funding + on-chain</li>
+    </ul></div>
+  <div class="panel"><h3 style="margin-top:0">Alternative / sentiment (early signal)</h3>
+    <ul class="tight" style="font-size:13.5px;color:#c6d0dc">
+      <li>X/Twitter, Reddit, Google Trends, Wikipedia pageviews, GDELT</li>
+      <li>News APIs (NewsAPI, RavenPack)</li>
+      <li>On-chain whale-wallet tracking <span class="quietnote">(copy-signal — but sharps rotate wallets &amp; you're always too late)</span></li>
+    </ul></div>
+  <div class="panel"><h3 style="margin-top:0">Agent infrastructure (the loop's plumbing)</h3>
+    <ul class="tight" style="font-size:13.5px;color:#c6d0dc">
+      <li><a href="https://github.com/Polymarket/agents">Polymarket/agents</a> — official agent framework</li>
+      <li><a href="https://simmer.markets">simmer.markets</a> — one API, self-custody, strategy "skills"</li>
+      <li><a href="https://github.com/spfunctions/simplefunctions-cli">@spfunctions/cli</a> — MCP feed of live books → Claude Code/Codex</li>
+    </ul></div>
+</div>
+
+<!-- RISKS -->
+<h2><span class="n">I</span> Risks &amp; open questions (the via-negativa list)</h2>
+<ul class="tight" style="color:#c6d0dc">
+  <li><b>Efficiency decay</b> — deep liquid markets are arbed; edge lives in niche/new/ambiguous/illiquid markets and the seconds after news.</li>
+  <li><b>Replication problem</b> — shared strategies rarely replicate; many repos are scams.</li>
+  <li><b>Oracle/resolution risk</b> — UMA disputes, ambiguous wording, weeks-long capital lock-up.</li>
+  <li><b>Regulation &amp; insider info</b> — some "edge" is illegal private info; CFTC now hunts it with ML; US-person Polymarket access is restricted.</li>
+  <li><b>Capacity</b> — arbitrage &amp; microstructure edges are small, competed away at scale.</li>
+  <li><b>The core caution</b> — autonomous frontier models <i>lost</i> in the only real-capital test, and "more research" didn't help.</li>
+</ul>
+
+<div class="foot">
+  <b style="color:#cdd7e2">Primary sources</b>
+  <div class="twocol" style="margin-top:10px">
+    <div class="src">arXiv <a href="https://arxiv.org/abs/2604.07355">2604.07355</a> Prediction Arena</div>
+    <div class="src">arXiv <a href="https://arxiv.org/abs/2604.14199">2604.14199</a> PolyBench</div>
+    <div class="src">arXiv <a href="https://arxiv.org/abs/2402.18563">2402.18563</a> Halawi (human-level forecasting)</div>
+    <div class="src">arXiv <a href="https://arxiv.org/abs/2402.19379">2402.19379</a> Wisdom of the Silicon Crowd</div>
+    <div class="src">arXiv <a href="https://arxiv.org/abs/2409.19839">2409.19839</a> ForecastBench (ICLR'25)</div>
+    <div class="src">arXiv <a href="https://arxiv.org/abs/2507.04562">2507.04562</a> LLMs vs expert forecasters</div>
+    <div class="src">arXiv <a href="https://arxiv.org/abs/2511.07678">2511.07678</a> AIA Forecaster</div>
+    <div class="src">arXiv <a href="https://arxiv.org/abs/2604.18576">2604.18576</a> Agentic Bayesian forecasting</div>
+    <div class="src"><a href="https://github.com/Polymarket/agents">github/Polymarket/agents</a></div>
+    <div class="src"><a href="https://github.com/alsk1992/CloddsBot">github/alsk1992/CloddsBot</a></div>
+    <div class="src"><a href="https://github.com/ImMike/polymarket-arbitrage">github/ImMike/polymarket-arbitrage</a></div>
+    <div class="src"><a href="https://simmer.markets">simmer.markets</a> · <a href="https://github.com/spfunctions/simplefunctions-cli">simplefunctions-cli</a></div>
+    <div class="src"><a href="https://www.polytrackhq.app/blog/polymarket-french-whale-case-study">PolyTrack: French whale</a></div>
+    <div class="src"><a href="https://ethankho.substack.com/p/how-the-worlds-1-prediction-markets-a07">Domer interview</a></div>
+    <div class="src"><a href="https://polyloly.com/blog/where-polymarket-edge-lives-cohort-roi-analysis">Polyloly: 219k-trade ROI</a></div>
+    <div class="src"><a href="https://0xinsider.com/research/polymarket-highest-earners-top-10">0xinsider: top-10 earners</a></div>
+    <div class="src"><a href="https://archive.pmxt.dev/Polymarket">pmxt 10TB orderbook archive</a></div>
+  </div>
+  <p style="margin-top:16px" class="quietnote">Method: Composio (Reddit + Exa/web) for the practitioner census + a parallel deep-research harness running 3-vote adversarial verification (a claim needs 2/3 refutes to be killed). First-principles framing via a model-combination pass (first principles → systems → portfolio). Not financial advice — research only.</p>
+</div>
+
+</div>
+
+<script>
+/* ---------- ELI5 → Expert (content is in HTML; JS only handles tab clicks) ---------- */
+document.querySelectorAll(‘.lvbtn’).forEach(btn=>{
+  btn.addEventListener(‘click’,()=>{
+    const i=+btn.dataset.step;
+    document.querySelectorAll(‘.lvbtn’).forEach((b,j)=>b.classList.toggle(‘on’,j===i));
+    document.querySelectorAll(‘.lvbody .step’).forEach((s,j)=>s.classList.toggle(‘on’,j===i));
+  });
+});
+
+/* ---------- Calculator ---------- */
+const q=document.getElementById('q'),p=document.getElementById('p'),fk=document.getElementById('fk');
+function calc(){
+  const Q=+q.value/100,P=+p.value/100,F=+fk.value/100;
+  document.getElementById('qv').textContent=Q.toFixed(2);
+  document.getElementById('pv').textContent=P.toFixed(2);
+  document.getElementById('fkv').textContent=F.toFixed(2)+'×';
+  const edge=Q-P;
+  const kfull=P<1?Math.max(-1,Math.min(1,(Q-P)/(1-P))):0; // YES-side Kelly
+  const e=document.getElementById('edge');
+  e.textContent=(edge>=0?'+':'')+(edge*100).toFixed(1)+'%';
+  e.style.color=edge>0?'var(--good)':edge<0?'var(--bad)':'var(--mut)';
+  document.getElementById('kfull').textContent=(kfull*100).toFixed(1)+'%';
+  document.getElementById('kfrac').textContent=(kfull*F*100).toFixed(1)+'%';
+  document.getElementById('kdollar').textContent='$'+Math.round(10000*Math.max(0,kfull*F)).toLocaleString();
+  const v=document.getElementById('verdict');
+  if(edge<=0){v.style.background='rgba(255,107,107,.12)';v.style.color='var(--bad)';v.textContent='q ≤ p → no edge on YES. (Consider the NO side: edge there is p−q.)';}
+  else if(kfull>0.5){v.style.background='rgba(255,180,84,.12)';v.style.color='var(--warn)';v.textContent='Full Kelly says bet '+(kfull*100).toFixed(0)+'% — dangerously large. Fractional Kelly is mandatory.';}
+  else{v.style.background='rgba(55,211,155,.12)';v.style.color='var(--good)';v.textContent='Positive edge. Size at fractional Kelly and diversify across uncorrelated markets.';}
+  const story=document.getElementById('story');
+  if(edge>0&&P<0.15)story.textContent='Longshot zone: small p magnifies Kelly. Crowds systematically overprice longshots — fade carefully.';
+  else if(edge>0&&P>0.85)story.textContent='Heavy-favorite zone: lots of capital risked to win a little. Watch resolution/oracle tail risk.';
+  else if(edge>0)story.textContent='A '+(edge*100).toFixed(0)+'-point edge is large for a liquid market — be suspicious you\\'re the one mispricing.';
+  else story.textContent='No edge here. Most of the time, the market price is right — that\\'s the null hypothesis you must beat.';
+}
+[q,p,fk].forEach(s=>s.addEventListener('input',calc));calc();
+
+/* ---------- Census ---------- */
+const CENSUS=[
+ ["Polymarket/agents","infra","Official Polymarket framework: 'trade autonomously using AI agents' — py_clob_client + Gamma API (verified in source). ~3.7k★","no","framework, not a track record"],
+ ["alsk1992/CloddsBot","bot","Autonomous, Claude-primary + 8 LLM providers, 374★, v1.7.7. Trades Polymarket+Kalshi (the '5-venue' claim was refuted).","no","README shows zero P&L"],
+ ["simmer.markets","infra","'Prediction Markets for the Agent Economy' — one API to trade Poly+Kalshi, self-custody, strategy 'skills' marketplace.","mid","product, early"],
+ ["@spfunctions/cli","infra","MCP server + 42 cmds; pipes live Kalshi+Polymarket orderbooks into Claude Code / Codex.","na","tooling layer"],
+ ["zostaff/poly-arbitrage-bot","bot","Cross-exchange Poly↔Kalshi arb, paper+live, intra-market bundling. 22★","no","no wallet proof"],
+ ["ImMike/polymarket-arbitrage","bot","Watches 10,000+ markets for cross-platform inefficiency.","no","no wallet proof"],
+ ["defi-ape / 456ape / soldino777 / up2itnow0822","bot","Near-identical 15-min cross-venue arb bots ('execute both legs, lock the spread').","no","mostly low-star, some scams"],
+ ["Halawi et al. 2024 (NeurIPS)","aca","LLM forecasting system — Brier .179 vs human crowd .149 (approaches, doesn't beat).","yes","peer-reviewed accuracy"],
+ ["Wisdom of the Silicon Crowd","aca","LLM ensemble rivals human-crowd forecasting accuracy.","yes","peer-reviewed"],
+ ["ForecastBench (Karger '25)","aca","Dynamic, contamination-resistant forecasting benchmark; LLMs still below superforecasters.","yes","benchmark"],
+ ["PolyBench","aca","38,666 Polymarket snapshots + CLOB + news; 7 LLMs, 36k predictions; CWR/APY/Sharpe metrics.","yes","benchmark, sim returns"],
+ ["Prediction Arena","aca","6 frontier models, real $10k each, 57 days → Kalshi −16% to −31%; research vol ≈ uncorrelated w/ profit.","yes","REAL capital, negative"],
+ ["Théo / Fredi9999 / Theo4","whale","~$85M on Trump 2024 → ~$48–85M profit; #1 all-time wallet. Contrarian human thesis, not a bot.","yes","on-chain verified"],
+ ["Domer","whale","'World's #1 prediction-markets trader' — speed + discipline + manual research on political events.","yes","public track record"],
+ ["Top-10 wallets (0xinsider)","whale","$96.5M combined P&L ≈ 21% of all profit, held by ~0.07% of accounts.","yes","on-chain"],
+];
+const tb=document.getElementById('ctb');
+const labels={bot:["bot","🤖 bot"],aca:["aca","🎓 academic"],whale:["whale","🐋 whale"],infra:["infra","🧩 infra"]};
+const proofTxt={no:["no","none ✗"],yes:["yes","verified ✓"],mid:["mid","early ~"],na:["mid","n/a"]};
+CENSUS.forEach(r=>{
+  const tr=document.createElement('tr');tr.dataset.f=r[1];
+  tr.innerHTML=`<td><b>${r[0]}</b></td>
+   <td><span class="pill ${r[1]}">${labels[r[1]][1]}</span></td>
+   <td>${r[2]}</td>
+   <td class="proof ${proofTxt[r[3]][0]}">${proofTxt[r[3]][1]}<div class="quietnote" style="color:var(--mut)">${r[4]}</div></td>`;
+  tb.appendChild(tr);
+});
+document.getElementById('filters').addEventListener('click',e=>{
+  if(!e.target.dataset.f)return;
+  [...document.querySelectorAll('.fbtn')].forEach(b=>b.classList.toggle('on',b===e.target));
+  const f=e.target.dataset.f;
+  [...tb.children].forEach(tr=>tr.classList.toggle('hide',f!=='all'&&tr.dataset.f!==f));
+});
+
+/* ---------- Strategy cards ---------- */
+const STRAT=[
+ ["🎯","Directional / fundamental","Better forecast q>p. Pure alpha. The whales &amp; forecasting researchers.","skill: high · capacity: high"],
+ ["🤝","Market making","Quote both sides, earn the spread, manage inventory &amp; adverse selection.","skill: high · capacity: med"],
+ ["♻️","Arbitrage","YES+NO&lt;$1, Dutch books, cross-venue Poly↔Kalshi. ≈Risk-free — the crowd's choice.","skill: med · capacity: LOW"],
+ ["📐","Statistical arb","Correlated markets diverge → trade the spread back.","skill: high · capacity: med"],
+ ["⚡","Event-driven / latency","News drops, book lags. Speed game — where bots &amp; insiders win.","skill: med · capacity: low"],
+ ["🎲","Vol / time-decay","Binary-option gamma near resolution; mispriced tails.","skill: high · capacity: low"],
+ ["🪞","Behavioral fade","Fade favorite-longshot &amp; partisan/wishful bias.","skill: med · capacity: med"],
+];
+const cw=document.getElementById('cards');
+STRAT.forEach(s=>{const d=document.createElement('div');d.className='card';
+ d.innerHTML=`<h4><span class="em">${s[0]}</span>${s[1]}</h4><p>${s[2]}</p><span class="risk">${s[3]}</span>`;cw.appendChild(d);});
+</script>
+</body>
+</html>

@@ -189,7 +189,8 @@ mod tests {
 
     fn docs() -> Vec<String> {
         vec![
-            "To reset your password, click 'forgot password' and follow the email link.".to_string(),
+            "To reset your password, click 'forgot password' and follow the email link."
+                .to_string(),
             "Bananas are a good source of potassium and dietary fiber.".to_string(),
         ]
     }
@@ -206,7 +207,12 @@ mod tests {
             .rerank("how do I reset my account password", &docs())
             .unwrap();
         assert_eq!(scores.len(), 2);
-        assert!(scores[0] > scores[1], "password {} vs banana {}", scores[0], scores[1]);
+        assert!(
+            scores[0] > scores[1],
+            "password {} vs banana {}",
+            scores[0],
+            scores[1]
+        );
     }
 
     /// Gated live test: RELACE_API_KEY.
@@ -220,6 +226,11 @@ mod tests {
             .rerank("how do I reset my account password", &docs())
             .unwrap();
         assert_eq!(scores.len(), 2);
-        assert!(scores[0] > scores[1], "password {} vs banana {}", scores[0], scores[1]);
+        assert!(
+            scores[0] > scores[1],
+            "password {} vs banana {}",
+            scores[0],
+            scores[1]
+        );
     }
 }

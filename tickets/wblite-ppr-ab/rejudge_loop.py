@@ -51,6 +51,11 @@ while True:
         mo = d / "model_output"
         if mo.is_dir() and any(mo.iterdir()):
             labels.append(d.name)
+    _only = os.environ.get("WB_REJUDGE_CASES")
+    if _only:  # scope to these cases, but KEEP already-judged cells (any persona) in the output
+        _cases = set(_only.split(","))
+        labels = [l for l in labels if l.split("_")[2] in _cases
+                  or list((OUT / l).glob("rubrics_judge--*.json"))]
     rows = []
     with ThreadPoolExecutor(max_workers=4) as ex:
         for label, status, passed, total in ex.map(judge_one, sorted(labels)):

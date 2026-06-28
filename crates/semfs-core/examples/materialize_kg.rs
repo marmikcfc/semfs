@@ -19,10 +19,15 @@ fn main() -> anyhow::Result<()> {
     let _hook = Db::open_in_memory()?;
     let conn = Connection::open(&db)?;
     materialize_projection(&conn)?;
-    let communities: i64 =
-        conn.query_row("SELECT COUNT(DISTINCT community_id) FROM graph_community", [], |r| r.get(0))?;
+    let communities: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT community_id) FROM graph_community",
+        [],
+        |r| r.get(0),
+    )?;
     let members: i64 = conn.query_row("SELECT COUNT(*) FROM graph_community", [], |r| r.get(0))?;
     let gods: i64 = conn.query_row("SELECT COUNT(*) FROM graph_god_node", [], |r| r.get(0))?;
-    println!("materialized: {communities} communities, {members} member-file rows, {gods} god-node rows");
+    println!(
+        "materialized: {communities} communities, {members} member-file rows, {gods} god-node rows"
+    );
     Ok(())
 }

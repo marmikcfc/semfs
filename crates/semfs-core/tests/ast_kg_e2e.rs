@@ -51,7 +51,9 @@ fn build_kg_bin() -> PathBuf {
             return p;
         }
     }
-    panic!("build_kg example not built — run: cargo build --release -p semfs-core --example build_kg");
+    panic!(
+        "build_kg example not built — run: cargo build --release -p semfs-core --example build_kg"
+    );
 }
 
 #[test]
@@ -90,7 +92,9 @@ fn folder_to_knowledge_graph() {
         std::fs::create_dir_all(disk.parent().unwrap()).unwrap();
         std::fs::write(&disk, content).unwrap();
         // Index through the REAL engine, with the mount-style "/rel" path.
-        store.index(i as u64 + 1, &format!("/{rel}"), content).unwrap();
+        store
+            .index(i as u64 + 1, &format!("/{rel}"), content)
+            .unwrap();
     }
     drop(store); // release the WAL/connection before the subprocess opens the DB.
 
@@ -137,26 +141,60 @@ fn folder_to_knowledge_graph() {
     assert!(entity("noise", "function"), "noise function missing");
     assert!(entity("Server", "class"), "Go Server struct missing");
     assert!(entity("Start", "method"), "Go Start method missing");
-    assert!(entity("Greeter", "interface"), "TS Greeter interface missing");
+    assert!(
+        entity("Greeter", "interface"),
+        "TS Greeter interface missing"
+    );
 
     // EXTRACTED edges.
-    assert!(edge("contains", "%dog.py", "%Dog", "EXTRACTED"), "file→Dog contains missing");
-    assert!(edge("method", "%Dog", "%Dog.speak", "EXTRACTED"), "class→method missing");
-    assert!(edge("imports", "%dog.py", "pkg.base", "EXTRACTED"), "py import missing");
+    assert!(
+        edge("contains", "%dog.py", "%Dog", "EXTRACTED"),
+        "file→Dog contains missing"
+    );
+    assert!(
+        edge("method", "%Dog", "%Dog.speak", "EXTRACTED"),
+        "class→method missing"
+    );
+    assert!(
+        edge("imports", "%dog.py", "pkg.base", "EXTRACTED"),
+        "py import missing"
+    );
     // CROSS-FILE inherits: Dog (module pkg.dog) → Animal (module pkg.base).
     // Differing module prefixes prove the symbol resolved across files.
-    assert!(edge("inherits", "pkg.dog.Dog", "pkg.base.Animal", "EXTRACTED"), "cross-file inherits missing");
+    assert!(
+        edge("inherits", "pkg.dog.Dog", "pkg.base.Animal", "EXTRACTED"),
+        "cross-file inherits missing"
+    );
     // TS multiple inheritance: extends Base + implements Greeter.
-    assert!(edge("inherits", "%Service", "%Base", "EXTRACTED"), "TS extends missing");
-    assert!(edge("inherits", "%Service", "%Greeter", "EXTRACTED"), "TS implements missing");
+    assert!(
+        edge("inherits", "%Service", "%Base", "EXTRACTED"),
+        "TS extends missing"
+    );
+    assert!(
+        edge("inherits", "%Service", "%Greeter", "EXTRACTED"),
+        "TS implements missing"
+    );
 
     // INFERRED edges (weight 0.8).
-    assert!(edge("calls", "%Dog.speak", "%bark", "INFERRED"), "Dog.speak→bark call missing");
-    assert!(edge("calls", "%Start", "%boot", "INFERRED"), "Go Start→boot call missing");
+    assert!(
+        edge("calls", "%Dog.speak", "%bark", "INFERRED"),
+        "Dog.speak→bark call missing"
+    );
+    assert!(
+        edge("calls", "%Start", "%boot", "INFERRED"),
+        "Go Start→boot call missing"
+    );
     let w: f64 = conn
-        .query_row("SELECT MIN(weight) FROM graph_relation WHERE confidence='INFERRED'", [], |r| r.get(0))
+        .query_row(
+            "SELECT MIN(weight) FROM graph_relation WHERE confidence='INFERRED'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert!((w - 0.8).abs() < 1e-9, "INFERRED weight should be 0.8, got {w}");
+    assert!(
+        (w - 0.8).abs() < 1e-9,
+        "INFERRED weight should be 0.8, got {w}"
+    );
 
     // source_location populated for every code relation.
     let blank: i64 = conn
@@ -170,9 +208,14 @@ fn folder_to_knowledge_graph() {
 
     // Sanity: a real graph was produced.
     let (ne, nr): (i64, i64) = (
-        conn.query_row("SELECT COUNT(*) FROM graph_entity", [], |r| r.get(0)).unwrap(),
-        conn.query_row("SELECT COUNT(*) FROM graph_relation", [], |r| r.get(0)).unwrap(),
+        conn.query_row("SELECT COUNT(*) FROM graph_entity", [], |r| r.get(0))
+            .unwrap(),
+        conn.query_row("SELECT COUNT(*) FROM graph_relation", [], |r| r.get(0))
+            .unwrap(),
     );
-    assert!(ne >= 7 && nr >= 8, "graph too small: {ne} entities, {nr} relations");
+    assert!(
+        ne >= 7 && nr >= 8,
+        "graph too small: {ne} entities, {nr} relations"
+    );
     eprintln!("KG built from mounted folder: {ne} entities, {nr} relations");
 }

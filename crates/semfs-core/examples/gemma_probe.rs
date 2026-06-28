@@ -91,7 +91,10 @@ fn main() -> anyhow::Result<()> {
                 .map(|(i, (l, _))| (cosine(&qe, &doc_emb[i]), l.as_str()))
                 .collect();
             scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
-            let arank = scored.iter().position(|(_, l)| *l == "ANSWER.txt").map(|p| p + 1);
+            let arank = scored
+                .iter()
+                .position(|(_, l)| *l == "ANSWER.txt")
+                .map(|p| p + 1);
             let drank = scored
                 .iter()
                 .position(|(_, l)| *l == "DASHBOARD.xlsx")
@@ -101,7 +104,11 @@ fn main() -> anyhow::Result<()> {
                 docs.len()
             );
             for (i, (s, l)) in scored.iter().enumerate() {
-                let mark = if *l == "ANSWER.txt" || *l == "DASHBOARD.xlsx" { " <==" } else { "" };
+                let mark = if *l == "ANSWER.txt" || *l == "DASHBOARD.xlsx" {
+                    " <=="
+                } else {
+                    ""
+                };
                 println!("   {:>2}. {:<20} {:.4}{}", i + 1, l, s, mark);
             }
         }

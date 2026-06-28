@@ -48,7 +48,9 @@ fn rank_of(ranked: &[(&str, f32)], needle: &str) -> Option<usize> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let db = std::env::args().nth(1).expect("usage: sparse_probe <db> [bgem3|splade]");
+    let db = std::env::args()
+        .nth(1)
+        .expect("usage: sparse_probe <db> [bgem3|splade]");
     let which = std::env::args().nth(2).unwrap_or_else(|| "bgem3".into());
     let sparse_model = match which.as_str() {
         "splade" => SparseModel::SPLADEPPV1,
@@ -75,7 +77,10 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .map(|fp| (fp.clone(), acc[fp].chars().take(800).collect::<String>()))
         .collect();
-    println!("loaded {} files (from chunks) from {db}; sparse model = {which}", rows.len());
+    println!(
+        "loaded {} files (from chunks) from {db}; sparse model = {which}",
+        rows.len()
+    );
     let texts: Vec<String> = rows.iter().map(|(_, t)| t.clone()).collect();
 
     // Dense lane (gemma, matches the seeded index embedder).
@@ -108,12 +113,17 @@ fn main() -> anyhow::Result<()> {
     for run in 1..=3 {
         let qd = dense.embed(vec![query.to_string()], None)?.remove(0);
         let qs = sparse.embed(vec![query.to_string()], None)?.remove(0);
-        let qmap: HashMap<u32, f32> =
-            qs.indices.iter().map(|&i| i as u32).zip(qs.values.iter().copied()).collect();
+        let qmap: HashMap<u32, f32> = qs
+            .indices
+            .iter()
+            .map(|&i| i as u32)
+            .zip(qs.values.iter().copied())
+            .collect();
 
         let dscores: Vec<f32> = (0..rows.len()).map(|i| cosine(&qd, &demb[i])).collect();
-        let sscores: Vec<f32> =
-            (0..rows.len()).map(|i| sparse_dot(&qmap, &semb[i].0, &semb[i].1)).collect();
+        let sscores: Vec<f32> = (0..rows.len())
+            .map(|i| sparse_dot(&qmap, &semb[i].0, &semb[i].1))
+            .collect();
 
         let dranked = rank_files(&rows, &dscores);
         let sranked = rank_files(&rows, &sscores);

@@ -54,7 +54,8 @@ impl LocalReranker {
         revision: &str,
         cache_dir: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
-        let cache = Cache::new(cache_dir.unwrap_or_else(|| PathBuf::from(fastembed::get_cache_dir())));
+        let cache =
+            Cache::new(cache_dir.unwrap_or_else(|| PathBuf::from(fastembed::get_cache_dir())));
         let api = ApiBuilder::from_cache(cache)
             .with_progress(false)
             .build()

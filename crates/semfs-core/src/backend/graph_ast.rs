@@ -251,28 +251,43 @@ pub fn parse_file(path: &str, src: &str) -> Option<FileAst> {
                 "name" => def_name = Some(text),
                 "def.class" => {
                     def_kind = Some(CodeKind::Class);
-                    def_range =
-                        Some((node.start_byte(), node.end_byte(), node.start_position().row + 1));
+                    def_range = Some((
+                        node.start_byte(),
+                        node.end_byte(),
+                        node.start_position().row + 1,
+                    ));
                 }
                 "def.interface" => {
                     def_kind = Some(CodeKind::Interface);
-                    def_range =
-                        Some((node.start_byte(), node.end_byte(), node.start_position().row + 1));
+                    def_range = Some((
+                        node.start_byte(),
+                        node.end_byte(),
+                        node.start_position().row + 1,
+                    ));
                 }
                 "def.function" => {
                     def_kind = Some(CodeKind::Function);
-                    def_range =
-                        Some((node.start_byte(), node.end_byte(), node.start_position().row + 1));
+                    def_range = Some((
+                        node.start_byte(),
+                        node.end_byte(),
+                        node.start_position().row + 1,
+                    ));
                 }
                 "def.method" => {
                     def_kind = Some(CodeKind::Method);
-                    def_range =
-                        Some((node.start_byte(), node.end_byte(), node.start_position().row + 1));
+                    def_range = Some((
+                        node.start_byte(),
+                        node.end_byte(),
+                        node.start_position().row + 1,
+                    ));
                 }
                 "def.module" => {
                     def_kind = Some(CodeKind::Module);
-                    def_range =
-                        Some((node.start_byte(), node.end_byte(), node.start_position().row + 1));
+                    def_range = Some((
+                        node.start_byte(),
+                        node.end_byte(),
+                        node.start_position().row + 1,
+                    ));
                 }
                 "call" => raw_refs.push(RawRef {
                     name: last_ident(&text),
@@ -292,16 +307,19 @@ pub fn parse_file(path: &str, src: &str) -> Option<FileAst> {
                     offset: node.start_byte(),
                     line: node.start_position().row + 1,
                 }),
-                "import" => imports.push((
-                    clean_import(&text),
-                    node.start_position().row + 1,
-                )),
+                "import" => imports.push((clean_import(&text), node.start_position().row + 1)),
                 _ => {}
             }
         }
         if let (Some(kind), Some((s, e, line)), Some(name)) = (def_kind, def_range, def_name) {
             if !name.trim().is_empty() {
-                defs.push(RawDef { kind, name, line, start: s, end: e });
+                defs.push(RawDef {
+                    kind,
+                    name,
+                    line,
+                    start: s,
+                    end: e,
+                });
             }
         }
     }
@@ -408,12 +426,22 @@ pub fn parse_file(path: &str, src: &str) -> Option<FileAst> {
                 .min_by_key(|e| e.end - e.start)
                 .map(|e| e.qualified.clone())
                 .unwrap_or_else(|| path.to_string());
-            Ref { from, name: r.name, kind: r.kind, line: r.line }
+            Ref {
+                from,
+                name: r.name,
+                kind: r.kind,
+                line: r.line,
+            }
         })
         .filter(|r| !r.name.trim().is_empty())
         .collect();
 
-    Some(FileAst { path: path.to_string(), entities, extracted, refs })
+    Some(FileAst {
+        path: path.to_string(),
+        entities,
+        extracted,
+        refs,
+    })
 }
 
 /// Cross-file resolution: turn each file's unresolved `inherits`/`calls`/`uses`
@@ -425,7 +453,10 @@ pub fn resolve(files: &[FileAst]) -> Vec<CodeRelation> {
     let mut symbols: HashMap<&str, Vec<(&str, CodeKind)>> = HashMap::new();
     for f in files {
         for e in &f.entities {
-            symbols.entry(e.name.as_str()).or_default().push((e.qualified.as_str(), e.kind));
+            symbols
+                .entry(e.name.as_str())
+                .or_default()
+                .push((e.qualified.as_str(), e.kind));
         }
     }
 
@@ -433,7 +464,9 @@ pub fn resolve(files: &[FileAst]) -> Vec<CodeRelation> {
     for f in files {
         out.extend(f.extracted.iter().cloned());
         for r in &f.refs {
-            let Some(cands) = symbols.get(r.name.as_str()) else { continue };
+            let Some(cands) = symbols.get(r.name.as_str()) else {
+                continue;
+            };
             let (relation, want): (&str, fn(CodeKind) -> bool) = match r.kind {
                 RefKind::Calls => ("calls", CodeKind::is_callable),
                 RefKind::Inherits => ("inherits", CodeKind::is_type),

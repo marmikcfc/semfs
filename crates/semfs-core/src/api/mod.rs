@@ -343,10 +343,7 @@ impl ApiClient {
     /// when the client knows its user id (`with_user_id`).
     fn mount_metadata(&self) -> crate::api::dto::MetadataMap {
         let mut m = crate::api::dto::MetadataMap::new();
-        m.insert(
-            "source".into(),
-            serde_json::Value::String("semfs".into()),
-        );
+        m.insert("source".into(), serde_json::Value::String("semfs".into()));
         if let Some(uid) = &self.user_id {
             m.insert(
                 "lastEditedBy".into(),
@@ -424,7 +421,6 @@ impl ApiClient {
             .parse_json()
             .await
     }
-
 
     // -- private helpers --
 

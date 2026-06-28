@@ -77,16 +77,18 @@ fn summarize_with_key(
     sheets: &[crate::extract::spreadsheet::Sheet],
     cache: Option<&SummaryCache>,
 ) -> Option<String> {
-    let key = key.filter(|k| !k.trim().is_empty());
+    let (base, model, key_override) = summary_endpoint();
+    // Endpoint key (SEMFS_SUMMARY_LLM_KEY) wins; else the caller's key (OPENROUTER).
+    let key = key_override.or(key).filter(|k| !k.trim().is_empty());
     build_content(sheets, |name, text| {
         let key = key.as_deref()?; // no key ⇒ None ⇒ raw-cell fallback
-        let ck = cache_key(filepath, name, text);
+        let ck = cache_key(&model, filepath, name, text);
         if let Some(c) = cache {
             if let Some(hit) = c.get(&ck) {
                 return Some(hit);
             }
         }
-        let summary = summarize_one(key, filepath, name, text)?;
+        let summary = summarize_one(&base, &model, key, filepath, name, text)?;
         if let Some(c) = cache {
             c.put(&ck, &summary);
         }
@@ -112,7 +114,14 @@ summary with no preamble.";
 /// Summarize one sheet's cell text via `gpt-4.1-mini`. `None` on key-absent
 /// (caller already gated), empty input, or any request failure — the caller then
 /// falls back to the raw cells, so a flaky summarizer never blocks indexing.
-fn summarize_one(key: &str, filepath: &str, sheet_name: &str, table_text: &str) -> Option<String> {
+fn summarize_one(
+    base_url: &str,
+    model: &str,
+    key: &str,
+    filepath: &str,
+    sheet_name: &str,
+    table_text: &str,
+) -> Option<String> {
     if table_text.trim().is_empty() {
         return None;
     }
@@ -120,7 +129,7 @@ fn summarize_one(key: &str, filepath: &str, sheet_name: &str, table_text: &str) 
     // File path/title is a strong domain hint (often more telling than sparse cells).
     let user = format!("File path: {filepath}\nSheet name: {sheet_name}\n\nCells:\n{head}");
     let body = serde_json::json!({
-        "model": SUMMARY_MODEL,
+        "model": model,
         "temperature": 0.0,
         "max_tokens": 256,
         "messages": [
@@ -129,7 +138,7 @@ fn summarize_one(key: &str, filepath: &str, sheet_name: &str, table_text: &str) 
         ],
     });
     let resp: serde_json::Value = crate::http::timeout_agent()
-        .post("https://openrouter.ai/api/v1/chat/completions")
+        .post(&format!("{}/chat/completions", base_url.trim_end_matches('/')))
         .set("Authorization", &format!("Bearer {key}"))
         .set("Content-Type", "application/json")
         .send_json(body)
@@ -161,16 +170,17 @@ fn head_bytes(s: &str, max: usize) -> &str {
 
 /// Build the INDEXED (embedded) content for a workbook's sheets. `summarize(name,
 /// text)` returns a sheet's summary, or `None` to skip (no key, cache miss + LLM
-/// failure, etc.). When a summary exists we index ONLY the summary — the raw
-/// cells are deliberately NOT embedded, so retrieval/rerank run on the semantic
-/// summary, not on number noise. An un-summarized sheet falls back to its raw
-/// cells (so the no-key path still indexes content, no regression). `None` only
-/// when there are no sheets.
+/// failure, etc.).
 ///
-/// NOTE: with summaries on, the raw table is no longer in the index, so whole-doc
-/// return would hand back the summary, not the table. Preserving table-return
-/// (a separate non-embedded store) is a follow-up; this build is for measuring
-/// retrieval/rerank of the summary-only representation.
+/// WEAVE: when a summary exists we index the **summary followed by the raw cells**
+/// — the summary is the semantic retrieval key (makes the table findable), and the
+/// raw cells preserve the file's chunk-mass + ground-truth content for `cat`/answers.
+/// This deliberately replaces the old **embed-only** behavior, which A/B'd WORST on
+/// case 289 (RRF #72) precisely because stripping the raw cells stripped the table's
+/// chunk-mass (`tickets/summary-augmented-table-retrieval/` OUTCOME +
+/// `rcas/2026-06-04-rrf-chunk-mass-bias-code-lane-pollution.md`). An un-summarized
+/// sheet falls back to its raw cells (no-key path, no regression). `None` only when
+/// there are no sheets.
 fn build_content<F>(sheets: &[crate::extract::spreadsheet::Sheet], summarize: F) -> Option<String>
 where
     F: Fn(&str, &str) -> Option<String>,
@@ -180,7 +190,10 @@ where
     }
     let parts: Vec<String> = sheets
         .iter()
-        .map(|s| summarize(&s.name, &s.text).unwrap_or_else(|| s.text.clone()))
+        .map(|s| match summarize(&s.name, &s.text) {
+            Some(sum) => format!("{sum}\n{}", s.text), // weave: summary key + raw cells
+            None => s.text.clone(),
+        })
         .collect();
     Some(parts.join("\n"))
 }
@@ -193,13 +206,49 @@ const SUMMARY_MODEL: &str = "openai/gpt-4.1-mini";
 /// out", no computed answers) + file path & sheet name now fed to the model.
 const PROMPT_VERSION: u32 = 2;
 
+fn nonempty(s: String) -> Option<String> {
+    if s.trim().is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Resolve the summary LLM endpoint from optional overrides, falling back to
+/// OpenRouter + `gpt-4.1-mini` so the path is byte-identical when unset. Pure
+/// (no env) so it's unit-testable; `summary_endpoint` reads the env into it.
+fn resolve_summary_endpoint(
+    base: Option<String>,
+    model: Option<String>,
+    key: Option<String>,
+) -> (String, String, Option<String>) {
+    (
+        base.and_then(nonempty)
+            .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string()),
+        model.and_then(nonempty).unwrap_or_else(|| SUMMARY_MODEL.to_string()),
+        key.and_then(nonempty),
+    )
+}
+
+/// Summary LLM endpoint from `SEMFS_SUMMARY_LLM_{BASE_URL,MODEL,KEY}` (mirrors
+/// `build_kg`'s `SEMFS_GRAPH_LLM_*`). Lets a self-hosted Qwen drop in via config;
+/// unset ⇒ the existing OpenRouter + gpt-4.1-mini path.
+fn summary_endpoint() -> (String, String, Option<String>) {
+    resolve_summary_endpoint(
+        std::env::var("SEMFS_SUMMARY_LLM_BASE_URL").ok(),
+        std::env::var("SEMFS_SUMMARY_LLM_MODEL").ok(),
+        std::env::var("SEMFS_SUMMARY_LLM_KEY").ok(),
+    )
+}
+
 /// Content-addressed cache key for a sheet's summary: hashes the model + prompt
 /// version + file path + sheet name + cell text. The path/sheet are now inputs
 /// to the summary, so they must key the cache; a prompt/model bump invalidates
-/// every entry.
-fn cache_key(filepath: &str, sheet: &str, table_text: &str) -> String {
+/// every entry. `model` is the RESOLVED model so a Qwen re-seed never reuses
+/// gpt-4.1-mini-cached summaries.
+fn cache_key(model: &str, filepath: &str, sheet: &str, table_text: &str) -> String {
     let mut h = blake3::Hasher::new();
-    h.update(SUMMARY_MODEL.as_bytes());
+    h.update(model.as_bytes());
     h.update(&PROMPT_VERSION.to_le_bytes());
     h.update(b"\0");
     h.update(filepath.as_bytes());
@@ -217,13 +266,57 @@ mod tests {
 
     #[test]
     fn cache_key_is_stable_and_content_sensitive() {
-        let a = cache_key("/f.xlsx", "S1", "Widget\t1978\n");
-        assert_eq!(a, cache_key("/f.xlsx", "S1", "Widget\t1978\n"), "same inputs → same key");
-        assert_ne!(a, cache_key("/f.xlsx", "S1", "Widget\t1979\n"), "changed cell → new key");
-        assert_ne!(a, cache_key("/other.xlsx", "S1", "Widget\t1978\n"), "changed path → new key");
-        assert_ne!(a, cache_key("/f.xlsx", "S2", "Widget\t1978\n"), "changed sheet → new key");
+        let m = "openai/gpt-4.1-mini";
+        let a = cache_key(m, "/f.xlsx", "S1", "Widget\t1978\n");
+        assert_eq!(
+            a,
+            cache_key(m, "/f.xlsx", "S1", "Widget\t1978\n"),
+            "same inputs → same key"
+        );
+        assert_ne!(
+            a,
+            cache_key(m, "/f.xlsx", "S1", "Widget\t1979\n"),
+            "changed cell → new key"
+        );
+        assert_ne!(
+            a,
+            cache_key(m, "/other.xlsx", "S1", "Widget\t1978\n"),
+            "changed path → new key"
+        );
+        assert_ne!(
+            a,
+            cache_key(m, "/f.xlsx", "S2", "Widget\t1978\n"),
+            "changed sheet → new key"
+        );
+        assert_ne!(
+            a,
+            cache_key("qwen3.6-27b", "/f.xlsx", "S1", "Widget\t1978\n"),
+            "changed model → new key (Qwen re-seed won't reuse gpt-4.1-mini summaries)"
+        );
         // 32-byte blake3 → 64 hex chars.
         assert_eq!(a.len(), 64, "expected hex-encoded blake3 digest");
+    }
+
+    #[test]
+    fn resolve_summary_endpoint_falls_back_then_overrides() {
+        // Unset ⇒ existing OpenRouter + gpt-4.1-mini path (no regression).
+        let (b, m, k) = resolve_summary_endpoint(None, None, None);
+        assert_eq!(b, "https://openrouter.ai/api/v1");
+        assert_eq!(m, SUMMARY_MODEL);
+        assert_eq!(k, None);
+        // Set ⇒ a self-hosted Qwen drops in via config.
+        let (b, m, k) = resolve_summary_endpoint(
+            Some("http://qwen:8000/v1".into()),
+            Some("qwen3.6-27b".into()),
+            Some("sk-x".into()),
+        );
+        assert_eq!(b, "http://qwen:8000/v1");
+        assert_eq!(m, "qwen3.6-27b");
+        assert_eq!(k.as_deref(), Some("sk-x"));
+        // Blank/whitespace overrides fall back, never produce an empty endpoint/key.
+        let (b, _, k) = resolve_summary_endpoint(Some("  ".into()), None, Some(String::new()));
+        assert_eq!(b, "https://openrouter.ai/api/v1");
+        assert_eq!(k, None);
     }
 
     #[test]
@@ -249,19 +342,28 @@ mod tests {
         // matching today's flattened extraction so the no-key path never regresses.
         let sheets = vec![sheet("S1", "a\t1\n"), sheet("S2", "b\t2\n")];
         let out = build_content(&sheets, |_, _| None).unwrap();
-        assert!(out.contains("a\t1") && out.contains("b\t2"), "raw cells present");
-        assert!(!out.contains("summary:"), "no summary marker on the fallback path");
+        assert!(
+            out.contains("a\t1") && out.contains("b\t2"),
+            "raw cells present"
+        );
+        assert!(
+            !out.contains("summary:"),
+            "no summary marker on the fallback path"
+        );
     }
 
     #[test]
-    fn build_content_embeds_summary_only_not_raw_cells() {
-        // Embed-only: a summarized sheet's indexed text is the SUMMARY alone —
-        // the raw cells (numbers) are deliberately NOT included, so retrieval/
-        // rerank run on the semantic summary, not number noise.
+    fn build_content_weaves_summary_and_raw_cells() {
+        // WEAVE: a summarized sheet's indexed text is the SUMMARY (retrieval key)
+        // followed by the RAW cells (chunk-mass + ground truth). NOT embed-only —
+        // keeping the raw cells is what avoids the #72 chunk-mass collapse.
         let sheets = vec![sheet("Sales", "Widget\t1978\n")];
-        let out = build_content(&sheets, |name, _| Some(format!("{name}: product sales coverage"))).unwrap();
+        let out = build_content(&sheets, |name, _| {
+            Some(format!("{name}: product sales coverage"))
+        })
+        .unwrap();
         assert!(out.contains("product sales coverage"), "summary present");
-        assert!(!out.contains("1978"), "raw cells must NOT be embedded when a summary exists");
+        assert!(out.contains("1978"), "raw cells kept (weave, not embed-only)");
     }
 
     #[test]
@@ -287,11 +389,20 @@ mod tests {
         let cache = SummaryCache::new(dir.path().to_path_buf());
         let fp = "/f.xlsx";
         let table = "Widget\t1978\n";
-        cache.put(&cache_key(fp, "Sales", table), "CACHED product-sales coverage summary");
+        cache.put(
+            &cache_key(SUMMARY_MODEL, fp, "Sales", table),
+            "CACHED product-sales coverage summary",
+        );
         let sheets = vec![sheet("Sales", table)];
         let out = summarize_with_key(Some("bogus-key".into()), fp, &sheets, Some(&cache)).unwrap();
-        assert!(out.contains("CACHED product-sales coverage summary"), "cache hit used");
-        assert!(!out.contains("1978"), "embed-only: cached summary replaces raw cells");
+        assert!(
+            out.contains("CACHED product-sales coverage summary"),
+            "cache hit used"
+        );
+        assert!(
+            out.contains("1978"),
+            "weave: cached summary is woven WITH the raw cells, not replacing them"
+        );
     }
 
     #[test]
@@ -299,7 +410,10 @@ mod tests {
         let big = "中".repeat(100); // 3 bytes each
         let h = head_bytes(&big, 10);
         assert!(h.len() <= 10);
-        assert!(h.chars().all(|c| c == '中'), "must not split a multibyte char");
+        assert!(
+            h.chars().all(|c| c == '中'),
+            "must not split a multibyte char"
+        );
     }
 
     /// Live test (skips without `OPENROUTER_API_KEY`): a numeric sheet summarizes
@@ -312,6 +426,8 @@ mod tests {
         }
         let key = api_key().unwrap();
         let s = summarize_one(
+            "https://openrouter.ai/api/v1",
+            SUMMARY_MODEL,
             &key,
             "/desktop/product-sales/q3_sales.xlsx",
             "Q3 Sales",

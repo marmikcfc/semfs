@@ -250,11 +250,24 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
 
   try {
     const cwdRoot = path.resolve(task.cwd ?? process.cwd());
-    const isUnderCwd = (p) => {
-      if (typeof p !== 'string' || !p.trim()) return false;
+    // semfs: the mount Claude is allowed to READ / SEARCH (writes stay confined to
+    // cwd). Set explicitly via SEMFS_MOUNT_PATH so semantic search works even when
+    // cwd is OUTSIDE the mount (the write-outside benchmark design) — codex gets the
+    // equivalent affordance from its cwd-independent ~/.codex/AGENTS.md. Falls back
+    // to the cwd-under-mount auto-detection below when the env var is unset.
+    let semfsMountPath = process.env.SEMFS_MOUNT_PATH ? path.resolve(process.env.SEMFS_MOUNT_PATH) : null;
+    // Extra read/search roots beyond cwd (colon-separated), e.g. the PLAIN arm's raw
+    // workspace tree which lives outside the per-cell work_dir. Does NOT trigger the
+    // semfs kit (that stays gated on SEMFS_MOUNT_PATH); it only widens read access so
+    // the same guard that protects writes doesn't lock the agent out of its workspace.
+    const extraReadRoots = String(process.env.WB_READ_PATHS || '').split(':').filter(Boolean).map((p) => path.resolve(p));
+    const underRoot = (p, root) => {
+      if (!root || typeof p !== 'string' || !p.trim()) return false;
       const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(cwdRoot, p);
-      return abs === cwdRoot || abs.startsWith(cwdRoot + path.sep);
+      return abs === root || abs.startsWith(root + path.sep);
     };
+    const isUnderCwd = (p) => underRoot(p, cwdRoot);
+    const isReadable = (p) => underRoot(p, cwdRoot) || underRoot(p, semfsMountPath) || extraReadRoots.some((r) => underRoot(p, r));
     const commandLooksSafe = (cmd) => {
       if (typeof cmd !== 'string') return false;
       const s = cmd;
@@ -264,7 +277,7 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
       for (const m of s.matchAll(re)) {
         const p = m[2];
         if (allowed.some((pre) => p === pre.slice(0, -1) || p.startsWith(pre))) continue;
-        if (!isUnderCwd(p)) return false;
+        if (!isReadable(p)) return false;   // allow paths under cwd OR the semfs mount
       }
       return true;
     };
@@ -280,21 +293,24 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
     let semfsHint;
     try {
       const cwdAbs = path.resolve(task.cwd ?? process.cwd());
-      let dir = cwdAbs, mountPath = null;
-      for (let i = 0; i < 40 && !mountPath; i++) {
+      let dir = cwdAbs;
+      // SEMFS_MOUNT_PATH (env, set above) takes precedence; otherwise walk UP from
+      // cwd for a .semfs marker whose mount_path contains cwd (legacy cwd-in-mount).
+      for (let i = 0; i < 40 && !semfsMountPath; i++) {
         const mf = path.join(dir, '.semfs');
         if (fs.existsSync(mf)) {
           for (const blk of fs.readFileSync(mf, 'utf8').split('\n\n')) {
             const m = blk.match(/^mount_path=(.+)$/m);
             if (!m) continue;
             const mp = path.resolve(m[1].trim());
-            if (cwdAbs === mp || cwdAbs.startsWith(mp + path.sep)) { mountPath = mp; break; }
+            if (cwdAbs === mp || cwdAbs.startsWith(mp + path.sep)) { semfsMountPath = mp; break; }
           }
         }
         const parent = path.dirname(dir);
         if (parent === dir) break;
         dir = parent;
       }
+      const mountPath = semfsMountPath;
       if (mountPath) {
         semfsHint =
           `IMPORTANT — read fully before acting.\n` +
@@ -306,12 +322,14 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
           `start with semfs grep, then open only the top-ranked results.\n` +
           `ACKNOWLEDGEMENT REQUIRED: to confirm you received these instructions, your VERY FIRST line of output ` +
           `must be exactly "[SEMFS-ACK]" followed by, on the same line, the semfs grep query you will run.`;
-        // Deliver via a PROJECT CLAUDE.md (the SDK loads CLAUDE.md only with
-        // settingSources:['project']; it ignores the user-level ~/.claude/CLAUDE.md
-        // that semfs writes). cwd == mountPath, so this is the project root.
+        // Deliver via a PROJECT CLAUDE.md written to the agent's cwd — the project
+        // root the SDK loads with settingSources:['project'] (it IGNORES the
+        // user-level ~/.claude/CLAUDE.md that semfs writes). Writing to cwd (NOT the
+        // mount) works whether cwd is the mount (legacy) or outside it (write-outside)
+        // and never mutates the mount, so no deliverable leaks into the index.
         try {
-          fs.writeFileSync(path.join(mountPath, 'CLAUDE.md'), semfsHint + '\n');
-          process.stderr.write(`[semfs] wrote project CLAUDE.md at ${mountPath}/CLAUDE.md\n`);
+          fs.writeFileSync(path.join(cwdAbs, 'CLAUDE.md'), semfsHint + '\n');
+          process.stderr.write(`[semfs] wrote project CLAUDE.md at ${cwdAbs}/CLAUDE.md (mount=${mountPath})\n`);
         } catch (e) { process.stderr.write(`[semfs] CLAUDE.md write failed: ${e}\n`); }
 
         // Transparent semantic search: point Claude's native Grep tool (and Bash
@@ -352,12 +370,23 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
           const cmd = typeof inp.command === 'string' ? inp.command : null;
 
           const pathToCheck = fp ?? p;
-          const isFileTool = ['Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep', 'LS', 'DeleteFile'].includes(tool);
-          if (isFileTool && pathToCheck !== null && !isUnderCwd(pathToCheck)) {
-            log(`${c.red}[deny]${c.reset} ${tool} ${pathToCheck}`);
+          // Reads/searches may target cwd OR the semfs mount; writes stay confined to
+          // cwd (so a deliverable never lands inside the mount and leaks into the index).
+          const readTools = ['Read', 'Glob', 'Grep', 'LS'];
+          const writeTools = ['Write', 'Edit', 'NotebookEdit', 'DeleteFile'];
+          if (writeTools.includes(tool) && pathToCheck !== null && !isUnderCwd(pathToCheck)) {
+            log(`${c.red}[deny-write]${c.reset} ${tool} ${pathToCheck}`);
             return {
               behavior: 'deny',
-              message: `${tool} is not allowed outside the task working directory: ${pathToCheck}`,
+              message: `${tool} (write) is not allowed outside the task working directory: ${pathToCheck}`,
+              toolUseID,
+            };
+          }
+          if (readTools.includes(tool) && pathToCheck !== null && !isReadable(pathToCheck)) {
+            log(`${c.red}[deny-read]${c.reset} ${tool} ${pathToCheck}`);
+            return {
+              behavior: 'deny',
+              message: `${tool} is not allowed outside the task working directory or the semfs mount: ${pathToCheck}`,
               toolUseID,
             };
           }

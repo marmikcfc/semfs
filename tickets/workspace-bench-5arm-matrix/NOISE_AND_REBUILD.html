@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Why there's noise · Why I'm asking for a rebuild</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --ink:#e6edf3; --dim:#8b949e;
+    --line:#30363d; --accent:#58a6ff; --good:#3fb950; --warn:#d29922; --bad:#f85149;
+    --code:#1f2630; --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 22px 120px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.5px}
+  h2{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--dim);margin:0 0 28px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:22px 24px;margin:18px 0}
+  .pill{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.4px;
+    text-transform:uppercase;padding:3px 9px;border-radius:999px;margin-bottom:10px}
+  .p-noise{background:rgba(210,153,34,.16);color:var(--warn)}
+  .p-build{background:rgba(88,166,255,.16);color:var(--accent)}
+  .p-gloss{background:rgba(63,185,80,.16);color:var(--good)}
+  .p-state{background:rgba(188,140,255,.16);color:#bc8cff}
+  .callout{border:1px solid #6e40c9;background:rgba(188,140,255,.08);border-radius:10px;
+    padding:14px 16px;margin:14px 0}
+  .callout b{color:#bc8cff}
+  code,pre{font-family:var(--mono)}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:8px;
+    padding:14px 16px;overflow:auto;font-size:12.5px;line-height:1.5;color:#c9d1d9}
+  .kbd{background:var(--code);border:1px solid var(--line);border-radius:5px;
+    padding:1px 6px;font-family:var(--mono);font-size:12.5px;color:#ffa657}
+  /* eli5→expert ladder */
+  .ladder{display:flex;gap:6px;margin:14px 0 4px;flex-wrap:wrap}
+  .rung{flex:1;min-width:120px;border:1px solid var(--line);border-radius:8px;
+    padding:10px 12px;cursor:pointer;background:var(--panel2);transition:.15s}
+  .rung:hover{border-color:var(--accent)}
+  .rung.on{border-color:var(--accent);background:rgba(88,166,255,.10)}
+  .rung .lv{font-size:10px;color:var(--dim);letter-spacing:.5px}
+  .rung .nm{font-weight:700;font-size:13px;margin-top:2px}
+  .rungbody{border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;
+    padding:16px 18px;background:var(--panel2);display:none}
+  .rungbody.on{display:block}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-size:12px;letter-spacing:.3px;color:var(--dim);
+    text-transform:uppercase}
+  td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
+  .win{color:var(--good);font-weight:700}
+  .lose{color:var(--bad);font-weight:700}
+  .tie{color:var(--dim)}
+  .ascii{font-family:var(--mono);font-size:12px;line-height:1.35;white-space:pre;
+    background:var(--code);border:1px solid var(--line);border-radius:8px;
+    padding:16px;overflow:auto;color:#c9d1d9}
+  .ascii b{color:var(--accent);font-weight:700}
+  .ascii .nb{color:var(--bad);font-weight:700}
+  .ascii .ok{color:var(--good)}
+  /* interactive coin-flip */
+  .sim{display:flex;gap:22px;flex-wrap:wrap;align-items:center}
+  .simctl{flex:1;min-width:240px}
+  button{background:var(--accent);color:#0d1117;border:none;border-radius:7px;
+    font-weight:700;padding:9px 16px;cursor:pointer;font-size:13px}
+  button.ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  button:active{transform:translateY(1px)}
+  .bars{display:flex;align-items:flex-end;gap:4px;height:120px;margin-top:10px}
+  .bar{width:14px;background:var(--accent);border-radius:3px 3px 0 0;transition:.2s}
+  .bar.lo{background:var(--bad)} .bar.hi{background:var(--good)}
+  .stat{font-family:var(--mono);font-size:13px;color:var(--dim);margin-top:8px}
+  .stat b{color:var(--ink)}
+  details{border:1px solid var(--line);border-radius:8px;padding:0 14px;margin:10px 0;
+    background:var(--panel2)}
+  summary{cursor:pointer;padding:12px 0;font-weight:600}
+  details[open] summary{border-bottom:1px solid var(--line);margin-bottom:10px}
+  .note{font-size:13px;color:var(--dim);border-left:3px solid var(--line);
+    padding:4px 0 4px 14px;margin:12px 0}
+  .tag{font-family:var(--mono);font-size:11px;padding:2px 6px;border-radius:4px;
+    background:var(--code);border:1px solid var(--line)}
+  .tag.env{color:var(--good)} .tag.code{color:var(--bad)}
+  .toc{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px}
+  .toc a{text-decoration:none;color:var(--ink);background:var(--panel);
+    border:1px solid var(--line);border-radius:8px;padding:8px 14px;font-size:13px}
+  .toc a:hover{border-color:var(--accent)}
+  hr{border:none;border-top:1px solid var(--line);margin:26px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Why there's noise — and why I'm asking you to rebuild</h1>
+  <p class="sub">WorkspaceBench knob sweep, codex&nbsp;·&nbsp;nokg arm&nbsp;·&nbsp;E2B real-FUSE&nbsp;·&nbsp;cases 15/44/45/53/55</p>
+
+  <div class="toc">
+    <a href="#noise">① The noise</a>
+    <a href="#rebuild">② Why a rebuild</a>
+    <a href="#gloss">③ What h1 / h3 / p2a / p2b mean</a>
+    <a href="#state">④ Stateful fix · 5-whys</a>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PART 1 — NOISE -->
+  <!-- ============================================================ -->
+  <div class="card" id="noise">
+    <span class="pill p-noise">Part 1 · Noise</span>
+    <h2>Where the noise comes from</h2>
+    <p class="sub">Click a rung to climb from a one-line intuition up to the mechanism.</p>
+
+    <div class="ladder">
+      <div class="rung on" data-r="0"><div class="lv">LEVEL 1 · ELI5</div><div class="nm">The dice</div></div>
+      <div class="rung" data-r="1"><div class="lv">LEVEL 2</div><div class="nm">Same config, different score</div></div>
+      <div class="rung" data-r="2"><div class="lv">LEVEL 3</div><div class="nm">Calls drive cost</div></div>
+      <div class="rung" data-r="3"><div class="lv">LEVEL 4</div><div class="nm">Judge artifacts</div></div>
+      <div class="rung" data-r="4"><div class="lv">LEVEL 5 · EXPERT</div><div class="nm">n=1 is a coin flip</div></div>
+    </div>
+
+    <div class="rungbody on" data-b="0">
+      <p>The agent (codex) is a <b>dice-roller</b>, not a calculator. Give it the exact
+      same task twice and it doesn't do the exact same thing — it might search 5 times
+      one run and 30 times the next, find the answer file early once and late the next.
+      So two runs of the <i>same</i> setting can score differently. That gap between two
+      identical runs is the <b>noise</b>. It's not a bug in semfs; it's the agent being
+      a probabilistic model.</p>
+    </div>
+
+    <div class="rungbody" data-b="1">
+      <p>Our sharpest example is <b>case 45</b>. On the <i>identical</i> config it scored
+      <span class="lose">3/38</span> in one batch and <span class="win">11/38</span> in
+      another — that's roughly <b>8% → 29% rubric</b> with <i>nothing changed</i>. Case 53
+      does the same thing for the plain baseline. When one case can swing ~20 points on
+      its own, a 2–3 point difference between two <i>configs</i> is inside the noise floor
+      — you cannot tell skill from luck without repeats.</p>
+    </div>
+
+    <div class="rungbody" data-b="2">
+      <p>Cost is dominated by <b>turn count</b>, not by "search" in the abstract. Codex
+      re-pays a large slice of its context every turn (cache-read), so:</p>
+      <pre>total tokens  ≈  turns × per-turn-context        corr(calls, total) = 0.82</pre>
+      <p>The agent's call count is itself stochastic — we've measured the <i>same</i>
+      config emit <b>5, 16, and 32</b> tool calls on different runs. That alone swings
+      tokens by ±30% and accuracy by ±1 rubric point. So the noise lives on
+      <b>both axes at once</b>: a lucky-short run looks cheap <i>and</i> accurate; an
+      unlucky-long run looks expensive <i>and</i> noisy.</p>
+    </div>
+
+    <div class="rungbody" data-b="3">
+      <p>Some "noise" was a <b>judge artifact</b>. The big one is <b>SOLVED</b> for every
+      run discussed here — don't double-count it:</p>
+      <ul>
+        <li><b>Filename lottery</b> <span class="tag" style="color:var(--good)">SOLVED for current runs</span>
+        — ~34/100 WB cases hard-code the expected output filename <i>judge-side only</i>;
+        the agent was never told it, so correct content under the "wrong" name scored <b>0</b>.
+        Fixed agent-side: <code>run_matrix.py:154</code> injects the filename into the prompt
+        (<span class="kbd">WB_OUTPUT_FILES</span> → <code>[REQUIRED OUTPUT FILENAME]</code>)
+        for <i>every</i> cell. <b>Verified:</b> all 10 plain cells <i>and</i> all 10 p2b cells
+        carry <code>expected_files</code>, and the agent <b>followed the hint in 19/20</b>
+        (<code>followed=True</code>). So both arms got the fix — the p2b-vs-plain comparison
+        is clean on this axis, not pre-fix-vs-post-fix.</li>
+        <li><b>Trace-too-large</b> (&gt;~320K) silently breaks the LLM judge → we cap inputs.</li>
+        <li><b>Judge base-URL unset</b> → silent mis-score.</li>
+      </ul>
+      <p class="note"><b>Two residuals remain — but neither is "the lottery."</b>
+      (1) The agent <i>occasionally disobeys</i> the hint it was given —
+      <code>pm_codex_55_nokg_rp2bA</code> has <code>followed=False</code>. That's not a
+      judge artifact; it's the same <b>agent stochasticity</b> from the rungs above (it had
+      the filename and still wrote the wrong name once). The judge-side content-match + n≥2
+      is the backstop for that. (2) <i>Historical pre-fix cells</i> (the 2026-06-10 5-arm
+      matrix, Modal runs) still carry the raw lottery — only a problem if you mix them into
+      a comparison. <b>For this sweep, treat the lottery as fixed.</b></p>
+    </div>
+
+    <div class="rungbody" data-b="4">
+      <p>Bottom line, stated as the rule from <span class="tag">analyze-benchmark-results</span>:
+      <b>n=1 lies.</b> A single per-cell number is a coin flip, not a result. With cases
+      that swing ±20 points alone, the decision rule has to be:</p>
+      <pre>require n ≥ 2 before declaring a win
+a config wins a case only if  accuracy ≥ baseline (±1 rubric pt)  AND  tokens lower
+lower tokens + lower accuracy = LOSS, not a saving</pre>
+      <p>That's why the headline claim below is hedged: p2b's accuracy <i>edge</i> over
+      plain leans on case-45's coin-flip, so the <b>robust</b> claim is
+      "<b>~3–4× cheaper at not-worse accuracy</b>" — not "more accurate."</p>
+    </div>
+
+    <hr>
+    <h2 style="font-size:17px">See it: simulate case 45</h2>
+    <p class="sub">Case 45 behaves like a biased coin (~p=0.29 rubric per run). Run a few
+    batches of n=2 and watch how often two identical runs land far apart.</p>
+    <div class="sim">
+      <div class="simctl">
+        <button id="flip2">Run a batch (n=2)</button>
+        <button class="ghost" id="flip20">Run n=20 (truth)</button>
+        <button class="ghost" id="reset">Reset</button>
+        <div class="stat" id="simstat">no runs yet — the two-run gap is the noise you're fighting.</div>
+      </div>
+      <div class="bars" id="bars"></div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PART 2 — REBUILD -->
+  <!-- ============================================================ -->
+  <div class="card" id="rebuild">
+    <span class="pill p-build">Part 2 · Rebuild</span>
+    <h2>Why some knobs need a rebuild and others don't</h2>
+    <p>Every knob in this sweep lives at <b>one of two layers</b>. The layer decides
+    whether I can flip it from Python in seconds — or whether it has to be compiled into
+    the binary that's pre-baked into the E2B template.</p>
+
+    <div class="ascii">  ┌────────────────────────────────────────────────────────────────────────┐
+  │  AGENT (codex)                                                           │
+  │     prompt  ◀── <b>WB_TURNBRAKE</b>  ……………………… <b>p2a / p2b</b>   <span class="ok">[env · no rebuild]</span> │
+  └───────────────┬────────────────────────────────────────────────────────┘
+                  │  semfs grep "query"
+                  ▼
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  DAEMON  (semfs binary, baked into the E2B template)                     │
+  │                                                                          │
+  │   L1 retrieve   ◀── <b>SEMFS_RESULT_LIMIT</b>  …… <b>h1 / h2</b>   <span class="ok">[env · no rebuild]</span> │
+  │   L4 rewrite    ◀── <b>SEMFS_REWRITE</b>        …… <b>h3</b>        <span class="ok">[env · no rebuild]</span> │
+  │   RRF fuse                                                               │
+  │   L5 rerank (cross-encoder)                                              │
+  │   render cap    ◀── <b>SEMFS_GREP_*_CAP</b>     …… <b>h1</b>        <span class="ok">[env · no rebuild]</span> │
+  │                                                                          │
+  │   whole-doc reconstruct top-N  ◀── <span class="nb">hard-coded logic</span>           <span class="nb">[CODE]</span> │
+  │       │   sqlite_vec.rs:62  "reconstruct whole-doc text for the top-N"   │
+  │       └── the <b>offload</b> idea lives HERE ─────────────────▶ <span class="nb">NEEDS REBUILD</span> │
+  └────────────────────────────────────────────────────────────────────────┘</div>
+
+    <div class="ladder" style="margin-top:18px">
+      <div class="rung on" data-r2="0"><div class="lv">LEVEL 1 · ELI5</div><div class="nm">Sticker vs solder</div></div>
+      <div class="rung" data-r2="1"><div class="lv">LEVEL 2</div><div class="nm">Two kinds of knob</div></div>
+      <div class="rung" data-r2="2"><div class="lv">LEVEL 3</div><div class="nm">The sweep is exhausted</div></div>
+      <div class="rung" data-r2="3"><div class="lv">LEVEL 4</div><div class="nm">The one lever left = offload</div></div>
+      <div class="rung" data-r2="4"><div class="lv">LEVEL 5 · EXPERT</div><div class="nm">The rebuild chain</div></div>
+    </div>
+
+    <div class="rungbody on" data-b2="0">
+      <p>Some knobs are <b>stickers</b> — I peel and re-stick them at runtime (an
+      environment variable). Free, instant, no tools. Other knobs are
+      <b>soldered into the circuit board</b> — to change them I have to re-melt the
+      board (recompile the binary). The offload behavior is soldered. That's the whole
+      reason I'm asking for a rebuild: I've run out of stickers and the next idea is
+      under the solder.</p>
+    </div>
+
+    <div class="rungbody" data-b2="1">
+      <table>
+        <tr><th>Layer</th><th>How it's set</th><th>Cost to change</th><th>Knobs here</th></tr>
+        <tr>
+          <td><span class="tag env">ENV</span> runtime variable</td>
+          <td><code>std::env::var(...)</code> read on each call;<br>
+              <code>run_matrix.py</code> merges <span class="kbd">--knobs</span> into
+              <code>mount_env</code> + cell env</td>
+          <td><b>0</b> — flip &amp; re-run</td>
+          <td>h1, h2, h3, p2a, p2b</td>
+        </tr>
+        <tr>
+          <td><span class="tag code">CODE</span> compiled logic</td>
+          <td>hard-coded in <code>sqlite_vec.rs</code>;<br>
+              baked into the <code>semfs</code> binary in the E2B template</td>
+          <td><b>Modal build → redeploy</b></td>
+          <td>offload (N4)</td>
+        </tr>
+      </table>
+      <p class="note">I verified this directly: <code>SEMFS_RESULT_LIMIT</code> is read at
+      <code>sqlite_vec.rs:75</code>, the caps at <code>grep.rs:422/470</code>, and
+      <code>SEMFS_REWRITE</code> at <code>grep.rs:910</code> — all
+      <code>std::env::var</code>. The whole-doc reconstruction at <code>sqlite_vec.rs:62</code>
+      is plain logic, no env switch.</p>
+    </div>
+
+    <div class="rungbody" data-b2="2">
+      <p>The env axis is <b>converged</b>. Across the sweep, no env config beats the
+      thorough nokg baseline at held accuracy:</p>
+      <ul>
+        <li><b>h1 tight-caps</b> → starves accuracy (cuts case 53's needed reads). Floor hit.</li>
+        <li><b>h2 fewer-hits</b> → same starvation, milder. Neutral-to-worse.</li>
+        <li><b>h3 no-rewrite</b> → neutral (rewrite wasn't the lever).</li>
+        <li><b>p2b turn-brake-strong</b> → cheapest config that still beats <i>plain</i>,
+        but trades some accuracy for the token cut.</li>
+      </ul>
+      <p>So we have <b>two local optima</b>, both beating plain, and tuning env vars won't
+      move us off them:</p>
+      <pre>thorough  (nokg baseline)   13.4% acc   279K tok    ← max accuracy
+lean      (p2b turn-brake)  10.4% acc    90K tok    ← cheapest still-beats-plain</pre>
+    </div>
+
+    <div class="rungbody" data-b2="3">
+      <p>The remaining token sink is <b>whole-document delivery</b>. Today a grep hit
+      reconstructs and returns the <i>whole doc text</i> for the top-N — a single broad
+      grep can return a huge blob, and that blob re-enters context every subsequent turn.
+      The idea (<b>N4 · offload</b>): return a <b>pointer + a tight snippet</b>, and let
+      the agent read the rest on demand only if it needs it. That cuts the per-turn
+      context, which is the thing multiplying by turn-count.</p>
+      <p>But "return a pointer instead of the whole doc" is <i>exactly</i> the
+      <code>sqlite_vec.rs:62</code> reconstruction logic — there is no env var that
+      toggles it. To test it I have to change the Rust and recompile.</p>
+    </div>
+
+    <div class="rungbody" data-b2="4">
+      <p>The reason a code change is heavier than it sounds <i>here</i> is the
+      cross-arch deployment chain. E2B is <b>x86_64</b>; this Mac can't cross-compile
+      fastembed/ONNX. So:</p>
+      <div class="ascii">  edit sqlite_vec.rs
+      │
+      ▼
+  tar src ─▶ <b>Modal x86_64 build</b> (rust:1.95-slim, ~min)  ──▶  semfs-fixed binary
+                                                            │
+                                                            ▼
+                                          modal volume get  ──▶  benchmarks/e2b/assets/
+                                                            │
+                                                            ▼
+                                  <b>re-bake into E2B template</b> (boot_prep push)
+                                                            │
+                                                            ▼
+                                              re-run the sweep · n≥2</div>
+      <p class="note">That's why I asked before doing it: env knobs were free to sweep,
+      but the offload test spends a Modal build + redeploy + a fresh n≥2 matrix. It's the
+      first knob in this campaign that isn't free, so it's a real "do we want to spend
+      this?" decision rather than something I should just burn tokens on unilaterally.</p>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PART 3 — GLOSSARY -->
+  <!-- ============================================================ -->
+  <div class="card" id="gloss">
+    <span class="pill p-gloss">Part 3 · Glossary</span>
+    <h2>What h1 / h2 / h3 / p2a / p2b mean</h2>
+    <p>Each is one JSON file in <code>benchmarks/e2b/knobs/</code>, passed via
+    <span class="kbd">--knobs &lt;file&gt;</span>. All are <span class="tag env">ENV</span>
+    layer — no rebuild. <b>h*</b> = Phase 1 (retrieval knobs); <b>p2*</b> = Phase 2
+    (agent-behavior / turn-brake).</p>
+
+    <table>
+      <tr><th>ID</th><th>Name</th><th>Exact setting</th><th>Hypothesis &amp; verdict</th></tr>
+      <tr>
+        <td><b>h1</b></td><td>tight-caps</td>
+        <td class="tag"><code>SEMFS_RESULT_LIMIT=3</code><br><code>SEMFS_GREP_RESULT_CAP=4096</code><br><code>SEMFS_GREP_TOTAL_CAP=8192</code></td>
+        <td>Cap hits <i>and</i> bytes hard → smaller blobs per turn.
+        <span class="lose">Lost:</span> starves the read-heavy case 53; accuracy floor hit.</td>
+      </tr>
+      <tr>
+        <td><b>h2</b></td><td>fewer-hits</td>
+        <td class="tag"><code>SEMFS_RESULT_LIMIT=3</code></td>
+        <td>Just fewer hits (no byte cap) — isolate count from size.
+        <span class="tie">Neutral-to-worse:</span> same starvation, milder.</td>
+      </tr>
+      <tr>
+        <td><b>h3</b></td><td>no-rewrite</td>
+        <td class="tag"><code>SEMFS_REWRITE=0</code></td>
+        <td>Disable the L4 LLM query-rewrite — is rewrite paying for itself?
+        <span class="tie">Neutral:</span> rewrite wasn't the lever either way.</td>
+      </tr>
+      <tr>
+        <td><b>p2a</b></td><td>turn-brake mild</td>
+        <td class="tag">prompt hint via<br><code>WB_TURNBRAKE</code>:<br>"don't repeat/rephrase a
+        search you already ran; read only what you need, then write."</td>
+        <td>Cut <i>re-search</i> turns without a hard budget.
+        <span class="tie">Modest:</span> trims some turns, weaker than p2b.</td>
+      </tr>
+      <tr>
+        <td><b>p2b</b></td><td>turn-brake strong</td>
+        <td class="tag">prompt hint via<br><code>WB_TURNBRAKE</code>:<br>"discovery budget ≈5
+        search/read calls; you have enough — don't re-search; write from context."</td>
+        <td>Hard ~5-call budget → fewest turns → cheapest run.
+        <span class="win">Won vs plain on both axes</span> (see below); trades a little
+        accuracy headroom for the big token cut.</td>
+      </tr>
+    </table>
+
+    <details>
+      <summary>Exact prompt text injected for p2a / p2b</summary>
+      <p><b>p2a</b> (<code>p2a_turnbrake_mild.json</code>):</p>
+      <pre>[EFFICIENCY] Do NOT repeat or rephrase a search you have already run — its
+results are already in your context. Once you've located the needed files, read
+only the specific parts you need, then write the deliverable; avoid broad
+re-exploration.</pre>
+      <p><b>p2b</b> (<code>p2b_turnbrake_strong.json</code>):</p>
+      <pre>[EFFICIENCY] Discovery budget: at most ~5 search/read calls. You have enough
+after a few targeted searches — do NOT re-search or broadly explore. Then write
+the deliverable from the context you already have.</pre>
+      <p class="note">Mechanism: <code>cell_driver.py</code> appends
+      <code>WB_TURNBRAKE</code> to the wrapped prompt. It is purely a prompt change — no
+      semfs code touched, hence env-layer, no rebuild.</p>
+    </details>
+
+    <hr>
+    <h2 style="font-size:17px">p2b vs plain — the result that motivates the offload test</h2>
+    <p class="sub">Accuracy gates tokens: report the pair, decide accuracy-first then tokens.</p>
+    <table>
+      <tr><th>Metric</th><th>p2b (lean, local)</th><th>plain (baseline)</th><th>Read</th></tr>
+      <tr><td>Accuracy</td><td class="num">10.4% (15/144)</td><td class="num">7.9% (13/164)</td>
+          <td>p2b higher — but edge leans on case-45 luck</td></tr>
+      <tr><td>Mean tokens</td><td class="num win">89.9K</td><td class="num">272.9K</td>
+          <td><b>−67%</b></td></tr>
+      <tr><td>Tokens / correct rubric</td><td class="num win">53.9K</td><td class="num">209.9K</td>
+          <td><b>~4× cheaper</b></td></tr>
+    </table>
+    <details>
+      <summary>Per-case breakdown (why the accuracy edge is hedged)</summary>
+      <table>
+        <tr><th>Case</th><th>p2b</th><th>plain</th><th>note</th></tr>
+        <tr><td>15</td><td class="num">tie</td><td class="num">tie</td><td>ceiling case</td></tr>
+        <tr><td>44</td><td class="num">tie</td><td class="num">tie</td><td>ceiling case</td></tr>
+        <tr><td>45</td><td class="num win">11/38</td><td class="num">3/38</td><td>the coin-flip case — carries the headline edge</td></tr>
+        <tr><td>53</td><td class="num lose">0/22</td><td class="num">6/22</td><td>5-call budget starved the read-heavy case</td></tr>
+        <tr><td>55</td><td class="num tie">tie</td><td class="num tie">tie</td><td>p2b/55 is n=1</td></tr>
+      </table>
+      <p class="note">So the honest framing: <b>p2b is ~3–4× cheaper than plain at
+      not-worse accuracy.</b> The "more accurate" reading depends on case 45, which is
+      exactly the coin-flip from Part 1 — which is why I want n≥2 (and why offload, not
+      another prompt tweak, is the next real lever).</p>
+    </details>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PART 4 — STATEFUL FIX -->
+  <!-- ============================================================ -->
+  <div class="card" id="state">
+    <span class="pill p-state">Part 4 · Stateful fix</span>
+    <h2>Why p2b is a patch — and the deterministic fix</h2>
+    <p>p2b tells the agent <i>in words</i> "stop re-searching." But the agent is a
+    dice-roller (Part 1): under a "<b>~5 call</b>" budget it issued <b>9</b> discovery
+    calls on case 53 and still scored 0/22. <b>You can't fix a determinism problem with a
+    probability.</b> The real cause is structural — and so is the real fix.</p>
+
+    <h2 style="font-size:17px">Is the system stateful? Two stores, disconnected.</h2>
+    <div class="ascii"> ┌─ AGENT LOOP (codex) ───────────────────────── <b>STATEFUL</b> ─┐
+ │  context window keeps every prior tool call + result          │
+ │  → it ALREADY HAS turn-2's grep output at turn 5              │
+ └───────────────┬───────────────────────────────────────────────┘
+                 │  semfs grep "q"   <b>Request::Search { query, filepath }</b>
+                 ▼                   <span class="nb">↑ no session / offset / "seen" field</span>
+ ┌─ semfs DAEMON ────────────────────────────────────────────────┐
+ │  the PROCESS is long-lived &amp; STATEFUL: owns index, mount,     │
+ │  queue  (state: Arc&lt;IpcState&gt;) …                              │
+ │  …but RETRIEVAL is a PURE FUNCTION:  query → top-N → render    │
+ │  <span class="nb">it has ZERO memory of what it returned last call  ◀── the gap</span> │
+ └────────────────────────────────────────────────────────────────┘</div>
+    <p>So there are two stores and they don't talk: the <b>daemon process</b> is
+    infrastructurally stateful (persists across calls per tag), but <b>retrieval is
+    stateless</b> — <code>Request::Search { query, filepath }</code> has no
+    session/offset/seen field (confirmed in <code>ipc.rs</code>). The <b>agent</b> keeps
+    every prior result; the daemon keeps none.</p>
+    <p class="callout"><b>"For p2b" specifically: p2b adds zero state.</b> It's a pure
+    prompt string (<code>WB_TURNBRAKE</code>) — a behavioral plea layered on the same
+    stateless-retrieval / stateful-context split. That's why it's non-deterministic, and
+    why we watched it get disobeyed (<code>followed=False</code> on 55/A; 9 calls under a
+    "~5" budget on 53).</p>
+
+    <h2 style="font-size:17px">The trace that proves it — p2b, case 53 (verbatim)</h2>
+    <div class="ascii"> 1. <b>semfs grep "interaction document"</b>       broad
+ 2. <b>semfs grep "interaction 6"</b>    ┐
+ 3. <b>semfs grep "interaction 8"</b>    │  4 rephrases of #1 — stateless daemon
+ 4. <b>semfs grep "interaction 13"</b>   │  re-sends the SAME top docs, full text
+ 5. <b>semfs grep "interaction 10"</b>   ┘
+ 6. <span class="nb">find . -maxdepth 3 -type f | …</span>           ┐
+ 7. <span class="nb">find -iname '*interaction*6*' …</span>         │ filesystem fallback
+ 8. <span class="nb">find | grep -Ei 'interaction|…'</span>         │ (retrieval miss → ranking)
+ 9. <span class="nb">find /Downloads /Desktop /ws …</span>          ┘
+10. <span class="ok">cat &gt; model_output/interaction_document_6.txt</span>    finally writes
+
+   9 discovery calls under a "~5 call" prompt  →  0/22</div>
+
+    <h2 style="font-size:17px">Five Whys Plus — why is the agent asking for more?</h2>
+    <p class="sub">Click a rung. Each "why" carries its evidence; the chain <b>forks</b> at Why #2.</p>
+    <div class="ladder">
+      <div class="rung on" data-r3="0"><div class="lv">WHY #1</div><div class="nm">Rephrased greps</div></div>
+      <div class="rung" data-r3="1"><div class="lv">WHY #2 · FORK</div><div class="nm">Won't reuse turn-1</div></div>
+      <div class="rung" data-r3="2"><div class="lv">WHY #3</div><div class="nm">Can't tell it has it</div></div>
+      <div class="rung" data-r3="3"><div class="lv">WHY #4</div><div class="nm">No dedup by design</div></div>
+      <div class="rung" data-r3="4"><div class="lv">WHY #5</div><div class="nm">Context = "the memory"</div></div>
+      <div class="rung" data-r3="5"><div class="lv">ROOT CAUSE</div><div class="nm">Two stores disconnected</div></div>
+    </div>
+
+    <div class="rungbody on" data-b3="0">
+      <p><b>Answer:</b> each rephrase ("interaction 6/8/10/13") tries to pin a specific doc
+      after the broad "interaction document" search.</p>
+      <p><b>Evidence:</b> the trace above — 5 same-topic queries, escalating specificity.
+      <b>Confidence: High.</b></p>
+      <p><b>What else?</b> Could be genuine 4-target discovery (it does need 4 docs) — partly
+      true, but the queries overlap heavily, so the daemon re-sends the same top docs each
+      time. Contributing, not ruled out.</p>
+    </div>
+    <div class="rungbody" data-b3="1">
+      <p><b>Answer:</b> turn-1 returned a big overlapping blob; the agent can't tell from
+      its context that it already holds doc 6/8/10/13, so it re-asks per-doc.</p>
+      <p><b>Evidence:</b> stateless retrieval re-sends full excerpts (ticket's documented
+      symptom); the agent then <i>still</i> falls back to <code>find</code> (calls 6–9).
+      <b>Confidence: High.</b></p>
+      <p class="note"><b>FORK — second real cause:</b> ranking/coverage. If
+      interaction_document_6/8/10/13 ranked low or weren't surfaced, the <code>find</code>
+      fallback is <i>rational</i>, not wasteful — a different lever (ranking, not dedup).
+      Can't fully separate without diffing the grep output, so it's flagged honestly rather
+      than forced into one cause.</p>
+    </div>
+    <div class="rungbody" data-b3="2">
+      <p><b>Answer:</b> nothing labels overlap. The daemon reconstructs whole-doc text for
+      the top-N every call (<code>sqlite_vec.rs:62</code>) with no "already returned turn N"
+      marker and no cross-call dedup.</p>
+      <p><b>Evidence:</b> <code>Request::Search { query, filepath }</code> — no seen/offset
+      field. <b>Confidence: High (code).</b></p>
+    </div>
+    <div class="rungbody" data-b3="3">
+      <p><b>Answer:</b> retrieval was designed as a stateless <code>grep</code> analog over a
+      backend-agnostic store; session memory was never a requirement — the agent's context
+      was <i>assumed</i> to be the memory.</p>
+      <p><b>Evidence:</b> ticket <code>grep-stateless-context-dedup</code>: "Each
+      <code>semfs grep</code> invocation is stateless… no memory of what it returned."
+      <b>Confidence: High.</b></p>
+    </div>
+    <div class="rungbody" data-b3="4">
+      <p><b>Answer (system-level):</b> for a careful reader "I already saw this" is obvious;
+      but codex's exploration policy is to <b>re-verify by re-searching</b> rather than trust
+      accumulated context. The loop between <i>what the agent holds</i> and <i>what retrieval
+      returns</i> was never closed.</p>
+    </div>
+    <div class="rungbody" data-b3="5">
+      <p class="callout"><b>ROOT CAUSE — the two state stores are disconnected.</b> semfs
+      can't see what the agent already holds → it can't suppress redundant delivery; the
+      agent doesn't trust its own context → it re-asks. p2b patches the <i>agent</i> side
+      with words (non-deterministic, observed to fail). The deterministic fix patches the
+      <i>semfs</i> side with session-aware dedup.</p>
+      <p><b>Stopping check:</b> Actionable ✓ · Controllable ✓ (our daemon) · Fundamental ✓
+      (kills the redundancy regardless of agent behavior) · Evidenced ✓ (trace + IPC +
+      ticket) · Not-blame ✓ (design gap, not "agent is dumb").</p>
+    </div>
+
+    <div class="callout">
+      <b>⚠ "Didn't we already add this?" — No. We added a HINT, not dedup.</b>
+      <code>agent_hint.rs:200-210</code> injects an AGENTS.md line:
+      <i>"Do NOT repeat a search you already ran with reworded queries — the files it
+      returned are already in your context."</i> That's a prompt-side <b>ASK</b> (same
+      family as p2b) — and per our own affordance result, agents routinely <b>ignore</b>
+      it. We also dedup overlapping <i>chunks within a single response</i>
+      (<code>sqlite_vec.rs:1541</code>) — but <b>never across turns</b>. The daemon's
+      <code>IpcState</code> has no recent-returns memory, and
+      <code>Request::Search { query, filepath }</code> is a pure function. Cross-call
+      session dedup is still <b>OPEN</b> (ticket filed 2026-06-12). "Deterministic" means
+      the daemon stops re-sending <i>whether or not the agent obeys</i> — which a hint can't
+      guarantee and, as the trace shows, doesn't.
+    </div>
+
+    <h2 style="font-size:17px">The deterministic fix (no prompt): session-aware dedup</h2>
+    <p>This is the open <code>grep-stateless-context-dedup</code> ticket — make the daemon
+    remember what it just handed out:</p>
+    <ul>
+      <li>Daemon keeps a bounded per-session ring of
+      <code>(query_embedding, returned_filepaths, turn)</code>.</li>
+      <li>On a ≥~0.9-similar follow-up query: <b>don't re-send</b> already-returned excerpts;
+      emit one cheap label and return content <b>only for new files</b>.</li>
+      <li><code>-n</code> paginates by <b>offset</b> (next results), not re-list from the top.</li>
+    </ul>
+    <div class="ascii"><span class="nb">TODAY (stateless)</span>
+  grep "interaction document"  → 4 docs, full text           turn 2
+  grep "interaction 6"         → <span class="nb">SAME 4 docs, full text — re-paid</span>   turn 3
+
+<span class="ok">WITH SESSION DEDUP</span>
+  grep "interaction document"  → 4 docs, full text           turn 2
+  grep "interaction 6"         → <span class="ok"># already in context (turn 2):</span>
+                                 <span class="ok">#   interaction_document_6.txt — not resending</span>
+                                 # NEW: (none)                turn 3   ← ~1 cheap line</div>
+    <p class="note">Why this beats p2b: it doesn't <i>ask</i> the agent to behave — it
+    physically stops re-sending bytes, so it works <b>even when the agent disobeys</b>
+    (which it does). It lives in the long-lived daemon and <b>degrades gracefully to today's
+    stateless behavior</b> on the mountless/Modal path (no session there). Caveat: it's a
+    <b>daemon code change</b> → same Modal rebuild + E2B re-bake as offload.</p>
+
+    <h2 style="font-size:17px">Architecture: the cross-turn dedup mechanism</h2>
+    <p>Three facts from the code decide the whole design: (1) the <b>client</b>
+    (<code>grep</code>) is a <i>fresh process every call</i> — it cannot hold state;
+    (2) the <b>daemon</b> is <i>long-lived per mount/tag</i> and already owns the index;
+    (3) the daemon's search path (<code>sqlite_vec.rs</code>) <i>already</i> reconstructs
+    whole-doc for the top-N and <i>already</i> reads <code>SEMFS_RESULT_LIMIT</code>. So
+    the session memory <b>must</b> live in the daemon, and it seams in exactly where
+    content is reconstructed.</p>
+
+    <p><b>① Where it lives</b> — a small <code>SessionMemory</code> on <code>IpcState</code>,
+    wrapping <code>index.search</code>:</p>
+    <div class="ascii">  one agent session = one mounted daemon (per tag)
+                         ┌──────────────────────────────────────────────────┐
+                         │  semfs DAEMON  (long-lived; owns index + state)    │
+ ┌─────────┐  IPC        │   <b>Request::Search { query, filepath }</b>             │
+ │ grep    │  (unix sock)│            │                                       │
+ │ fresh   │────────────▶│            ▼                                       │
+ │ process │             │   ┌─────────────────┐  embed → RRF → rerank        │
+ │ each    │             │   │  index.search() │                              │
+ │ call    │◀────────────│   └────────┬────────┘                              │
+ │ STATE-  │  SearchHits │            ▼                                       │
+ │ LESS    │  (+ seen    │   partition top-N ──────▶ ┌────────────────────┐<b>NEW</b>│
+ └─────────┘   markers)  │   seen?  → marker only    │  SESSION MEMORY     │   │
+                         │   new?   → reconstruct +  │  turn: u64          │   │
+                         │            record ───────▶│  sent: ring of      │   │
+                         │                           │   (path, first_turn)│   │
+                         │                           │  window W = 5 turns │   │
+                         │                           └────────────────────┘   │
+                         └──────────────────────────────────────────────────┘
+  Modal / mountless path: NO daemon → NO session memory → stateless (today's behavior)</div>
+
+    <p><b>② The state</b> — bounded, cheap, lives behind one mutex (greps are sequential
+    per agent):</p>
+    <pre>// on IpcState:   recent: Mutex&lt;SessionMemory&gt;
+struct SessionMemory {
+    turn: u64,                          // monotonic — the Nth search this session
+    sent: VecDeque&lt;(PathBuf, u64)&gt;,     // (path, turn first sent w/ content); bounded ring
+}
+
+// hit gains ONE optional field — serde default None ⇒ wire-compatible
+struct Hit { path, score, /* … */ seen_at_turn: Option&lt;u64&gt; }</pre>
+
+    <p><b>③ The decision</b> — wraps the existing search; the only behavior change is
+    "skip reconstruction + mark" for files already sent inside the window:</p>
+    <pre>// inside the daemon's Request::Search handler
+let turn = mem.next_turn();                       // ++ per session
+let mut hits = index.search(&amp;query, filepath)?;   // UNCHANGED retrieval
+for h in hits.iter_mut().take(result_limit()) {   // only the top-N get whole-doc today
+    match mem.first_sent(&amp;h.path, WINDOW) {
+        Some(t) =&gt; h.seen_at_turn = Some(t),       // already in agent's context → pointer only
+        None    =&gt; { reconstruct_whole_doc(h);     // new file → content exactly as today
+                     mem.record(&amp;h.path, turn); }
+    }
+}
+mem.evict_before(turn - WINDOW);                   // keep memory + correctness bounded</pre>
+    <p class="note">The client change is tiny and additive: when a hit carries
+    <code>seen_at_turn = Some(n)</code>, <code>grep.rs</code> prints
+    <code># already in your context (turn n): &lt;path&gt; — not resending</code> instead of the
+    excerpt. Everything else (caps, rendering) is unchanged.</p>
+
+    <p><b>④ Sequence — the case-53 spiral, fixed:</b></p>
+    <div class="ascii">turn 2  grep "interaction document"
+        search → {doc6, doc8, doc10, doc13}
+        none in `sent` → reconstruct all, record {doc6..13 @ turn 2}
+        <span class="nb">return: full content (paid once)</span>
+
+turn 3  grep "interaction 6"
+        search → {doc6, …}
+        doc6 ∈ `sent` (turn 2, within W) → seen_at_turn = 2
+        <span class="ok">return: "# already in context (turn 2): doc6 — not resending"</span>
+        + content for any genuinely NEW hit only        ← ~1 cheap line, not a re-dump</div>
+
+    <p><b>⑤ Guards &amp; edges</b> (the parts that keep it honest):</p>
+    <table>
+      <tr><th>Concern</th><th>Handling</th></tr>
+      <tr><td>Content aged out of agent's context?</td>
+          <td>Window <code>W</code> (default 5 turns): only suppress recent returns; older
+          files are re-sendable. Bounds memory <i>and</i> correctness.</td></tr>
+      <tr><td>Different search, same file — over-suppress?</td>
+          <td>Core is file-level (if it's in context, it's in context regardless of query).
+          Optional refinement: gate on query-sim ≥ 0.9 to only dedup obvious re-searches —
+          conservative, matches the ticket.</td></tr>
+      <tr><td><code>-n</code> "give me the next ones"</td>
+          <td>Track per-query hand-out count → advance an <b>offset</b> instead of re-listing
+          from the top (the ticket's second symptom).</td></tr>
+      <tr><td>Mountless / Modal</td>
+          <td>No daemon ⇒ no session ⇒ falls back to exactly today's stateless behavior.
+          Zero risk to that path.</td></tr>
+      <tr><td>Concurrency</td>
+          <td>One <code>Mutex&lt;SessionMemory&gt;</code>; per-agent greps are sequential, so
+          contention is nil.</td></tr>
+    </table>
+    <p class="callout"><b>Why this is the deterministic fix:</b> the suppression happens in
+    the daemon <i>before content is ever serialized</i> — the agent cannot "ignore" it the
+    way it ignores the hint/p2b, because the bytes are simply never sent. It reuses the
+    existing search path untouched; the entire mechanism is one struct + one optional hit
+    field + a partition loop. <b>Same <code>sqlite_vec.rs</code>/daemon recompile as N4 —
+    one rebuild ships both.</b></p>
+
+    <h2 style="font-size:17px">What N4 (offload) does</h2>
+    <p><b>N4</b> = the offload lever (the 4th novel-idea lever from the optimization pass;
+    a.k.a. "row-aligned offload"). <b>What it does:</b> today a grep hit reconstructs and
+    inlines the <i>whole-document</i> text for each top-N file
+    (<code>sqlite_vec.rs:62</code>). N4 instead returns a <b>pointer (path + line range) +
+    a tight snippet</b>, and lets the agent <b>read the rest on demand</b> — only if it
+    actually needs more.</p>
+    <div class="ascii"><span class="nb">TODAY (whole-doc inline)</span>
+  grep "q4 revenue"  → hit: financials.xlsx
+                       <span class="nb">&lt;~12,000 chars of the WHOLE sheet inlined&gt;</span>   ← re-paid EVERY later turn
+
+<span class="ok">WITH N4 OFFLOAD (pointer + snippet, read-on-demand)</span>
+  grep "q4 revenue"  → hit: financials.xlsx:88–104
+                       <span class="ok">Row 92   Q4 revenue …… 4.18M</span>    ← ~300 chars: just the matched window
+                       (read more:  sed -n '1,200p' financials.xlsx)   ← agent pulls the rest ONLY if it needs it</div>
+    <p class="note"><b>Why it cuts tokens:</b> under <code>cached_input=0</code> every
+    inlined char is re-paid on <i>every</i> subsequent turn
+    (<code>total ≈ turns × per-turn-context</code>). N4 shrinks <i>per-turn-context at the
+    source</i>. The whole-doc reconstruction is hard-coded at <code>sqlite_vec.rs:62</code>
+    with no env switch — which is exactly why N4 needs the Modal recompile (it can't be
+    swept like h1/h2/h3).</p>
+    <p class="callout"><b>N4 (offload) vs dedup — different halves of the same waste.</b>
+    Offload makes <i>each</i> return smaller (don't inline the whole doc); dedup stops
+    <i>repeated</i> returns across turns (don't re-send what the agent already has). Both
+    are <code>sqlite_vec.rs</code>/daemon code, so one rebuild ships both.</p>
+
+    <h2 style="font-size:17px">Sibling levers — one rebuild ships both</h2>
+    <table>
+      <tr><th>Lever</th><th>Layer</th><th>Attacks</th><th>On the case-53 trace</th></tr>
+      <tr>
+        <td><b>offload</b> (N4)<br><span class="tag" style="color:var(--accent)">the last lever we discussed</span></td>
+        <td><span class="tag code">CODE</span> <code>sqlite_vec.rs</code></td>
+        <td>size of <i>each</i> return</td>
+        <td>shrinks the blob from greps 1–5</td>
+      </tr>
+      <tr>
+        <td><b>dedup</b> (this ticket)</td>
+        <td><span class="tag code">CODE</span> daemon</td>
+        <td><i>repeated</i> returns across turns</td>
+        <td>stops greps 2–5 re-sending grep-1's docs</td>
+      </tr>
+      <tr>
+        <td class="tie">p2b turn-brake</td>
+        <td><span class="tag env">ENV</span> prompt</td>
+        <td>(behavioral nudge)</td>
+        <td class="lose">non-deterministic — disobeyed (9 calls vs "~5")</td>
+      </tr>
+    </table>
+    <p class="callout"><b>So: the last lever (offload) and the deterministic fix (dedup) are
+    siblings</b> — both retrieval-layer code, both ride the <i>same</i> Modal rebuild, and
+    together they attack the two halves of the waste (offload = each return smaller; dedup =
+    stop re-sending across turns). If we greenlight the rebuild, ship both in one binary.
+    The <code>find</code>-crawl half (ranking/coverage) is the separate follow-up lever.</p>
+  </div>
+
+  <p class="sub" style="text-align:center;margin-top:30px">
+    Generated for tickets/workspace-bench-5arm-matrix · open this file in a browser
+  </p>
+</div>
+
+<script>
+  // ---- eli5→expert / why-chain ladders ----
+  function wireLadder(rungAttr, bodyAttr){
+    const rungs=[...document.querySelectorAll('['+rungAttr+']')];
+    const bodies=[...document.querySelectorAll('['+bodyAttr+']')];
+    rungs.forEach(r=>r.addEventListener('click',()=>{
+      const i=r.getAttribute(rungAttr);
+      rungs.forEach(x=>x.classList.remove('on'));
+      bodies.forEach(x=>x.classList.remove('on'));
+      r.classList.add('on');
+      const b=bodies.find(b=>b.getAttribute(bodyAttr)===i);
+      if(b) b.classList.add('on');
+    }));
+  }
+  wireLadder('data-r','data-b');
+  wireLadder('data-r2','data-b2');
+  wireLadder('data-r3','data-b3');
+
+  // ---- case-45 coin-flip simulator ----
+  const P=0.29;                  // approx rubric fraction per run for case 45
+  const N=38;                    // rubric denominator
+  const bars=document.getElementById('bars');
+  const stat=document.getElementById('simstat');
+  let history=[];
+  function oneRun(){ let s=0; for(let i=0;i<N;i++) if(Math.random()<P) s++; return s; }
+  function draw(){
+    bars.innerHTML='';
+    history.slice(-26).forEach(v=>{
+      const b=document.createElement('div');
+      b.className='bar'+(v/N<0.18?' lo':(v/N>0.40?' hi':''));
+      b.style.height=(8+ (v/N)*108)+'px';
+      b.title=v+'/'+N+' = '+Math.round(100*v/N)+'%';
+      bars.appendChild(b);
+    });
+  }
+  document.getElementById('flip2').onclick=()=>{
+    const a=oneRun(), b=oneRun(); history.push(a,b); draw();
+    const pa=Math.round(100*a/N), pb=Math.round(100*b/N), gap=Math.abs(pa-pb);
+    stat.innerHTML=`two identical runs: <b>${a}/${N} (${pa}%)</b> vs <b>${b}/${N} (${pb}%)</b> — gap <b>${gap} pts</b>`+
+      (gap>=10?` &nbsp;←&nbsp;<span style="color:var(--bad)">that's the noise eating a "config win"</span>`:` (close this time — luck cuts both ways)`);
+  };
+  document.getElementById('flip20').onclick=()=>{
+    let tot=0; for(let i=0;i<20;i++){const v=oneRun();history.push(v);tot+=v;} draw();
+    stat.innerHTML=`n=20 mean ≈ <b>${(tot/20).toFixed(1)}/${N} (${Math.round(100*tot/20/N)}%)</b> — the truth only shows up with repeats.`;
+  };
+  document.getElementById('reset').onclick=()=>{history=[];bars.innerHTML='';
+    stat.textContent='no runs yet — the two-run gap is the noise you’re fighting.';};
+</script>
+</body>
+</html>

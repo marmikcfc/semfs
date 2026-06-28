@@ -60,6 +60,19 @@ const PAGED_OCR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 /// the soffice + paged-render budgets, bounded so one file can't stall a seed.
 const DESCRIBE_OFFICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(240);
 
+/// True for `.csv`/`.json` paths — text tables that have no magic bytes and need
+/// extension-based routing to the summarizer (everything else sniffs by content).
+fn is_csv_or_json(filepath: &str) -> bool {
+    let lower = filepath.to_ascii_lowercase();
+    lower.ends_with(".csv") || lower.ends_with(".json")
+}
+
+/// The file name (last path component) — used as the "sheet" name for a csv/json
+/// table so the summarizer gets the same path/name domain hint xlsx sheets get.
+fn table_name(filepath: &str) -> String {
+    filepath.rsplit('/').next().unwrap_or(filepath).to_string()
+}
+
 /// Extract searchable text from a document's raw bytes, routing by sniffed
 /// format. CPU parsers run on the blocking pool (time-bounded); image OCR is a
 /// key-gated network call. The returned text is capped to `MAX_EXTRACT_BYTES`.
@@ -68,6 +81,28 @@ const DESCRIBE_OFFICE_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// panics, hangs, or aborts the import.
 pub async fn extract_text(filepath: &str, bytes: &[u8]) -> Option<String> {
     let fmt = sniff(bytes);
+    // csv/json carry no magic bytes (sniff ⇒ Unknown) and otherwise fall through to
+    // raw-row embedding, which embeds to noise. Route them through the summarizer
+    // (WEAVE: summary key + raw rows) so a dataset is findable by meaning. Extension-
+    // AND Unknown-gated so a mislabeled binary never reaches this; key-gated inside
+    // (no key ⇒ raw rows, no regression).
+    if matches!(fmt, DocFormat::Unknown) && is_csv_or_json(filepath) {
+        if let Ok(content) = std::str::from_utf8(bytes) {
+            if !content.trim().is_empty() {
+                let fp = filepath.to_string();
+                let sheet = spreadsheet::Sheet {
+                    name: table_name(filepath),
+                    text: content.to_string(),
+                };
+                return blocking(
+                    move || summary::summarize_workbook(&fp, &[sheet]),
+                    SUMMARY_TIMEOUT,
+                )
+                .await
+                .map(cap_text);
+            }
+        }
+    }
     let owned = bytes.to_vec();
     // Opt-in merged vision tier: for visual formats it transcribes text if
     // present, else describes — so a textless image is never indexed as OCR junk.
@@ -113,8 +148,11 @@ pub async fn extract_text(filepath: &str, bytes: &[u8]) -> Option<String> {
                             )
                             .await
                         } else {
-                            match blocking(move || ocr::ocr_pdf_paged(&for_paged), PAGED_OCR_TIMEOUT)
-                                .await
+                            match blocking(
+                                move || ocr::ocr_pdf_paged(&for_paged),
+                                PAGED_OCR_TIMEOUT,
+                            )
+                            .await
                             {
                                 Some(t) => Some(t),
                                 None => blocking(move || ocr::ocr_pdf(&for_ocr), OCR_TIMEOUT).await,
@@ -221,7 +259,10 @@ fn soffice_to_pdf(bytes: &[u8], ext: &str) -> Option<Vec<u8>> {
     let profile = dir.path().join("profile");
     let status = std::process::Command::new("soffice")
         .args(["--headless", "--norestore", "--nolockcheck"])
-        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
+        .arg(format!(
+            "-env:UserInstallation=file://{}",
+            profile.display()
+        ))
         .args(["--convert-to", "pdf", "--outdir"])
         .arg(dir.path())
         .arg(&input)
@@ -315,7 +356,10 @@ fn soffice_to_text(bytes: &[u8], ext: &str) -> Option<String> {
     let profile = dir.path().join("profile");
     let status = std::process::Command::new("soffice")
         .args(["--headless", "--norestore", "--nolockcheck"])
-        .arg(format!("-env:UserInstallation=file://{}", profile.display()))
+        .arg(format!(
+            "-env:UserInstallation=file://{}",
+            profile.display()
+        ))
         .args(["--convert-to", filter, "--outdir"])
         .arg(dir.path())
         .arg(&input)
@@ -505,7 +549,9 @@ mod tests {
             eprintln!("skipping: soffice (LibreOffice) not installed");
             return;
         }
-        let t = extract_text("/x.ppt", PPT).await.expect("legacy .ppt via soffice");
+        let t = extract_text("/x.ppt", PPT)
+            .await
+            .expect("legacy .ppt via soffice");
         assert!(
             t.trim().chars().count() > 20,
             "expected real slide text from soffice, got: {:?}",
@@ -559,15 +605,47 @@ mod tests {
             eprintln!("skipping: OPENROUTER_API_KEY not set");
             return;
         }
-        let t = extract_text("/desktop/product-sales/x.xlsx", XLSX).await.expect("xlsx text");
+        let t = extract_text("/desktop/product-sales/x.xlsx", XLSX)
+            .await
+            .expect("xlsx text");
         assert!(!t.trim().is_empty(), "summary present");
-        // Embed-only: the result is a summary, NOT the raw-cell extraction.
+        // WEAVE: the result is the summary woven WITH the raw cells, so it differs
+        // from the raw-only extraction (summary prepended) yet still contains it.
         let raw: String = spreadsheet::extract_sheets(XLSX)
             .iter()
             .map(|s| s.text.clone())
             .collect::<Vec<_>>()
             .join("\n");
-        assert_ne!(t, raw, "indexed text should be the summary, not raw-cell fallback");
+        assert_ne!(t, raw, "woven result differs from the raw-only fallback");
+    }
+
+    #[test]
+    fn is_csv_or_json_matches_by_extension_only() {
+        assert!(is_csv_or_json("/d/reviews.csv"));
+        assert!(is_csv_or_json("/d/config.JSON"));
+        assert!(!is_csv_or_json("/d/x.xlsx"));
+        assert!(!is_csv_or_json("/d/notes.md"));
+        assert_eq!(table_name("/a/b/reviews.csv"), "reviews.csv");
+        assert_eq!(table_name("reviews.csv"), "reviews.csv");
+    }
+
+    #[tokio::test]
+    async fn extract_text_csv_no_key_falls_back_to_raw_rows() {
+        // csv routes through the summarizer; without a key it degrades to raw rows
+        // (no network), so a dataset is still indexed — the no-regression guarantee.
+        if std::env::var("OPENROUTER_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .is_some()
+        {
+            eprintln!("skipping: OPENROUTER_API_KEY set (would weave a live summary)");
+            return;
+        }
+        let csv = b"App,Sentiment\nWidget,Negative\n";
+        let t = extract_text("/d/reviews.csv", csv)
+            .await
+            .expect("csv routed through summarizer + raw fallback");
+        assert!(t.contains("Widget"), "raw rows indexed when no key");
     }
 
     #[tokio::test]

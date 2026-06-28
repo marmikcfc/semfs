@@ -54,7 +54,9 @@ fn dedup_seen(
     for h in hits.iter_mut() {
         let has_content = h.memory.as_deref().is_some_and(|s| !s.is_empty())
             || h.chunk.as_deref().is_some_and(|s| !s.is_empty());
-        let Some(fp) = h.filepath.as_deref() else { continue };
+        let Some(fp) = h.filepath.as_deref() else {
+            continue;
+        };
         if !has_content {
             continue;
         }
@@ -289,7 +291,10 @@ mod dedup_tests {
         let mut t2 = vec![hit("/a.md", "BODY A"), hit("/c.md", "BODY C")];
         dedup_seen(&cache, &mut t2, true);
         assert_eq!(t2[0].seen_at_turn, Some(1));
-        assert_eq!(t2[0].memory, None, "content stripped — bytes never cross IPC");
+        assert_eq!(
+            t2[0].memory, None,
+            "content stripped — bytes never cross IPC"
+        );
         assert!(t2[1].seen_at_turn.is_none());
         assert_eq!(t2[1].memory.as_deref(), Some("BODY C"));
     }
@@ -304,7 +309,11 @@ mod dedup_tests {
         let mut t2 = vec![hit("/a.md", "BODY A")];
         dedup_seen(&cache, &mut t2, false); // turn 2 — /a re-surfaces
         assert_eq!(t2[0].seen_at_turn, Some(1), "must MARK it seen");
-        assert_eq!(t2[0].memory.as_deref(), Some("BODY A"), "content KEPT — re-surfaced, not stripped");
+        assert_eq!(
+            t2[0].memory.as_deref(),
+            Some("BODY A"),
+            "content KEPT — re-surfaced, not stripped"
+        );
     }
 
     #[test]
@@ -314,7 +323,11 @@ mod dedup_tests {
         dedup_seen(&cache, &mut h, true);
         dedup_seen(&cache, &mut h, true);
         assert!(h[0].seen_at_turn.is_none());
-        assert_eq!(h[0].memory.as_deref(), Some("BODY"), "disabled = byte-identical to today");
+        assert_eq!(
+            h[0].memory.as_deref(),
+            Some("BODY"),
+            "disabled = byte-identical to today"
+        );
     }
 
     #[test]

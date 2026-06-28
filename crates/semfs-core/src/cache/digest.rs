@@ -38,14 +38,15 @@ pub fn render(
          excerpts. Query in the corpus's own language for best recall.\n\n",
     );
 
-    let topics = communities.iter().filter(|c| !c.god_entities.is_empty()).count();
+    let topics = communities
+        .iter()
+        .filter(|c| !c.god_entities.is_empty())
+        .count();
     s.push_str(&format!(
         "## Topics — {topics} clusters across {total_files} files\n",
     ));
     if communities.iter().all(|c| c.god_entities.is_empty()) {
-        s.push_str(
-            "_(entity graph still sparse — run more L7 extraction for richer topics)_\n",
-        );
+        s.push_str("_(entity graph still sparse — run more L7 extraction for richer topics)_\n");
     }
     for c in communities {
         if c.god_entities.is_empty() {

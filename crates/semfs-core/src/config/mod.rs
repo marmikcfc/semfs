@@ -93,7 +93,9 @@ mod tests {
     #[test]
     fn safe_path_component_accepts_real_ids() {
         assert!(is_safe_path_component("org_abc123"));
-        assert!(is_safe_path_component("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(is_safe_path_component(
+            "550e8400-e29b-41d4-a716-446655440000"
+        ));
         assert!(is_safe_path_component("_ephemeral"));
     }
 

@@ -1,3 +1,5 @@
+> <!-- STALE-BANNER --> ⚠️ **HISTORICAL HANDOFF (2026-06-25)** — point-in-time session handoff; its blockers/next-steps are closed. Current state → [/CURRENT_STATE.md](../../CURRENT_STATE.md).
+
 # HANDOFF — WB 5-arm matrix → analysis & optimization (next session start here)
 
 > You're picking up a **completed** Workspace-Bench benchmark of semfs vs a plain codex baseline.

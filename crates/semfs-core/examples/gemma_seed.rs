@@ -17,7 +17,9 @@ fn vec_to_blob(v: &[f32]) -> Vec<u8> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let dst = std::env::args().nth(1).expect("usage: gemma_seed <copy.db>");
+    let dst = std::env::args()
+        .nth(1)
+        .expect("usage: gemma_seed <copy.db>");
 
     // Install the sqlite-vec auto-extension hook process-wide (so our raw
     // Connection can create/insert vec0 tables).

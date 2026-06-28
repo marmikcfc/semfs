@@ -54,11 +54,16 @@ impl LocalEmbedder {
     /// Build from a fastembed registry model. Downloads + caches the ONNX on
     /// first use (`cache_dir` overrides fastembed's default cache location).
     /// The vector width is read from the registry, never guessed.
-    pub fn from_registry(model: EmbeddingModel, cache_dir: Option<PathBuf>) -> anyhow::Result<Self> {
+    pub fn from_registry(
+        model: EmbeddingModel,
+        cache_dir: Option<PathBuf>,
+    ) -> anyhow::Result<Self> {
         let info = TextEmbedding::list_supported_models()
             .into_iter()
             .find(|m| m.model == model)
-            .ok_or_else(|| anyhow::anyhow!("embedding model {model:?} not in fastembed registry"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("embedding model {model:?} not in fastembed registry")
+            })?;
         let dims = info.dim;
         let identity = format!("fastembed:{FASTEMBED_REV}:{}:{}", info.model_code, dims);
 
@@ -179,8 +184,9 @@ mod tests {
     /// when re-bundled model artifacts must invalidate existing caches.
     #[test]
     fn fastembed_rev_tracks_dependency() {
-        let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
-            .expect("read workspace Cargo.lock");
+        let lock =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
+                .expect("read workspace Cargo.lock");
         let ver = lock
             .split("name = \"fastembed\"")
             .nth(1)

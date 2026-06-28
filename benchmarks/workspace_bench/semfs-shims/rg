@@ -45,7 +45,7 @@ while (( i < n )); do
   esac
   (( i++ ))
 done
-[[ -z "$searchpath" ]] && searchpath="$PWD"
+[[ -z "$searchpath" ]] && searchpath="${SEMFS_MOUNT_PATH:-$PWD}"
 
 # `rg --files` = enumerate files (no content match) → never semantic.
 [[ $enumerate -eq 1 || $have_pattern -eq 0 ]] && exec "$REAL_RG" "$@"

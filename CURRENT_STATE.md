@@ -1,6 +1,63 @@
 # Current State — semfs / Workspace-Bench instance
 
-_Last updated: 2026-06-18. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
+_Last updated: 2026-06-25. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
+
+## ⮕ Latest (2026-06-25) — 4-persona seeds (fs_data complete) · PPR hidden-KG prior · queue harness · PPR A/B running
+
+**The Seeds table below is now the canonical state — 4 persona seeds, all mountable, uniform Gemma KG.** This session's work:
+
+- **fs_data fix (houqin + yunying).** Both seeds had been built without `materialize_fs` → no browsable FUSE tree (`fs_dentry/fs_inode/fs_data` empty → mount served nothing). Re-materialized via `index_corpus --phase finalize` (CPU-only: `materialize_kg` + `materialize_fs`): **houqin 0→~255K fs rows, yunying 0→~204K**. **All 4 persona seeds now mount with a full tree.** houqin's 1.24 GB seed needs `--startup-timeout 240` (the 30 s default watchdog is too tight).
+- **PPR hidden-KG prior (`SEMFS_KG_PPR`).** New in `crates/semfs-core/src/backend/hidden_kg.rs`: replaces the 1-hop neighbour walk with a damped **multi-hop Personalized PageRank** diffusion over the bipartite file↔entity graph (`edges`), seeded at matched entities, max-normalised per candidate, capped at `PPR_CAP=0.12`. Env: `SEMFS_PPR_RESTART` (0.5), `SEMFS_PPR_ITERS` (30). 12/12 Rust tests; compiled into the x86_64-linux binary `benchmarks/e2b/assets/semfs-fixed`.
+- **Queue harness (the big harness change).** `run_matrix.py` gained a `--reps` BATCH mode + `worker_batch`: **ONE invocation per persona** runs all reps×arms through a global queue — each sandbox **boots once** and **re-mounts only on arm change** (was: re-mount every cell). Kills the per-(persona,arm,rep) boot tax (24→4 boots), the per-arm long-tail barrier, and the per-cell remount. Plus a **network-resilience deadline wrapper** (`_with_deadline`) so a dead socket fails fast instead of wedging the run ~20 min. Launcher: `tickets/wblite-ppr-ab/run_ppr_ab_queue.sh`. Full writeup: `tickets/wblite-ppr-ab/EXPERIMENT.md`.
+- **Instruction-less semantic grep for codex.** Flagless `grep` under a semfs mount now routes to `semfs grep` (semantic) via the shim kit (`benchmarks/workspace_bench/semfs-shims/{grep,rg}`): PATH-prepended in `cell_driver.py`, tty-guard fixed (`-p /dev/stdin`), `SEMFS_MOUNT_PATH` default, `chmod +x` in the bake (a+rX left them 644). Verified codex gets semantic grep with no flag or instruction.
+- **PPR A/B experiment — RUNNING** (`tickets/wblite-ppr-ab/`). `ppr_off` (1-hop control) vs `ppr_on` (PPR treatment), both `hiddenkg_l7` (KG off-surface, COMENTION on, HIDDEN_KG on), 4 personas × n=3 on self-hosted **GLM-5.1-NVFP4** (E2B real-FUSE), adaptive-K, input+output compression + dedup + turnbrake. Inline + live re-judge (Seed-2.0-Lite, OpenRouter — GPU-free), web dashboard (`benchmarks/e2b/dashboard.py`). **PRELIMINARY (persona-dependent, NOT a verdict — houqin/yunying incomplete):** chanpin PPR wins (ppr_on 11% vs plain 5%), kaifa neutral (~18% all), houqin plain currently leads (17% vs ppr ~10%, partial), yunying pending. Honest accounting scores no-deliverable cells as 0/total fails (7 of 8 were ppr_off).
+- **Contamination fix (plain baseline).** The shared plain dir (`workspace-bench-5arm-matrix/artifacts/e2b_runs`) had accumulated old experimental rep labels (`rP1p`/`ra1p1`/`rdiag`/…) that polluted the plain baseline (chanpin had 17 reps/case); the dashboard loader now restricts to the clean **r1/r2/r3** SEM-39 reps.
+
+## ⮕ Latest (2026-06-20) — WB-Lite extended to 10 cases (4 arms n=3); template lib-fix; GPU stopped
+
+Ran the remaining 5 WB-Lite cases (45,55,171,386,388) × 4 arms (plain, compress, hkg-edges, hkg-rerank) × n=3 on GLM-5.1-NVFP4, giving a **10-case** picture. Accuracy / mean-tokens:
+
+| arm | c15 | c44 | c53 | c95 | c175 | c45 | c55 | c171 | c386 | c388 | **mean** |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| plain | 6 | 6 | 50 | 0 | 0 | 5 | 0 | 20 | 1 | 0 | **9%** /520k |
+| compress | 6 | 6 | 27 | 0 | 12 | 5 | 0 | 11 | 0 | 0 | **7%** /400k |
+| **hkg-edges** | 6 | 19 | 73 | 0 | 0 | 5 | 0 | 25 | 0 | 0 | **13%** /570k |
+| hkg-rerank | 6 | 9 | 0 | 0 | 4 | 5 | 0 | 17 | 0 | 0 | **4%** /498k |
+
+- **hkg-edges leads (13% vs plain 9%)** across 10 cases — wins/leads the 3 discriminating cases (44, **53**, **171**). hkg-rerank (hidden-KG-only) is worst (4%) — confirms hidden-KG rerank hurts; **co-mention edges is the lever**.
+- **7 of 10 cases are model-floor** (~0–6% all arms). The signal rests on cases 53, 171 (and weakly 44); margins are within the documented run-to-run variance (case-53 plain swings 9↔91) → **promising-but-not-decisive**.
+- New discriminating case **171** (`.xlsx`): hkg-edges 25 > plain 20 > rerank 17 > compress 11.
+- Synthesis cases 45/55/386/388 **complete but score ~0** ("ok-but-empty" — agent finishes without a good deliverable; **386 = unsolvable, it's `.m4a` audio**).
+
+**Infra finding — template lib-fix (`semfs-baked-v3`):** the new cases require writing `.docx`/`.pptx` deliverables. The sandbox has **no pip** (network is fine; pypi=200) and `/usr/bin/python3` lacks the writers. GLM-5.1-NVFP4 **loops on `pip install python-docx` → 45-min timeout** (a model error-recovery weakness); GPT-5.x earlier **hand-built the OOXML zip with stdlib `zipfile`** and succeeded — *same env, different model*. Fix: baked `python-docx`+`python-pptx` into **`semfs-baked-v3`** (apt python3-pip → pip install; verified writes a valid .docx). v3 run: 58/60, **zero install-loop timeouts** (only 2 genuine over-exploration timeouts). Also **removed `--enforce-eager`** from the vllm deploy (CUDA graphs on; boot fine, ~12 min warm-cache). Run scripts default to `semfs-baked-v3`.
+
+**GPU `glm51-nvfp4-vllm` STOPPED.** Artifacts: `tickets/workspace-bench-5arm-matrix/artifacts/{e2b_runs/, RUN_DASHBOARD.html}`.
+
+## ⮕ Latest (2026-06-19) — NVFP4 9-arm n=2 matrix complete; GPU stopped
+
+Ran the full 9-arm × 5-case matrix to **n=2** on **GLM-5.1-NVFP4** (self-hosted Modal vLLM behind a litellm endpoint `glm51-nvfp4-litellm-serve`; served name `glm-5.1-nvfp4`), E2B real-FUSE, clean `chanpin-4arm.db` seed. Arms 8-9 = **hidden-KG injected into the retrieval pool** (new `semfs-fixed-retrieval` binary, `SEMFS_HIDDEN_KG_RETRIEVAL=on`), distinct from arms 5-7 which only rerank.
+
+**Result — case 53 (the only discriminating case, n=2, FULLY judged) — `mean (rep1/rep2)`:**
+
+| arm | accuracy | tokens | reps |
+|---|---|---|---|
+| 5 hkg-edges | 73% | 96k | 55 / 91 |
+| 4 best | 64% | 91k | 45 / 82 |
+| 3 comp+dedup | 59% | 188k | 55 / 64 |
+| 1 plain | **50%** | 88k | **9 / 91** |
+| 9 hkg-retr-l7 | 45% | 89k | 91 / 0 |
+| 7 hkg-l7 | 41% | 76k | 36 / 45 |
+| 8 hkg-retr | 30% | 110k | 0 / 45 / 45 |
+| 2 compress | 27% | 133k | 45 / 9 |
+| 6 hkg-rerank | 0% | 111k | 0 / 0 |
+
+- **NO config cleanly beats plain.** Earlier "hkg-edges 91% vs plain 9%, 10×" was an artifact of *partially-judged data* (1 rep each). With both reps scored, **plain = 50% (one rep hit 91%)**; edges = 73%. The 23-pt gap is **smaller than the within-arm run-to-run variance** (plain alone swings 9↔91 on identical config). At n=2, between-arm differences are swamped by variance — need n≥5 to separate.
+- **Only robust signals are NEGATIVE:** hkg-rerank (arm 6, hidden-KG-only rerank) = **0/0 consistently** → hidden-KG rerank reliably hurts; arms 8-9 (KG into retrieval pool) over-explore (0% @ 0.9–2.6M tok on cases 95/175, generic `Document`/BRD candidates).
+- **Cases 15/44/95 = model floor** (~0–6% for every arm) — uninformative.
+- **case-53 variance mechanism = synthesis-skip**: some reps copy the 4 raw source docs instead of building the graded `Integrated Data Interaction Report` (filename hint names only the source files; transcribe-brake reinforces copy-and-stop). This is the 0↔91 swing.
+- **case 44 = chronic over-exploration timeout** (~50% rate; 0.8–2.7M tok; some cells n<2 at the 2-round cap). Extreme: best-case95 2.9M, comp+dedup-case95 3.8M tok (no caching → real fresh tokens).
+
+**GPU `glm51-nvfp4-vllm` STOPPED** after all agent runs. Judging is OpenRouter (GPU-free). Artifacts: `tickets/workspace-bench-5arm-matrix/artifacts/{e2b_runs/, RUN_DASHBOARD.html}`. Harness: model name now defaults `glm-5.1-nvfp4` (cell_driver/run_matrix); litellm base in run scripts.
 
 ## ⮕ Latest (2026-06-18 evening) — chanpin-4arm.db seed verified; hidden-KG architecture decided; implementation ticket reviewed
 
@@ -195,16 +252,28 @@ Once the surface contamination issue is resolved, run these in order:
 - **v1 assumption: one mount = one agent** (single daemon-global window, no keying). v2 (deferred) =
   key by `(agent_pid, starttime)` via `SO_PEERCRED` for multi-agent/sequential-reuse safety.
 
-## Seeds
-| seed | where | index | FS layer | usable for |
-|---|---|---|---|---|
-| `chanpin-gemma-q4.db` (PM) | E2B template `/opt` + local assets | 7153 chunks / 2800 inodes; ~98.2% | **full** | mount-based PM benchmark |
-| `kaifa-gemma-q4.db` (backend-dev) | Modal `seeds/` (229 MB) | 2415 files / 6386 chunks / 21,115 ent / 323,101 rel; 0 unindexed | **ABSENT** (fs_inode=1, dentry=0, fs_data=0) | retrieval only — NOT mountable |
+## Seeds — 4 personas (all mountable, uniform Gemma KG)
+All four WB-Lite personas now have a `<persona>-gemma-q4.db` seed: search index (`chunks`/`vchunks`/`ffts`)
++ **full FUSE tree** (`fs_dentry`/`fs_inode`/`fs_data`) + uniform **Gemma-4-31B-NVFP4** KG
+(`graph_entity`/`graph_relation`/`edges`/`graph_community`). Baked into per-persona E2B templates
+`semfs-mount-{persona}` at `/opt/{persona}-gemma-q4.db`; copied to `~/.semfs/<persona>.db` at boot.
 
-⚠️ **The PM seed is BAKED into the E2B template** (`/opt/chanpin-gemma-q4.db`), copied to `~/.semfs/chanpin.db`
-at boot — so the local decontaminated seed is **not used** unless we (A) re-bake the template, or (B)
-boot-push the cleaned 690 MB seed (reuse the chunked-upload path). Leak was 289-only (irrelevant to the
-other 10 cases).
+| seed (persona) | E2B template | FS layer | notes |
+|---|---|---|---|
+| `chanpin-gemma-q4.db` (PM) | `semfs-mount-chanpin` | full | original well-validated PM seed (~98% indexed) |
+| `kaifa-gemma-q4.db` (backend-dev) | `semfs-mount-kaifa` | full | fs_* rebuilt via SEM-38 fresh-seed rebuild (2026-06-21) — **was** retrieval-only, now mountable |
+| `houqin-gemma-q4.db` (logistics) | `semfs-mount-houqin` | full | fs_* re-materialized this session (~255K rows); 1.24 GB → needs `--startup-timeout 240` |
+| `yunying-gemma-q4.db` (ops) | `semfs-mount-yunying` | full | fs_* re-materialized this session (~204K rows) |
+
+Two more seeds (`research`, `xafs`) carry the same uniform Gemma KG for other benchmarks (xAFS snapshot-pull).
+Across all 6 seeds: **~149K entities / ~627K relations** (uniform Gemma-4-31B-NVFP4 KG, embedded on 4×B200).
+Built + embedded on Modal (`benchmarks/modal/`), stored on volume `semfs-bench-data`, baked into E2B templates.
+RCAs: `rcas/2026-06-19-vllm-enforce-eager-throughput-collapse.md`,
+`rcas/2026-06-20-sqlite-corruption-incremental-commit-modal-preemption.md`.
+
+> Historical (superseded): earlier states listed only chanpin + kaifa and called kaifa "ABSENT / not
+> mountable" — both fixed (SEM-38 + this session's houqin/yunying fs_data re-materialization). The 289
+> seed-leak was cleaned in `chanpin-gemma-q4.db` (backup `.preclean-bak`).
 
 ## WB-Lite rubrics + case universe
 - **Rubrics (all 100, normalized):** `benchmarks/e2b/assets/wb_lite_all/lite_all/task_lite_clean_en/<id>/metadata.json`.

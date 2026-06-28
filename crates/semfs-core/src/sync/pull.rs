@@ -8,8 +8,8 @@
 use std::sync::Arc;
 
 use crate::api::{ApiClient, Document, ListDocumentsReq, ListDocumentsResp};
-use crate::cache::ReconcileOutcome;
 use crate::cache::CacheFs;
+use crate::cache::ReconcileOutcome;
 
 const PAGE_SIZE: u32 = 100;
 const SYNC_META_LAST_SEEN: &str = "last_seen_updated_at";

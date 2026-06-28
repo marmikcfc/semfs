@@ -189,12 +189,10 @@ impl PgVectorStore {
                 .await?;
         match stored {
             None => {
-                sqlx::query(
-                    "INSERT INTO index_meta (key, value) VALUES ('text_embed_model', $1)",
-                )
-                .bind(&identity)
-                .execute(&mut conn)
-                .await?;
+                sqlx::query("INSERT INTO index_meta (key, value) VALUES ('text_embed_model', $1)")
+                    .bind(&identity)
+                    .execute(&mut conn)
+                    .await?;
             }
             Some(s) if s != identity => anyhow::bail!(
                 "existing index was built with embedder '{s}' but the current embedder is \
@@ -255,13 +253,11 @@ impl PgVectorStore {
     /// embedder-identity + dimension guards already ran at `connect`.
     pub async fn is_searchable(&self) -> bool {
         let mut conn = self.conn.lock().await;
-        sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM chunks WHERE container = $1)",
-        )
-        .bind(&self.container)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap_or(false)
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM chunks WHERE container = $1)")
+            .bind(&self.container)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap_or(false)
     }
 
     pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
@@ -353,21 +349,25 @@ impl PgVectorStore {
             .bind(filepath)
             .fetch_all(&mut *conn)
             .await?;
-            rows.into_iter().map(|(t,)| t).collect::<Vec<_>>().join("\n")
+            rows.into_iter()
+                .map(|(t,)| t)
+                .collect::<Vec<_>>()
+                .join("\n")
         };
         if content.is_empty() {
             return Ok(());
         }
         // Blocking ureq LLM call → off the async runtime so many can overlap.
-        let entities = match tokio::task::spawn_blocking(move || graph::extract_entities(&llm, &content))
-            .await?
-        {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::warn!(filepath, "entity extraction failed ({e}); no edges");
-                return Ok(());
-            }
-        };
+        let entities =
+            match tokio::task::spawn_blocking(move || graph::extract_entities(&llm, &content))
+                .await?
+            {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(filepath, "entity extraction failed ({e}); no edges");
+                    return Ok(());
+                }
+            };
         let now = now_ms();
         let mut conn = self.conn.lock().await;
         let mut tx = conn.begin().await?;
@@ -458,11 +458,7 @@ impl PgVectorStore {
 
 #[async_trait]
 impl SemanticIndex for PgVectorStore {
-    async fn search(
-        &self,
-        query: &str,
-        filepath: Option<&str>,
-    ) -> anyhow::Result<Vec<SearchHit>> {
+    async fn search(&self, query: &str, filepath: Option<&str>) -> anyhow::Result<Vec<SearchHit>> {
         // Embed the query on a blocking thread. The Embedder trait is synchronous
         // (local fastembed = CPU-bound; cloud = blocking `ureq`), and running it
         // inline would NOT yield — so the daemon's `tokio::time::timeout` around
@@ -583,7 +579,11 @@ impl SemanticIndex for PgVectorStore {
             // Skip on query error (don't nuke results on a transient failure).
             let rep_ids: Vec<i64> = hits
                 .iter()
-                .filter_map(|h| h.filepath.as_ref().and_then(|fp| rep_chunk.get(fp).copied()))
+                .filter_map(|h| {
+                    h.filepath
+                        .as_ref()
+                        .and_then(|fp| rep_chunk.get(fp).copied())
+                })
                 .collect();
             if !rep_ids.is_empty() {
                 if let Ok(rows) = sqlx::query(
@@ -630,7 +630,9 @@ impl SemanticIndex for PgVectorStore {
         }
 
         rank::apply_comention_boost(&mut hits, |fp| ents.get(fp).cloned().unwrap_or_default());
-        rank::apply_salience(&mut hits, now, |fp| stats.get(fp).copied().unwrap_or((None, 0)));
+        rank::apply_salience(&mut hits, now, |fp| {
+            stats.get(fp).copied().unwrap_or((None, 0))
+        });
         rank::sort_desc(&mut hits);
         Ok(hits)
     }
@@ -691,15 +693,24 @@ mod tests {
         use crate::cache::LocalIndexer;
         let server = pg();
         let llm = Arc::new(crate::llm::LlmClient::openrouter("test-key".into()));
-        let store =
-            PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
-                .await
-                .unwrap()
-                .with_graph_extractor(llm);
-        let q = store.graph_queue().expect("graph queue present with extractor");
+        let store = PgVectorStore::connect(
+            &server.database_url(),
+            "t",
+            Arc::new(StubEmbedder::new(384)),
+        )
+        .await
+        .unwrap()
+        .with_graph_extractor(llm);
+        let q = store
+            .graph_queue()
+            .expect("graph queue present with extractor");
         assert!(q.is_idle());
         store.index(7, "/notes/a.md", "hello world").await.unwrap();
-        assert_eq!(q.depth(), 1, "index() must enqueue the file for L7 extraction");
+        assert_eq!(
+            q.depth(),
+            1,
+            "index() must enqueue the file for L7 extraction"
+        );
         drop(store);
         let _ = server.shutdown();
     }
@@ -709,9 +720,13 @@ mod tests {
     #[tokio::test]
     async fn pg_index_search_and_rename() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
-            .await
-            .expect("connect + schema");
+        let store = PgVectorStore::connect(
+            &server.database_url(),
+            "t",
+            Arc::new(StubEmbedder::new(384)),
+        )
+        .await
+        .expect("connect + schema");
 
         store
             .index(2, "/auth.md", "user login and credential verification flow")
@@ -728,11 +743,15 @@ mod tests {
         store.rename("/auth.md", "/auth2.md").await.unwrap();
         let after = store.search("credential login", None).await.unwrap();
         assert_eq!(after[0].filepath.as_deref(), Some("/auth2.md"));
-        assert!(after.iter().all(|h| h.filepath.as_deref() != Some("/auth.md")));
+        assert!(after
+            .iter()
+            .all(|h| h.filepath.as_deref() != Some("/auth.md")));
 
         store.remove("/auth2.md").await.unwrap();
         let gone = store.search("credential login", None).await.unwrap();
-        assert!(gone.iter().all(|h| h.filepath.as_deref() != Some("/auth2.md")));
+        assert!(gone
+            .iter()
+            .all(|h| h.filepath.as_deref() != Some("/auth2.md")));
 
         // Close the client connection before shutting the server down, else the
         // server blocks waiting for the still-open connection to drain.
@@ -758,14 +777,18 @@ mod tests {
             let a = PgVectorStore::connect(&url, "alice", Arc::new(StubEmbedder::new(384)))
                 .await
                 .unwrap();
-            a.index(2, "/README.md", "alice alpha credential login secret").await.unwrap();
+            a.index(2, "/README.md", "alice alpha credential login secret")
+                .await
+                .unwrap();
         }
         // bob indexes the SAME path with different content.
         {
             let b = PgVectorStore::connect(&url, "bob", Arc::new(StubEmbedder::new(384)))
                 .await
                 .unwrap();
-            b.index(2, "/README.md", "bob banana bread recipe walnuts").await.unwrap();
+            b.index(2, "/README.md", "bob banana bread recipe walnuts")
+                .await
+                .unwrap();
             // bob sees only his own row for that path (alice's is invisible).
             let hb = b.search("banana recipe", None).await.unwrap();
             assert_eq!(hb.len(), 1);
@@ -798,12 +821,20 @@ mod tests {
     #[tokio::test]
     async fn pg_scoped_search_survives_crowding() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
-            .await
-            .expect("connect");
+        let store = PgVectorStore::connect(
+            &server.database_url(),
+            "t",
+            Arc::new(StubEmbedder::new(384)),
+        )
+        .await
+        .expect("connect");
         for i in 0..100 {
             store
-                .index(1000 + i, &format!("/noise/{i}.md"), "alpha shared keyword here")
+                .index(
+                    1000 + i,
+                    &format!("/noise/{i}.md"),
+                    "alpha shared keyword here",
+                )
                 .await
                 .unwrap();
         }
@@ -817,7 +848,8 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            hits.iter().any(|h| h.filepath.as_deref() == Some("/scope/target.md")),
+            hits.iter()
+                .any(|h| h.filepath.as_deref() == Some("/scope/target.md")),
             "scoped search dropped the in-scope file under crowding"
         );
         assert!(
@@ -837,9 +869,13 @@ mod tests {
     #[tokio::test]
     async fn pg_scoped_search_treats_like_wildcards_literally() {
         let server = pg();
-        let store = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
-            .await
-            .expect("connect");
+        let store = PgVectorStore::connect(
+            &server.database_url(),
+            "t",
+            Arc::new(StubEmbedder::new(384)),
+        )
+        .await
+        .expect("connect");
         store
             .index(2, "/r/100%/f.md", "alpha shared keyword")
             .await
@@ -855,11 +891,13 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            hits.iter().any(|h| h.filepath.as_deref() == Some("/r/100%/f.md")),
+            hits.iter()
+                .any(|h| h.filepath.as_deref() == Some("/r/100%/f.md")),
             "literal in-scope file missing"
         );
         assert!(
-            hits.iter().all(|h| h.filepath.as_deref() != Some("/r/100x/y.md")),
+            hits.iter()
+                .all(|h| h.filepath.as_deref() != Some("/r/100x/y.md")),
             "LIKE wildcard prefix over-matched a sibling"
         );
 
@@ -872,14 +910,22 @@ mod tests {
     #[tokio::test]
     async fn pg_connect_rejects_dimension_drift() {
         let server = pg();
-        let first = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
-            .await
-            .expect("first connect creates vector(384)");
+        let first = PgVectorStore::connect(
+            &server.database_url(),
+            "t",
+            Arc::new(StubEmbedder::new(384)),
+        )
+        .await
+        .expect("first connect creates vector(384)");
         // Close the connection so the single-connection server is free.
         drop(first);
 
-        let mismatched =
-            PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(256))).await;
+        let mismatched = PgVectorStore::connect(
+            &server.database_url(),
+            "t",
+            Arc::new(StubEmbedder::new(256)),
+        )
+        .await;
         assert!(
             mismatched.is_err(),
             "connect must reject a 256-d embedder against an existing vector(384) table"
@@ -910,16 +956,23 @@ mod tests {
         }
 
         let server = pg();
-        let first = PgVectorStore::connect(&server.database_url(), "t", Arc::new(StubEmbedder::new(384)))
-            .await
-            .expect("first connect stamps identity hash:384");
+        let first = PgVectorStore::connect(
+            &server.database_url(),
+            "t",
+            Arc::new(StubEmbedder::new(384)),
+        )
+        .await
+        .expect("first connect stamps identity hash:384");
         drop(first);
 
         // Same width (384), different identity → must be refused.
         let swapped = PgVectorStore::connect(
             &server.database_url(),
             "t",
-            Arc::new(TaggedEmbedder { dims: 384, id: "other-model:384".into() }),
+            Arc::new(TaggedEmbedder {
+                dims: 384,
+                id: "other-model:384".into(),
+            }),
         )
         .await;
         assert!(

@@ -78,33 +78,66 @@ def bark():
     let (ast, rels) = graph("app/models.py", src);
 
     // entities: 2 classes, their methods, 1 top-level function.
-    let kinds: Vec<_> = ast.entities.iter().map(|e| (e.name.as_str(), e.kind)).collect();
+    let kinds: Vec<_> = ast
+        .entities
+        .iter()
+        .map(|e| (e.name.as_str(), e.kind))
+        .collect();
     assert!(kinds.contains(&("Animal", CodeKind::Class)));
     assert!(kinds.contains(&("Dog", CodeKind::Class)));
     assert!(kinds.contains(&("bark", CodeKind::Function)));
     // speak appears twice (Animal.speak, Dog.speak) reclassified to Method.
     assert_eq!(
-        ast.entities.iter().filter(|e| e.name == "speak" && e.kind == CodeKind::Method).count(),
+        ast.entities
+            .iter()
+            .filter(|e| e.name == "speak" && e.kind == CodeKind::Method)
+            .count(),
         2
     );
 
     // contains: file → Animal/Dog/bark
-    assert!(has_edge(&rels, "contains", "models.py", "app.models.Animal"));
+    assert!(has_edge(
+        &rels,
+        "contains",
+        "models.py",
+        "app.models.Animal"
+    ));
     assert!(has_edge(&rels, "contains", "models.py", "app.models.bark"));
     // method: class → method
-    assert!(has_edge(&rels, "method", "app.models.Dog", "app.models.Dog.speak"));
+    assert!(has_edge(
+        &rels,
+        "method",
+        "app.models.Dog",
+        "app.models.Dog.speak"
+    ));
     // inherits: Dog → Animal (EXTRACTED)
-    assert!(has_edge(&rels, "inherits", "app.models.Dog", "app.models.Animal"));
-    assert!(rel(&rels, "inherits").iter().all(|r| r.confidence == "EXTRACTED"));
+    assert!(has_edge(
+        &rels,
+        "inherits",
+        "app.models.Dog",
+        "app.models.Animal"
+    ));
+    assert!(rel(&rels, "inherits")
+        .iter()
+        .all(|r| r.confidence == "EXTRACTED"));
     // imports: file → module
     assert!(rel(&rels, "imports").iter().any(|r| r.target == "os"));
     assert!(rel(&rels, "imports").iter().any(|r| r.target == "app.db"));
     // calls: Dog.speak → bark (INFERRED, weight 0.8)
-    assert!(has_edge(&rels, "calls", "app.models.Dog.speak", "app.models.bark"));
+    assert!(has_edge(
+        &rels,
+        "calls",
+        "app.models.Dog.speak",
+        "app.models.bark"
+    ));
     let calls = rel(&rels, "calls");
-    assert!(calls.iter().all(|r| r.confidence == "INFERRED" && (r.weight - 0.8).abs() < 1e-9));
+    assert!(calls
+        .iter()
+        .all(|r| r.confidence == "INFERRED" && (r.weight - 0.8).abs() < 1e-9));
     // source_location is populated.
-    assert!(rels.iter().all(|r| r.source_location.starts_with("app/models.py:")));
+    assert!(rels
+        .iter()
+        .all(|r| r.source_location.starts_with("app/models.py:")));
 }
 
 #[test]
@@ -125,13 +158,26 @@ func helper() {
 }
 "#;
     let (ast, rels) = graph("srv/main.go", src);
-    assert!(ast.entities.iter().any(|e| e.name == "Server" && e.kind == CodeKind::Class));
-    assert!(ast.entities.iter().any(|e| e.name == "Start" && e.kind == CodeKind::Method));
-    assert!(ast.entities.iter().any(|e| e.name == "helper" && e.kind == CodeKind::Function));
+    assert!(ast
+        .entities
+        .iter()
+        .any(|e| e.name == "Server" && e.kind == CodeKind::Class));
+    assert!(ast
+        .entities
+        .iter()
+        .any(|e| e.name == "Start" && e.kind == CodeKind::Method));
+    assert!(ast
+        .entities
+        .iter()
+        .any(|e| e.name == "helper" && e.kind == CodeKind::Function));
     // Start calls helper (resolves; fmt.Println does not → dropped).
     assert!(has_edge(&rels, "calls", "Start", "helper"));
-    assert!(!rel(&rels, "calls").iter().any(|r| r.target.ends_with("Println")));
-    assert!(rel(&rels, "imports").iter().any(|r| r.target.contains("fmt")));
+    assert!(!rel(&rels, "calls")
+        .iter()
+        .any(|r| r.target.ends_with("Println")));
+    assert!(rel(&rels, "imports")
+        .iter()
+        .any(|r| r.target.contains("fmt")));
 }
 
 #[test]
@@ -150,8 +196,14 @@ class Service extends Base implements Greeter {
 }
 "#;
     let (ast, rels) = graph("src/svc.ts", src);
-    assert!(ast.entities.iter().any(|e| e.name == "Greeter" && e.kind == CodeKind::Interface));
-    assert!(ast.entities.iter().any(|e| e.name == "Service" && e.kind == CodeKind::Class));
+    assert!(ast
+        .entities
+        .iter()
+        .any(|e| e.name == "Greeter" && e.kind == CodeKind::Interface));
+    assert!(ast
+        .entities
+        .iter()
+        .any(|e| e.name == "Service" && e.kind == CodeKind::Class));
     // extends Base + implements Greeter both → inherits (EXTRACTED).
     assert!(has_edge(&rels, "inherits", "Service", "Base"));
     assert!(has_edge(&rels, "inherits", "Service", "Greeter"));
@@ -181,7 +233,9 @@ class Worker extends Base {
     assert!(has_edge(&rels, "calls", "Worker.go", "Base.run"));
     // `new Base()` → uses Base (INFERRED).
     assert!(has_edge(&rels, "uses", "Worker.go", "Base"));
-    assert!(rel(&rels, "imports").iter().any(|r| r.target.contains("List")));
+    assert!(rel(&rels, "imports")
+        .iter()
+        .any(|r| r.target.contains("List")));
 }
 
 #[test]
@@ -196,8 +250,14 @@ fn boot() {
 fn start() {}
 "#;
     let (ast, rels) = graph("src/engine.rs", src);
-    assert!(ast.entities.iter().any(|e| e.name == "Engine" && e.kind == CodeKind::Class));
-    assert!(ast.entities.iter().any(|e| e.name == "boot" && e.kind == CodeKind::Function));
+    assert!(ast
+        .entities
+        .iter()
+        .any(|e| e.name == "Engine" && e.kind == CodeKind::Class));
+    assert!(ast
+        .entities
+        .iter()
+        .any(|e| e.name == "boot" && e.kind == CodeKind::Function));
     assert!(has_edge(&rels, "calls", "boot", "start"));
 }
 
@@ -217,9 +277,19 @@ fn cross_file_resolution() {
     let rels = resolve(&[a, b]);
 
     // Worker (in worker.py) inherits Base (defined in base.py).
-    assert!(has_edge(&rels, "inherits", "pkg.worker.Worker", "pkg.base.Base"));
+    assert!(has_edge(
+        &rels,
+        "inherits",
+        "pkg.worker.Worker",
+        "pkg.base.Base"
+    ));
     // Worker.go calls run (defined in base.py as Base.run).
-    assert!(has_edge(&rels, "calls", "pkg.worker.Worker.go", "pkg.base.Base.run"));
+    assert!(has_edge(
+        &rels,
+        "calls",
+        "pkg.worker.Worker.go",
+        "pkg.base.Base.run"
+    ));
 }
 
 #[test]

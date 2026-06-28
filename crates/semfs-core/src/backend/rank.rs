@@ -14,7 +14,7 @@ use crate::rerank::Reranker;
 pub const RRF_K: f64 = 60.0;
 /// Number of retrieval lanes (text vector / code vector / keyword FTS). Sizes the
 /// per-lane best-rank array in `FileAcc`.
-const N_LANES: usize = 4;
+const N_LANES: usize = 5;
 
 /// The retrieval lane a chunk came from. RRF fuses one vote PER LANE (a file's
 /// best chunk in that lane), so fusion must know which lane each bump belongs to.
@@ -32,6 +32,9 @@ pub enum Lane {
     /// user is clearly naming, so grep returns it #1 and the agent stops there
     /// instead of crawling. (tickets/ls-kg-semantic-readdir; case-289 token lever.)
     Path = 3,
+    /// Hidden KG retrieval-time candidate lane. Unlike the bounded file prior,
+    /// this lane can inject a graph-linked file into RRF before rerank.
+    Kg = 4,
 }
 /// Salience recency half-life (days).
 const SALIENCE_HALF_LIFE_DAYS: f64 = 14.0;
@@ -375,5 +378,15 @@ mod tests {
         apply_file_priors(&mut acc, &priors);
         assert!((acc["/weak"].score() - (weak_base + 0.15)).abs() < 1e-12);
         assert!(acc["/strong"].score() > strong_base - 1e-12);
+    }
+
+    #[test]
+    fn kg_lane_contributes_a_normal_rrf_vote() {
+        let mut acc: HashMap<String, FileAcc> = HashMap::new();
+        rrf_bump(&mut acc, "/f".into(), "kg candidate".into(), 4, Lane::Kg);
+        let score = acc["/f"].score();
+        let expected = 1.0 / (RRF_K + 4.0);
+        assert!((score - expected).abs() < 1e-12);
+        assert_eq!(acc["/f"].best_rank[Lane::Kg as usize], Some(4));
     }
 }

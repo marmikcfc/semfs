@@ -455,4 +455,3 @@ impl crate::vfs::File for SqliteFile {
         .map_err(|_| VfsError::NotFound)
     }
 }
-

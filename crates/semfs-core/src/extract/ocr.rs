@@ -22,6 +22,28 @@ fn api_key() -> Option<String> {
         .filter(|k| !k.trim().is_empty())
 }
 
+/// Resolve the vision LLM endpoint from optional overrides → `(base_url, model)`,
+/// default OpenRouter + `gpt-4.1-mini`. Pure (no env) so it's unit-testable.
+fn resolve_vision_endpoint(base: Option<String>, model: Option<String>) -> (String, String) {
+    (
+        base.filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string()),
+        model
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "openai/gpt-4.1-mini".to_string()),
+    )
+}
+
+/// Vision LLM endpoint from `SEMFS_VISION_LLM_{BASE_URL,MODEL}` — lets Qwen-VL
+/// (via OpenRouter, keyed by `OPENROUTER_API_KEY`) drop in for image/PDF captions.
+/// Unset ⇒ the existing gpt-4.1-mini path.
+fn vision_endpoint() -> (String, String) {
+    resolve_vision_endpoint(
+        std::env::var("SEMFS_VISION_LLM_BASE_URL").ok(),
+        std::env::var("SEMFS_VISION_LLM_MODEL").ok(),
+    )
+}
+
 /// Largest image we will base64-encode and send. Beyond this the request is
 /// pointless (provider limits) and the base64 expansion (~1.33×) wastes memory,
 /// so we skip → unindexed rather than balloon a flush.
@@ -37,8 +59,9 @@ fn ocr_image_with_key(key: Option<String>, bytes: &[u8]) -> Option<String> {
     // Only JPEG reaches here (sniff routes `FFD8FF` → Jpeg), so the data-URL
     // media type is correct for every input on this path.
     let data_url = format!("data:image/jpeg;base64,{}", base64_encode(bytes));
+    let (base, model) = vision_endpoint();
     let body = serde_json::json!({
-        "model": "openai/gpt-4.1-mini",
+        "model": model,
         "temperature": 0.0,
         "max_tokens": 2048,
         "messages": [{
@@ -50,7 +73,7 @@ fn ocr_image_with_key(key: Option<String>, bytes: &[u8]) -> Option<String> {
         }],
     });
     let resp: serde_json::Value = crate::http::timeout_agent()
-        .post("https://openrouter.ai/api/v1/chat/completions")
+        .post(&format!("{}/chat/completions", base.trim_end_matches('/')))
         .set("Authorization", &format!("Bearer {key}"))
         .set("Content-Type", "application/json")
         .send_json(body)
@@ -122,8 +145,9 @@ fn ocr_pdf_with_key(key: Option<String>, bytes: &[u8]) -> Option<String> {
         return None;
     }
     let data_url = format!("data:application/pdf;base64,{}", base64_encode(bytes));
+    let (base, model) = vision_endpoint();
     let body = serde_json::json!({
-        "model": "openai/gpt-4.1-mini",
+        "model": model,
         "temperature": 0.0,
         "max_tokens": 8192,
         "messages": [{
@@ -136,7 +160,7 @@ fn ocr_pdf_with_key(key: Option<String>, bytes: &[u8]) -> Option<String> {
         "plugins": [{ "id": "file-parser", "pdf": { "engine": "mistral-ocr" } }],
     });
     let resp: serde_json::Value = pdf_ocr_agent()
-        .post("https://openrouter.ai/api/v1/chat/completions")
+        .post(&format!("{}/chat/completions", base.trim_end_matches('/')))
         .set("Authorization", &format!("Bearer {key}"))
         .set("Content-Type", "application/json")
         .send_json(body)
@@ -259,8 +283,9 @@ fn vision_one(key: &str, bytes: &[u8]) -> Option<(String, bool)> {
         return None;
     }
     let data_url = format!("data:image/jpeg;base64,{}", base64_encode(bytes));
+    let (base, model) = vision_endpoint();
     let body = serde_json::json!({
-        "model": "openai/gpt-4.1-mini",
+        "model": model,
         "temperature": 0.0,
         "max_tokens": 2048,
         "messages": [{
@@ -272,7 +297,7 @@ fn vision_one(key: &str, bytes: &[u8]) -> Option<(String, bool)> {
         }],
     });
     let resp: serde_json::Value = crate::http::timeout_agent()
-        .post("https://openrouter.ai/api/v1/chat/completions")
+        .post(&format!("{}/chat/completions", base.trim_end_matches('/')))
         .set("Authorization", &format!("Bearer {key}"))
         .set("Content-Type", "application/json")
         .send_json(body)
@@ -300,7 +325,13 @@ fn classify_vision(reply: &str) -> Option<(String, bool)> {
     // A real transcription — but still drop a hard refusal the model emitted anyway.
     let head = t.chars().take(32).collect::<String>().to_lowercase();
     const REFUSALS: &[&str] = &[
-        "sorry", "i can't", "i cannot", "i can not", "i'm unable", "i am unable", "i'm not able",
+        "sorry",
+        "i can't",
+        "i cannot",
+        "i can not",
+        "i'm unable",
+        "i am unable",
+        "i'm not able",
     ];
     if REFUSALS.iter().any(|r| head.contains(r)) {
         return None;
@@ -429,6 +460,25 @@ mod tests {
         // Same gate for the PDF fallback — no key ⇒ None, no network.
         assert_eq!(ocr_pdf_with_key(None, PDF), None);
         assert_eq!(ocr_pdf_with_key(Some("   ".into()), PDF), None);
+    }
+
+    #[test]
+    fn resolve_vision_endpoint_falls_back_then_overrides() {
+        // Unset ⇒ existing gpt-4.1-mini path (no regression).
+        let (b, m) = resolve_vision_endpoint(None, None);
+        assert_eq!(b, "https://openrouter.ai/api/v1");
+        assert_eq!(m, "openai/gpt-4.1-mini");
+        // Set ⇒ Qwen-VL (via OpenRouter) drops in via env.
+        let (b, m) = resolve_vision_endpoint(
+            Some("https://openrouter.ai/api/v1".into()),
+            Some("qwen/qwen2.5-vl-72b-instruct".into()),
+        );
+        assert_eq!(b, "https://openrouter.ai/api/v1");
+        assert_eq!(m, "qwen/qwen2.5-vl-72b-instruct");
+        // Blank overrides fall back.
+        let (b, m) = resolve_vision_endpoint(Some("  ".into()), Some(String::new()));
+        assert_eq!(b, "https://openrouter.ai/api/v1");
+        assert_eq!(m, "openai/gpt-4.1-mini");
     }
 
     /// Live test (skips without `OPENROUTER_API_KEY`): the CJK PDF that

@@ -33,7 +33,11 @@ pub struct SessionCache {
 impl SessionCache {
     /// `window` = how many recent searches to remember (W). Caller passes > 0.
     pub fn new(window: u64) -> Self {
-        Self { window, turn: 0, seen: HashMap::new() }
+        Self {
+            window,
+            turn: 0,
+            seen: HashMap::new(),
+        }
     }
 
     /// Begin a new search turn: advance the counter and evict entries that have
@@ -83,7 +87,11 @@ mod tests {
         c.begin_turn(); // turn 1
         assert_eq!(c.see("/a.md"), None); // first send, recorded @1
         c.begin_turn(); // turn 2
-        assert_eq!(c.see("/a.md"), Some(1), "re-grep must report the original turn, not resend");
+        assert_eq!(
+            c.see("/a.md"),
+            Some(1),
+            "re-grep must report the original turn, not resend"
+        );
     }
 
     #[test]
@@ -106,7 +114,11 @@ mod tests {
         c.begin_turn(); // 2
         assert_eq!(c.see("/a.md"), Some(1), "still within window at turn 2");
         c.begin_turn(); // 3 — turn 1 now outside W=2 window, evicted
-        assert_eq!(c.see("/a.md"), None, "aged out → safe to resend (content may have left context)");
+        assert_eq!(
+            c.see("/a.md"),
+            None,
+            "aged out → safe to resend (content may have left context)"
+        );
     }
 
     #[test]

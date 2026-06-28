@@ -29,7 +29,11 @@ async fn main() -> anyhow::Result<()> {
     eprintln!(
         "processing {} files; OCR {}",
         paths.len(),
-        if ocr_on { "ENABLED" } else { "DISABLED (no key)" }
+        if ocr_on {
+            "ENABLED"
+        } else {
+            "DISABLED (no key)"
+        }
     );
 
     let (mut ok, mut miss, mut read_err) = (0usize, 0usize, 0usize);

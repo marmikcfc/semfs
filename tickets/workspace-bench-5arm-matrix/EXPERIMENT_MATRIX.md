@@ -9,7 +9,15 @@
 > → **SEARCH** (rewrite/fusion/rerank) → **DELIVERY** (what grep renders) → **AFFORDANCE**
 > (hint + KG surfaces) → **AGENT** → **JUDGE**.
 
+> **📂 Artifacts (pulled local 2026-06-12):** every phase's per-run traces live under
+> `artifacts/matrix_artifacts/<dir>/` — Phase 3 `e8seq/`, Phase 4 `e9w1/`, Phase 5 `e9d/`,
+> Phase 7 `e95v4/`, Phase 1 `rune_*/`+`rune_sum2/`+`run44ds/`. Phase 0's 5-arm matrix is at
+> `artifacts/run5arm/`; Modal run 2 (E-SMOKE/E9w2/E8/E11) is at `artifacts/run2/`. The full
+> dir → phase → experiment map (with confounds) is in
+> [`RUN_MANIFEST.md`](RUN_MANIFEST.md) § "Phase 1–7 EC2 run artifacts".
+
 ## Phase 0 — original 5-arm matrix (2026-06-10, 5 cases × 5 arms, n=1/cell)
+_Artifacts: `artifacts/run5arm/<case>_<arm>/` (also in `matrix_artifacts_FULL.tgz`)._
 
 ⚠️ INFRA BROKEN for all local arms: disk ~95% (ENOSPC page-tears), 716 `.semfs-error.txt`
 contamination in seed, fastembed cache pollution (mount hangs), stale daemon (vec0
@@ -24,6 +32,7 @@ corruption), silent cloud-fallback on timeout. No health gates. 13/15 local runs
 | cloud | Supermemory `workspace-bench-chanpin` (~74% coverage, summaries indexed) | v1 | **on** | off/off | server-side render | 27% @ 93K · won case 95 (12/12) |
 
 ## Phase 1 — E1–E5 on cleaned infra (2026-06-11 day; case 289 unless noted)
+_Artifacts: `artifacts/matrix_artifacts/rune_*/` (case-289/15/44 cells), `rune_lh/` (leanhint v2), `rune_sum2/`+`run44ds/` (E3 summaries)._
 
 All rows: seed **chanpin-clean** (716 sidecars removed via FUSE rm), health-gated driver
 (`run_case_e.sh`: disk guard ≥6G, `PRAGMA quick_check`, dummy SM key, `.fastembed_cache`
@@ -102,6 +111,7 @@ files missing) + judge filename strictness. Compression's behavioral test deferr
 Seeds: leanhint2 DEPRECATED (coached); `chanpin-leanhint3.db` = v4.1.
 
 ## Phase 7 — clean-hint test (case 95 ×4) + the case-95 benchmark bug
+_Artifacts: `artifacts/matrix_artifacts/e95v4/` (`v4_i1`,`v4_i2`,`v4_p1`,`v4_p2`)._
 
 v4_i1 206K/14/0 · **v4_i2 164K/17/12 — FIRST LOCAL PERFECT** · v4_p1 424K/32/0 ·
 v4_p2 163K/16/0. Three of four wrote real reports under the task-derived filename.

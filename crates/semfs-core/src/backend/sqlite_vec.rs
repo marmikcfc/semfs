@@ -963,7 +963,7 @@ impl SqliteVecStore {
         // when a search returns empty we want to see EXACTLY which stage zeroed it
         // (embed / vec / code / fts / rerank / phase-2 revalidation). See RCA
         // 2026-06-04-semfs-codex-clean-seed-timeout-poor-local-search-recall.
-        let (mut vec_n, mut code_n, mut fts_n) = (0usize, 0usize, 0usize);
+        let (mut vec_n, mut code_n, mut fts_n, mut kg_n) = (0usize, 0usize, 0usize, 0usize);
         // filepath -> the representative chunk's row id, captured at retrieval.
         // Used in phase 2 to detect a concurrent same-path reindex (which assigns
         // new ids), so we never return a snippet/score from pre-rewrite content.
@@ -1241,6 +1241,52 @@ impl SqliteVecStore {
             }
         }
 
+        if super::hidden_kg::retrieval_enabled() {
+            match super::hidden_kg::query_kg_candidates(&conn, query, scope.as_deref(), SEARCH_POOL)
+            {
+                Ok(result) => {
+                    if std::env::var("SEMFS_DEBUG_RANKING").is_ok() {
+                        let injected: Vec<(String, super::hidden_kg::KgCandidateReason, f64)> =
+                            result
+                                .candidates
+                                .iter()
+                                .take(8)
+                                .map(|c| (c.filepath.clone(), c.reason, c.score))
+                                .collect();
+                        tracing::info!(
+                            matched_entities = ?result.matched_entities,
+                            matched_communities = ?result.matched_communities,
+                            candidate_count = result.candidates.len(),
+                            injected = ?injected,
+                            "HIDDEN_KG_RETRIEVAL"
+                        );
+                    }
+                    for (rank, candidate) in result.candidates.into_iter().enumerate() {
+                        let Some((id, text)) =
+                            representative_chunk_for_file(&conn, &candidate.filepath, query)?
+                        else {
+                            continue;
+                        };
+                        rep_chunk.entry(candidate.filepath.clone()).or_insert(id);
+                        super::rank::rrf_bump(
+                            &mut by_file,
+                            candidate.filepath,
+                            text,
+                            rank,
+                            super::rank::Lane::Kg,
+                        );
+                        kg_n += 1;
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "hidden KG candidate lane unavailable; continuing without it"
+                    );
+                }
+            }
+        }
+
         if super::hidden_kg::enabled() && !by_file.is_empty() {
             let candidate_files: Vec<String> = by_file.keys().cloned().collect();
             match super::hidden_kg::query_kg_priors(&conn, query, candidate_files) {
@@ -1497,6 +1543,7 @@ impl SqliteVecStore {
             vec_n,
             code_n,
             fts_n,
+            kg_n,
             rrf_files = hits_after_rrf,
             reranked,
             final_hits,
@@ -1510,6 +1557,7 @@ impl SqliteVecStore {
                 vec_n,
                 code_n,
                 fts_n,
+                kg_n,
                 rrf_files = hits_after_rrf,
                 "search returned ZERO hits — see per-stage counts to locate the drop"
             );
@@ -1651,6 +1699,40 @@ fn to_fts_query(q: &str) -> Option<String> {
     }
 }
 
+fn representative_chunk_for_file(
+    conn: &rusqlite::Connection,
+    filepath: &str,
+    query: &str,
+) -> anyhow::Result<Option<(i64, String)>> {
+    if let Some(fq) = to_fts_query(query) {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT c.id, c.text FROM ffts \
+             JOIN chunks c ON c.id = ffts.rowid \
+             WHERE c.filepath = ?2 AND ffts MATCH ?1 \
+             ORDER BY rank LIMIT 1",
+        ) {
+            let row = stmt.query_row(rusqlite::params![fq, filepath], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            });
+            match row {
+                Ok(hit) => return Ok(Some(hit)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+    }
+    let mut stmt =
+        conn.prepare("SELECT id, text FROM chunks WHERE filepath = ?1 ORDER BY id LIMIT 1")?;
+    let row = stmt.query_row([filepath], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+    });
+    match row {
+        Ok(hit) => Ok(Some(hit)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// f32 vector → little-endian byte blob (sqlite-vec's native format).
 fn vec_to_blob(v: &[f32]) -> Vec<u8> {
     v.iter().flat_map(|f| f.to_le_bytes()).collect()
@@ -1697,6 +1779,26 @@ mod tests {
         assert!(out.len() <= DOC_RETURN_CAP);
         assert!(out.is_char_boundary(out.len())); // valid slice, no mid-char cut
         assert!(out.chars().all(|c| c == '中'));
+    }
+
+    #[test]
+    fn representative_chunk_prefers_file_local_fts_hit() {
+        let s = store();
+        s.index(
+            1,
+            "/notes/a.md",
+            "alpha shared\nrevenue target marker\nomega filler",
+        )
+        .unwrap();
+        let conn = s.db.conn.lock();
+        let (id, text) = representative_chunk_for_file(&conn, "/notes/a.md", "revenue")
+            .unwrap()
+            .unwrap();
+        assert!(id > 0);
+        assert!(
+            text.to_lowercase().contains("revenue"),
+            "expected FTS-selected chunk, got {text:?}"
+        );
     }
 
     /// Regression (RCA 2026-06-03-extract-uncapped-utf8-text-path): a large UTF-8
@@ -1861,6 +1963,136 @@ mod tests {
                 .map_or(true, |p| p.starts_with("/scope/"))),
             "scoped search leaked out-of-scope files: {hits:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn hidden_kg_retrieval_can_rescue_a_graph_only_file() {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+        for i in 0..40u64 {
+            store
+                .index(
+                    i + 1,
+                    &format!("/noise/{i}.md"),
+                    "revenue growth conversion rate dashboard report",
+                )
+                .unwrap();
+        }
+        store
+            .index(999, "/docs/graph_target.md", "orchid nebula archive ledger")
+            .unwrap();
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO graph_entity (path, name, kind) VALUES (?1, ?2, 'Concept')",
+                rusqlite::params!["/memories/revenue.md", "Revenue"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO edges (from_path, to_path, edge_kind, created_at, confidence) \
+                 VALUES (?1, ?2, 'mentions', 0, 'INFERRED')",
+                rusqlite::params!["/docs/graph_target.md", "/memories/revenue.md"],
+            )
+            .unwrap();
+        }
+
+        std::env::set_var("SEMFS_RESULT_LIMIT", "10");
+        std::env::remove_var("SEMFS_HIDDEN_KG_RETRIEVAL");
+        std::env::remove_var("SEMFS_HIDDEN_KG");
+        let without = store.search("revenue growth", None).await.unwrap();
+        assert!(
+            without
+                .iter()
+                .all(|h| h.filepath.as_deref() != Some("/docs/graph_target.md")),
+            "graph-only file should not appear without KG candidate retrieval"
+        );
+
+        std::env::set_var("SEMFS_HIDDEN_KG_RETRIEVAL", "on");
+        std::env::set_var("SEMFS_HIDDEN_KG", "on");
+        let with = store.search("revenue growth", None).await.unwrap();
+        assert!(
+            with.iter()
+                .any(|h| h.filepath.as_deref() == Some("/docs/graph_target.md")),
+            "KG candidate lane + prior should rescue the graph-linked file"
+        );
+        std::env::remove_var("SEMFS_HIDDEN_KG_RETRIEVAL");
+        std::env::remove_var("SEMFS_HIDDEN_KG");
+        std::env::remove_var("SEMFS_RESULT_LIMIT");
+    }
+
+    #[tokio::test]
+    async fn hidden_kg_retrieval_works_on_disk_seed() {
+        let dir = std::env::temp_dir().join(format!(
+            "semfs_hiddenkg_disk_{}_{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("kg_smoke.db");
+
+        {
+            let db = Arc::new(Db::open(&path).unwrap());
+            let store = SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap();
+            for i in 0..40u64 {
+                store
+                    .index(
+                        i + 1,
+                        &format!("/noise/{i}.md"),
+                        "revenue growth conversion rate dashboard report",
+                    )
+                    .unwrap();
+            }
+            store
+                .index(999, "/docs/graph_target.md", "orchid nebula archive ledger")
+                .unwrap();
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO graph_entity (path, name, kind) VALUES (?1, ?2, 'Concept')",
+                rusqlite::params!["/memories/revenue.md", "Revenue"],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO edges (from_path, to_path, edge_kind, created_at, confidence) \
+                 VALUES (?1, ?2, 'mentions', 0, 'INFERRED')",
+                rusqlite::params!["/docs/graph_target.md", "/memories/revenue.md"],
+            )
+            .unwrap();
+        }
+
+        let db = Arc::new(Db::open(&path).unwrap());
+        let reader = SqliteVecStore::open_existing(db, Arc::new(StubEmbedder::new(384)));
+        assert!(
+            reader.is_searchable(),
+            "disk seed should be locally searchable"
+        );
+
+        std::env::set_var("SEMFS_RESULT_LIMIT", "10");
+        std::env::remove_var("SEMFS_HIDDEN_KG_RETRIEVAL");
+        std::env::remove_var("SEMFS_HIDDEN_KG");
+        let without = reader.search("revenue growth", None).await.unwrap();
+        assert!(
+            without
+                .iter()
+                .all(|h| h.filepath.as_deref() != Some("/docs/graph_target.md")),
+            "graph-only file should not appear without KG candidate retrieval"
+        );
+
+        std::env::set_var("SEMFS_HIDDEN_KG_RETRIEVAL", "on");
+        std::env::set_var("SEMFS_HIDDEN_KG", "on");
+        let with = reader.search("revenue growth", None).await.unwrap();
+        assert!(
+            with.iter()
+                .any(|h| h.filepath.as_deref() == Some("/docs/graph_target.md")),
+            "KG candidate lane should rescue the graph-linked file on a disk seed"
+        );
+
+        std::env::remove_var("SEMFS_HIDDEN_KG_RETRIEVAL");
+        std::env::remove_var("SEMFS_HIDDEN_KG");
+        std::env::remove_var("SEMFS_RESULT_LIMIT");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Code/text routing: a code-like path indexes into the code lane, prose into

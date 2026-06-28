@@ -292,12 +292,68 @@ tight 289 behavior — pointer delivery suits single-answer QA better than N-fil
 
 ---
 
+### E16 — Confidence-adaptive delivery (adaptive-K)  *(USER DECISION 2026-06-12 — the slice/delivery direction, done right)*
+
+> **Decision recorded:** arena/corpus engineering ("forced-grep" corpora that block the agent's
+> shortcuts) is REJECTED — that's benchmark-gaming, not product. The E11-v2 "forced arena" draft
+> is dead; do not rebuild it. The product change is: **grep decides HOW MANY results to return
+> from the confidence curve.** One clear winner → return exactly 1, rendered as THE answer with
+> top confidence. Nothing solid → return 0 (honest empty, no noise dump). In between → the small
+> head-cluster before the score cliff. **Hard ceiling K=10** (`RESULT_LIMIT` stays the pool size;
+> adaptive-K trims the *render*). This supersedes the stopped E9w2 stop-signal path: the
+> spread-normalized margin already ships in `confidence_line` (grep.rs:575) but today it only
+> changes the advice TEXT — it never changes K. That's the gap.
+
+- **Mechanism (render layer — backend-agnostic, scores ride on `SearchHit` for local AND cloud):**
+  - reuse the spread-normalized margin `m_k = (s1−sk)/(s1−sN)` from `confidence_line`;
+  - **K=1 (ANSWER):** `m_2 ≥ T_high` AND top hit is COMPLETE FILE or has a line-range →
+    render ONE hit: `path:line_start-line_end` + capped excerpt +
+    `# confidence: HIGH — this is the answer; use directly, no further search needed.`
+  - **K=0 (EMPTY):** `s1` below a calibrated floor → render
+    `# no high-confidence match in the index for this query — do not re-search variants; <one bounded next action>`
+    (this folds in the terminal-miss idea; it removes NOISE, not information — honest, not blocking);
+  - **K=cliff (CLUSTER):** otherwise include hits up to the score cliff (largest k≤K_MAX with
+    `m_k ≤ T_cluster`), header `# confidence: MEDIUM — k closely-scored results`.
+  - env: `SEMFS_ADAPTIVE_K=on` (default off → A/B-able), `SEMFS_K_MAX=10`,
+    `SEMFS_CONF_HIGH` / `SEMFS_CONF_CLUSTER` / `SEMFS_CONF_FLOOR` (set from E16a, never guessed).
+
+- **Code changes:**
+  1. `crates/semfs/src/cmd/grep.rs` — `adaptive_k(hits) -> (k, tier)` + two new render shapes
+     (ANSWER / EMPTY); existing inline/two-tier/paths untouched when the flag is off; unit tests on
+     synthetic score curves + render snapshots.
+  2. **Contingency (decided BY E16a, not upfront):** if RRF-fused similarity can't separate
+     answer/no-answer, plumb the L5 cross-encoder score through (`SearchHit.rerank_score:
+     Option<f64>`, semfs-core backend + daemon protocol) and gate on that instead.
+
+- **E16a — score calibration (no agent, ~1h, sets the thresholds):** ~20 answerable queries
+  (chanpin cases + e11 needles) + ~20 unanswerable (fabricated topics) against the existing seeds
+  (`chanpin-clean`/`gemma-q4`, `e11_seed`). Dump the score curves. Choose thresholds such that:
+  answer-present → the right file is inside K and median K ≤ 3; answer-absent → K=0 in ≥80%.
+  **Kill:** the two distributions overlap so much no threshold achieves both → similarity is not a
+  confidence signal → switch to the rerank-score contingency or stop the whole direction.
+
+- **E16b — agent A/B:** arm A = current render (fixed K), arm B = adaptive-K. Same seed, binary,
+  model. Platforms: **Modal mountless** for breadth (5 WB cases × n≥5 — `run_case` harness exists)
+  + **E2B real-mount spot-check** (template `semfs-mount`, built 2026-06-12 — see
+  `artifacts/run2/e2b_mount/RESULTS_E2B_MOUNT.md`; real FUSE + daemon + matched gemma-q4 proven).
+  Metrics: median tokens + tail-rate (runs >2× median), calls, re-grep count, judge accuracy,
+  HIGH-fire rate, **false-HIGH rate** (HIGH on a wrong file — the accuracy guard).
+
+- **Predictions:** HIGH fires on ≥50% of answerable grep-using runs; K=1 runs land in the
+  ≤5-call floor band; median tokens −30%+ vs arm A at accuracy parity; K=0 kills the
+  re-grep-variants loop (the 4-consecutive-~400-char-greps pattern in the v4_i2 trace).
+- **Kill conditions:** net accuracy −1 rubric point from false-HIGH → raise `T_high` or kill;
+  token medians move <10% → K was not the binding constraint, return to turn-count levers.
+- **Safety rails:** `SEARCH_ONLY=off` stays (worst case = agent ignores the render and behaves
+  like plain — the "never remove the fallback" rule). All thresholds from calibration data, not
+  intuition. n≥5 per cell, medians + tail-rate, never means at n<5.
+
 ## Opinion ↔ experiment map
 
 | Opinion | Credence | Validated/killed by |
 |---|---|---|
-| O1 delivery form = #1 token lever | 85% | E6 (mechanism), E9, E14, E15 |
-| O2 hint outweighs the pipeline | 80% | E7a/b, E13 (alternative) |
+| O1 delivery form = #1 token lever | 85% | E6 (mechanism), E9, E14, E15, **E16 (adaptive-K)** |
+| O2 hint outweighs the pipeline | 80% | E7a/b, E13 (alternative), E16 (render replaces hint-coaching) |
 | O3 scout stack beats plain both-axes ≥3/5 | 60% | **E8 (pre-registered kill)** |
 | O4 summaries = accuracy-only lever, unmeasurable on current cases | 75% | E11 |
 | O5 cache-blind metric distorts | 70% | E10 |

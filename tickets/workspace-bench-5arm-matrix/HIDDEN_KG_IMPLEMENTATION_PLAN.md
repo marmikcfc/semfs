@@ -1,3 +1,5 @@
+> <!-- STALE-BANNER --> ⚠️ **SUPERSEDED (2026-06-25)** — this hidden-KG design SHIPPED as code (`crates/semfs-core/src/backend/hidden_kg.rs`, `SEMFS_HIDDEN_KG` / `SEMFS_KG_PPR`). Kept for design history. Current → [/CURRENT_STATE.md](../../CURRENT_STATE.md) · [PPR EXPERIMENT.md](../wblite-ppr-ab/EXPERIMENT.md).
+
 # Hidden KG Implementation Plan
 
 ## Objective

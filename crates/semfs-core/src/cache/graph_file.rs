@@ -27,14 +27,22 @@ const KNN_WEIGHT: f64 = 1.0;
 /// indexed to match `files`. Best-effort: a missing vector store / extension yields
 /// an `Err`, and the caller simply skips kNN densification.
 fn file_mean_embeddings(conn: &Connection, files: &[String]) -> rusqlite::Result<Vec<Vec<f32>>> {
-    let index: HashMap<&str, usize> = files.iter().enumerate().map(|(i, f)| (f.as_str(), i)).collect();
+    let index: HashMap<&str, usize> = files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.as_str(), i))
+        .collect();
     let mut sums: Vec<Vec<f32>> = vec![Vec::new(); files.len()];
     let mut counts = vec![0u32; files.len()];
-    let mut stmt =
-        conn.prepare("SELECT c.filepath, v.embedding FROM vchunks v JOIN chunks c ON c.id = v.rowid")?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+    let mut stmt = conn
+        .prepare("SELECT c.filepath, v.embedding FROM vchunks v JOIN chunks c ON c.id = v.rowid")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+    })?;
     for (fp, blob) in rows.flatten() {
-        let Some(&fi) = index.get(fp.as_str()) else { continue };
+        let Some(&fi) = index.get(fp.as_str()) else {
+            continue;
+        };
         if blob.len() % 4 != 0 {
             continue;
         }
@@ -181,10 +189,7 @@ pub fn build_digest(conn: &Connection) -> rusqlite::Result<String> {
             .take(GOD_NODES_PER_TOPIC)
             .map(|(e, _)| {
                 let path = &ent_path[*e as usize];
-                names
-                    .get(path)
-                    .cloned()
-                    .unwrap_or_else(|| slug_of(path))
+                names.get(path).cloned().unwrap_or_else(|| slug_of(path))
             })
             .collect();
         let mut member_files: Vec<String> = members.iter().map(|&fi| files[fi].clone()).collect();
@@ -302,7 +307,10 @@ pub fn compute_projection(conn: &Connection) -> rusqlite::Result<Vec<ProjView>> 
             .collect();
         let mut member_files: Vec<String> = members.iter().map(|&fi| files[fi].clone()).collect();
         member_files.sort();
-        views.push(ProjView { god_node_paths, member_files });
+        views.push(ProjView {
+            god_node_paths,
+            member_files,
+        });
     }
     views.sort_by(|a, b| b.member_files.len().cmp(&a.member_files.len()));
     Ok(views)
@@ -368,7 +376,11 @@ pub fn build_graph_json(conn: &Connection) -> rusqlite::Result<String> {
     {
         let mut stmt = conn.prepare("SELECT path, name, kind FROM graph_entity")?;
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
         })?;
         for row in rows.flatten() {
             ent.insert(row.0, (row.1, row.2));
@@ -480,7 +492,9 @@ pub fn build_graph_json(conn: &Connection) -> rusqlite::Result<String> {
                 .take(GOD_NODES_PER_TOPIC)
                 .map(|(e, _)| {
                     let p = &ent_path[*e as usize];
-                    ent.get(p).map(|(n, _)| n.clone()).unwrap_or_else(|| slug_of(p))
+                    ent.get(p)
+                        .map(|(n, _)| n.clone())
+                        .unwrap_or_else(|| slug_of(p))
                 })
                 .collect();
             let mut mf: Vec<String> = members.iter().map(|&fi| flist[fi].clone()).collect();
@@ -521,7 +535,8 @@ pub fn build_graph_report(conn: &Connection) -> rusqlite::Result<String> {
     // entity path -> display name
     let mut name: HashMap<String, String> = HashMap::new();
     if let Ok(mut s) = conn.prepare("SELECT path, name FROM graph_entity") {
-        if let Ok(rows) = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+        if let Ok(rows) = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        {
             for row in rows.flatten() {
                 name.insert(row.0, row.1);
             }
@@ -612,7 +627,10 @@ pub fn build_graph_report(conn: &Connection) -> rusqlite::Result<String> {
         .filter(|(_, _, rel, _, _)| {
             matches!(
                 rel.as_str(),
-                "semantically_similar_to" | "conceptually_related_to" | "contradicts" | "depends_on"
+                "semantically_similar_to"
+                    | "conceptually_related_to"
+                    | "contradicts"
+                    | "depends_on"
             )
         })
         .collect();
@@ -630,12 +648,18 @@ pub fn build_graph_report(conn: &Connection) -> rusqlite::Result<String> {
     }
 
     // Ambiguous edges — flagged for review (graphify includes, never omits)
-    let ambiguous: Vec<&(String, String, String, String, f64)> =
-        rels.iter().filter(|(_, _, _, c, _)| c == "AMBIGUOUS").collect();
+    let ambiguous: Vec<&(String, String, String, String, f64)> = rels
+        .iter()
+        .filter(|(_, _, _, c, _)| c == "AMBIGUOUS")
+        .collect();
     if !ambiguous.is_empty() {
         s.push_str("## Ambiguous edges (low certainty — review)\n");
         for (src, tgt, rel, _, score) in ambiguous.iter().take(10) {
-            s.push_str(&format!("- {} —[{rel}]→ {} ({score:.2})\n", label(src), label(tgt)));
+            s.push_str(&format!(
+                "- {} —[{rel}]→ {} ({score:.2})\n",
+                label(src),
+                label(tgt)
+            ));
         }
         s.push_str(&format!("  …{} ambiguous total\n\n", ambiguous.len()));
     }
@@ -659,9 +683,14 @@ pub fn build_graph_report(conn: &Connection) -> rusqlite::Result<String> {
     // Suggested questions — from the top god nodes
     s.push_str("## Suggested questions\n");
     for (p, _) in god.iter().take(5) {
-        s.push_str(&format!("- What is {} and how does it relate to the rest of this workspace?\n", label(p)));
+        s.push_str(&format!(
+            "- What is {} and how does it relate to the rest of this workspace?\n",
+            label(p)
+        ));
     }
-    s.push_str("\n_(semfs: `grep` searches by meaning; this report summarizes the entity graph.)_\n");
+    s.push_str(
+        "\n_(semfs: `grep` searches by meaning; this report summarizes the entity graph.)_\n",
+    );
     Ok(s)
 }
 
@@ -773,7 +802,9 @@ mod tests {
         assert_eq!(v["stats"]["confidence"]["INFERRED"], 3);
         // entity node carries name + kind
         let nodes = v["nodes"].as_array().unwrap();
-        assert!(nodes.iter().any(|n| n["type"] == "entity" && n["label"] == "成交金额"));
+        assert!(nodes
+            .iter()
+            .any(|n| n["type"] == "entity" && n["label"] == "成交金额"));
         assert!(nodes.iter().any(|n| n["type"] == "file"));
         assert!(!v["communities"].as_array().unwrap().is_empty());
     }
@@ -782,7 +813,11 @@ mod tests {
     fn empty_graph_still_renders_structural_map() {
         let conn = Connection::open_in_memory().unwrap();
         setup(&conn);
-        conn.execute("INSERT INTO chunks(filepath,text) VALUES ('/a/f.txt','x')", []).unwrap();
+        conn.execute(
+            "INSERT INTO chunks(filepath,text) VALUES ('/a/f.txt','x')",
+            [],
+        )
+        .unwrap();
         let md = build_digest(&conn).unwrap();
         assert!(md.contains("## Directory map"));
         assert!(md.contains("/a  (1 file(s))"));
@@ -869,7 +904,11 @@ mod tests {
             .unwrap();
         assert_eq!(n_files, 4);
         let n_primary: i64 = conn
-            .query_row("SELECT COUNT(*) FROM graph_community WHERE is_primary=1", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM graph_community WHERE is_primary=1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n_primary, 4);
         // god-nodes persisted with a rank-0 row per community
@@ -878,7 +917,11 @@ mod tests {
             .unwrap();
         assert!(n_gods >= 2, "at least one god-node per community");
         let n_rank0: i64 = conn
-            .query_row("SELECT COUNT(*) FROM graph_god_node WHERE rank=0", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM graph_god_node WHERE rank=0",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n_rank0, 2, "exactly one rank-0 god-node per community");
 

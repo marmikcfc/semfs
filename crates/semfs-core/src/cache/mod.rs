@@ -17,7 +17,7 @@ pub mod graph_queue;
 pub mod hydration;
 
 pub use db::{is_macos_noise_path, Db, DEFAULT_CHUNK_SIZE, DENTRY_CACHE_MAX, ROOT_INO};
-pub use fs::{ReconcileOutcome, CacheFs};
+pub use fs::{CacheFs, ReconcileOutcome};
 pub use graph_queue::{run_graph_worker, GraphQueue};
 pub use hydration::{HydrationKey, HydrationScheduler};
 

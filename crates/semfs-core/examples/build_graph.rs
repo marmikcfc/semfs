@@ -34,9 +34,7 @@ fn main() -> anyhow::Result<()> {
 
     // One concatenated text blob per file (cap to keep extraction fast).
     let files: Vec<(String, String)> = {
-        let mut stmt = conn.prepare(
-            "SELECT filepath, text FROM chunks ORDER BY filepath, id",
-        )?;
+        let mut stmt = conn.prepare("SELECT filepath, text FROM chunks ORDER BY filepath, id")?;
         let mut acc: std::collections::BTreeMap<String, String> = Default::default();
         for r in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
             let (fp, t) = r?;
@@ -115,7 +113,8 @@ fn main() -> anyhow::Result<()> {
         "done: {} files with entities, {} edges, {} distinct entities",
         results.len(),
         n_edges,
-        conn.query_row("SELECT COUNT(*) FROM graph_entity", [], |r| r.get::<_, i64>(0))?
+        conn.query_row("SELECT COUNT(*) FROM graph_entity", [], |r| r
+            .get::<_, i64>(0))?
     );
     Ok(())
 }

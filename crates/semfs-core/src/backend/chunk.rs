@@ -114,7 +114,11 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         let chunks = recursive_chunks(&content, &opts);
-        assert!(chunks.len() >= 3, "expected multiple chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 3,
+            "expected multiple chunks, got {}",
+            chunks.len()
+        );
 
         // Every chunk: <= max_words words, and a verbatim substring of content.
         for c in &chunks {
@@ -143,7 +147,10 @@ mod tests {
             max_words: 5,
             overlap_words: 2,
         };
-        let content = (1..=12).map(|n| format!("t{n}")).collect::<Vec<_>>().join(" ");
+        let content = (1..=12)
+            .map(|n| format!("t{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let chunks = recursive_chunks(&content, &opts);
         // First word in first chunk, last word in last chunk.
         assert!(chunks[0].starts_with("t1"));

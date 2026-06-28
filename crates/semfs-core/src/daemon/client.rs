@@ -87,38 +87,37 @@ async fn send_request_classified_to_path(
             socket.display()
         )));
     }
-    let stream = match tokio::time::timeout(Duration::from_secs(5), UnixStream::connect(socket))
-        .await
-    {
-        // Connect did NOT complete in 5s on a socket that EXISTS. A unix-socket
-        // connect only blocks like this when a daemon is listening but its accept
-        // loop is stalled or the listen backlog is saturated — i.e. the daemon is
-        // up but wedged. That's a daemon FAULT, not absence; classifying it as
-        // Unreachable would let `grep` silently bypass the live daemon and (for
-        // pglite, no direct path) return stale cloud results.
-        Err(_elapsed) => {
-            return Err(SendError::PostConnect(anyhow::anyhow!(
-                "timeout connecting to {} (daemon present but not accepting)",
-                socket.display()
-            )))
-        }
-        Ok(Err(e)) => {
-            // The socket file existed but the connect errored. Only the classic
-            // "no listener" errors are clear ABSENCE (a stale socket left by a
-            // crashed daemon): ECONNREFUSED, or ENOENT if it vanished mid-race.
-            // Any other error means we reached something that then failed — a
-            // transport fault to surface, not silent fallback.
-            let kind = e.kind();
-            let err = anyhow::Error::new(e).context(format!("connect to {}", socket.display()));
-            return Err(match kind {
-                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound => {
-                    SendError::Unreachable(err)
-                }
-                _ => SendError::PostConnect(err),
-            });
-        }
-        Ok(Ok(s)) => s,
-    };
+    let stream =
+        match tokio::time::timeout(Duration::from_secs(5), UnixStream::connect(socket)).await {
+            // Connect did NOT complete in 5s on a socket that EXISTS. A unix-socket
+            // connect only blocks like this when a daemon is listening but its accept
+            // loop is stalled or the listen backlog is saturated — i.e. the daemon is
+            // up but wedged. That's a daemon FAULT, not absence; classifying it as
+            // Unreachable would let `grep` silently bypass the live daemon and (for
+            // pglite, no direct path) return stale cloud results.
+            Err(_elapsed) => {
+                return Err(SendError::PostConnect(anyhow::anyhow!(
+                    "timeout connecting to {} (daemon present but not accepting)",
+                    socket.display()
+                )))
+            }
+            Ok(Err(e)) => {
+                // The socket file existed but the connect errored. Only the classic
+                // "no listener" errors are clear ABSENCE (a stale socket left by a
+                // crashed daemon): ECONNREFUSED, or ENOENT if it vanished mid-race.
+                // Any other error means we reached something that then failed — a
+                // transport fault to surface, not silent fallback.
+                let kind = e.kind();
+                let err = anyhow::Error::new(e).context(format!("connect to {}", socket.display()));
+                return Err(match kind {
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound => {
+                        SendError::Unreachable(err)
+                    }
+                    _ => SendError::PostConnect(err),
+                });
+            }
+            Ok(Ok(s)) => s,
+        };
 
     // --- Post-connect: we're talking to a real daemon now. Any failure from
     //     here on is a daemon-side fault (PostConnect), not absence. ---

@@ -52,7 +52,12 @@ pub struct Verdict {
 }
 
 /// Pure verdict logic — unit-tested without a database.
-pub fn assess(content_files: u64, reachable: u64, allow_unindexed: u64, min_coverage: f64) -> Verdict {
+pub fn assess(
+    content_files: u64,
+    reachable: u64,
+    allow_unindexed: u64,
+    min_coverage: f64,
+) -> Verdict {
     let reachable = reachable.min(content_files);
     let unreachable = content_files - reachable;
     let coverage = if content_files == 0 {
@@ -61,13 +66,24 @@ pub fn assess(content_files: u64, reachable: u64, allow_unindexed: u64, min_cove
         reachable as f64 / content_files as f64
     };
     let complete = unreachable <= allow_unindexed && coverage >= min_coverage;
-    Verdict { content_files, reachable, unreachable, coverage, complete }
+    Verdict {
+        content_files,
+        reachable,
+        unreachable,
+        coverage,
+        complete,
+    }
 }
 
 pub async fn run(args: Args) -> Result<()> {
     let (content_files, reachable, unreachable_names) =
         count_seed(&args.db).with_context(|| format!("opening seed {:?}", args.db))?;
-    let v = assess(content_files, reachable, args.allow_unindexed, args.min_coverage);
+    let v = assess(
+        content_files,
+        reachable,
+        args.allow_unindexed,
+        args.min_coverage,
+    );
     if args.json {
         let out = serde_json::json!({
             "db": args.db,
@@ -83,9 +99,19 @@ pub async fn run(args: Args) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
         println!("seed: {:?}", args.db);
-        println!("  content files (non-empty, non-sidecar): {}", v.content_files);
-        println!("  reachable by grep                      : {} ({:.1}%)", v.reachable, v.coverage * 100.0);
-        println!("  UNREACHABLE                            : {}", v.unreachable);
+        println!(
+            "  content files (non-empty, non-sidecar): {}",
+            v.content_files
+        );
+        println!(
+            "  reachable by grep                      : {} ({:.1}%)",
+            v.reachable,
+            v.coverage * 100.0
+        );
+        println!(
+            "  UNREACHABLE                            : {}",
+            v.unreachable
+        );
         for n in &unreachable_names {
             println!("      - {n}");
         }
@@ -129,8 +155,7 @@ fn seed_counts(conn: &rusqlite::Connection) -> Result<(u64, u64, Vec<String>)> {
              AND d.name NOT LIKE '%.extracted.md'
              AND d.name NOT LIKE '%.semfs-error.txt';",
     )?;
-    let content_files: u64 =
-        conn.query_row("SELECT COUNT(*) FROM _content", [], |r| r.get(0))?;
+    let content_files: u64 = conn.query_row("SELECT COUNT(*) FROM _content", [], |r| r.get(0))?;
     // reachable = own ino indexed, OR a sibling <name>.extracted.md indexed.
     let reachable: u64 = conn.query_row(
         "SELECT COUNT(*) FROM _content c
@@ -172,7 +197,10 @@ mod tests {
     fn incomplete_when_gap_exceeds_allowance() {
         let v = assess(627, 616, 0, 0.0);
         assert_eq!(v.unreachable, 11);
-        assert!(!v.complete, "11 unreachable with allow=0 must be INCOMPLETE");
+        assert!(
+            !v.complete,
+            "11 unreachable with allow=0 must be INCOMPLETE"
+        );
     }
 
     #[test]
@@ -238,8 +266,11 @@ mod tests {
             (6, reg, 60),
             (7, reg, 70),
         ] {
-            c.execute("INSERT INTO fs_inode(ino,mode,size) VALUES(?,?,?)", [ino, mode, size])
-                .unwrap();
+            c.execute(
+                "INSERT INTO fs_inode(ino,mode,size) VALUES(?,?,?)",
+                [ino, mode, size],
+            )
+            .unwrap();
         }
         for (id, name, parent, ino) in [
             (1, "a.txt", 0, 1),
@@ -257,8 +288,13 @@ mod tests {
             .unwrap();
         }
         // chunks: ino 1 (a.txt) and ino 6 (b.xlsx.extracted.md) are indexed.
-        c.execute("INSERT INTO chunks(ino,filepath) VALUES(1,'a.txt')", []).unwrap();
-        c.execute("INSERT INTO chunks(ino,filepath) VALUES(6,'b.xlsx.extracted.md')", []).unwrap();
+        c.execute("INSERT INTO chunks(ino,filepath) VALUES(1,'a.txt')", [])
+            .unwrap();
+        c.execute(
+            "INSERT INTO chunks(ino,filepath) VALUES(6,'b.xlsx.extracted.md')",
+            [],
+        )
+        .unwrap();
         c
     }
 
@@ -267,7 +303,10 @@ mod tests {
         let c = build_fixture();
         let (content, reachable, unreachable) = seed_counts(&c).unwrap();
         // content = a.txt, b.xlsx, c.pdf  (empty.txt excluded; the 3 sidecars excluded)
-        assert_eq!(content, 3, "content files should exclude empties + sidecars");
+        assert_eq!(
+            content, 3,
+            "content files should exclude empties + sidecars"
+        );
         // reachable = a.txt (direct) + b.xlsx (via .extracted.md sibling)
         assert_eq!(reachable, 2);
         assert_eq!(unreachable, vec!["c.pdf".to_string()]);

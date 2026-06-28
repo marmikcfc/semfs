@@ -10,7 +10,9 @@ use rusqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
 
 fn main() -> anyhow::Result<()> {
-    let db = std::env::args().nth(1).expect("usage: sparse_only <db> [bgem3|splade]");
+    let db = std::env::args()
+        .nth(1)
+        .expect("usage: sparse_only <db> [bgem3|splade]");
     let which = std::env::args().nth(2).unwrap_or_else(|| "splade".into());
     let model = match which.as_str() {
         "bgem3" => SparseModel::BGEM3,
@@ -32,7 +34,10 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let files: Vec<String> = order.clone();
-    let texts: Vec<String> = order.iter().map(|f| acc[f].chars().take(800).collect()).collect();
+    let texts: Vec<String> = order
+        .iter()
+        .map(|f| acc[f].chars().take(800).collect())
+        .collect();
     println!("{} files; sparse model={which}", files.len());
 
     let mut sparse = SparseTextEmbedding::try_new(
@@ -50,20 +55,29 @@ fn main() -> anyhow::Result<()> {
     let query = "top10 best selling products 畅销商品 成交金额 转化率 商品标题";
     for run in 1..=3 {
         let q = sparse.embed(vec![query.to_string()], None)?.remove(0);
-        let qmap: HashMap<u32, f32> =
-            q.indices.iter().map(|&i| i as u32).zip(q.values).collect();
+        let qmap: HashMap<u32, f32> = q.indices.iter().map(|&i| i as u32).zip(q.values).collect();
         let mut scored: Vec<(&str, f32)> = files
             .iter()
             .enumerate()
             .map(|(i, fp)| {
-                let s: f32 = docs[i].iter().map(|(k, v)| qmap.get(k).copied().unwrap_or(0.0) * v).sum();
+                let s: f32 = docs[i]
+                    .iter()
+                    .map(|(k, v)| qmap.get(k).copied().unwrap_or(0.0) * v)
+                    .sum();
                 (fp.as_str(), s)
             })
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         let rank = scored.iter().position(|(fp, _)| fp.contains(answer));
-        let top: Vec<&str> = scored.iter().take(3).map(|(fp, _)| fp.rsplit('/').next().unwrap_or(fp)).collect();
-        println!("run{run}: sparse-only answer rank #{rank:?} / {} files; top3={top:?}", files.len());
+        let top: Vec<&str> = scored
+            .iter()
+            .take(3)
+            .map(|(fp, _)| fp.rsplit('/').next().unwrap_or(fp))
+            .collect();
+        println!(
+            "run{run}: sparse-only answer rank #{rank:?} / {} files; top3={top:?}",
+            files.len()
+        );
     }
     Ok(())
 }

@@ -1,3 +1,5 @@
+> <!-- STALE-BANNER --> ⚠️ **STALE — not a semfs project doc** (2026-06-25). Skill/brainstorm scratch output; kept for history, not part of project documentation. Project state → [CURRENT_STATE.md](CURRENT_STATE.md).
+
 # How Humans Form Opinions: A Layered Mental Model from Neurons to Justification
 
 ## TL;DR

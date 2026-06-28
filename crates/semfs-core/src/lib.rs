@@ -29,8 +29,8 @@ pub mod embed;
 pub mod extract;
 pub mod http;
 pub mod llm;
-pub mod rerank;
 pub mod mount;
+pub mod rerank;
 pub mod sync;
 pub mod vfs;
 

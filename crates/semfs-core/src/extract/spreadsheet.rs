@@ -82,7 +82,9 @@ mod tests {
         // some sheet's text (per-sheet, not flattened).
         let sheets = extract_sheets(XLS);
         assert!(
-            sheets.iter().any(|s| s.text.contains("Product Quality Issue Analysis")),
+            sheets
+                .iter()
+                .any(|s| s.text.contains("Product Quality Issue Analysis")),
             "missing known xls header across sheets"
         );
     }

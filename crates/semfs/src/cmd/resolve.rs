@@ -33,7 +33,9 @@ fn text_embed_model(name: Option<&str>) -> EmbeddingModel {
             EmbeddingModel::EmbeddingGemma300M // 768d, multilingual
         }
         Some("e5-small") | Some("multilingual-e5-small") => EmbeddingModel::MultilingualE5Small,
-        Some("arctic-s") | Some("snowflake-arctic-embed-s") => EmbeddingModel::SnowflakeArcticEmbedS,
+        Some("arctic-s") | Some("snowflake-arctic-embed-s") => {
+            EmbeddingModel::SnowflakeArcticEmbedS
+        }
         _ => TEXT_EMBED_MODEL,
     }
 }
@@ -168,8 +170,9 @@ pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
         // the registry. The q4 embedder's identity (`byo:gemma-q4-onnx:768`) differs
         // from the registry's, so a q4 seed and an fp32 seed can't be cross-read.
         EmbedChoice::Local if env.embed_model.as_deref() == Some("gemma-q4") => {
-            let dir = std::env::var("SEMFS_EMBED_ONNX_DIR")
-                .unwrap_or_else(|_| format!("{}/gemma_q4", std::env::var("HOME").unwrap_or_default()));
+            let dir = std::env::var("SEMFS_EMBED_ONNX_DIR").unwrap_or_else(|_| {
+                format!("{}/gemma_q4", std::env::var("HOME").unwrap_or_default())
+            });
             Arc::new(LocalEmbedder::from_onnx_dir(
                 std::path::Path::new(&dir),
                 768,
@@ -202,7 +205,29 @@ pub fn build_embedder(env: &ResolveEnv) -> Result<Arc<dyn Embedder>> {
 /// a dedicated model; cloud/hash embed everything with the single text embedder).
 pub fn build_code_embedder(env: &ResolveEnv) -> Result<Option<Arc<dyn Embedder>>> {
     Ok(match choose_embed(env) {
-        EmbedChoice::Local => Some(Arc::new(LocalEmbedder::from_registry(CODE_EMBED_MODEL, None)?)),
+        // `SEMFS_CODE_EMBED_MODEL=gemma-q4` routes the CODE lane to the BYO gemma-q4
+        // ONNX (uniform with the text lane) instead of the default jina-code registry
+        // model. Distinct identity ("…-code") so the two gemma lanes never alias —
+        // mirrors the text-lane gemma-q4 branch in `build_embedder`.
+        EmbedChoice::Local
+            if std::env::var("SEMFS_CODE_EMBED_MODEL").as_deref() == Ok("gemma-q4") =>
+        {
+            let dir = std::env::var("SEMFS_CODE_EMBED_ONNX_DIR")
+                .or_else(|_| std::env::var("SEMFS_EMBED_ONNX_DIR"))
+                .unwrap_or_else(|_| {
+                    format!("{}/gemma_q4", std::env::var("HOME").unwrap_or_default())
+                });
+            Some(Arc::new(LocalEmbedder::from_onnx_dir(
+                std::path::Path::new(&dir),
+                768,
+                "model_q4",
+                "gemma-q4-onnx-code",
+            )?))
+        }
+        EmbedChoice::Local => Some(Arc::new(LocalEmbedder::from_registry(
+            CODE_EMBED_MODEL,
+            None,
+        )?)),
         _ => None,
     })
 }
@@ -312,10 +337,9 @@ pub async fn build_pg_store(
     container: &str,
     embedder: Arc<dyn Embedder>,
 ) -> Result<semfs_core::backend::pgvector::PgVectorStore> {
-    let url = env
-        .pg_url
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("SEMFS_STORAGE_BACKEND=pgvector but SEMFS_PG_URL not set"))?;
+    let url = env.pg_url.clone().ok_or_else(|| {
+        anyhow::anyhow!("SEMFS_STORAGE_BACKEND=pgvector but SEMFS_PG_URL not set")
+    })?;
     let mut store =
         semfs_core::backend::pgvector::PgVectorStore::connect(&url, container, embedder).await?;
     if let Some(reranker) = build_reranker(env)? {
@@ -465,8 +489,14 @@ mod tests {
     #[test]
     fn embed_backend_overrides_select_cloud_providers() {
         // `hash` is gone — only real embedders remain.
-        assert_eq!(choose_embed(&with_embed("openrouter")), EmbedChoice::CloudOpenRouter);
-        assert_eq!(choose_embed(&with_embed("openai")), EmbedChoice::CloudOpenAi);
+        assert_eq!(
+            choose_embed(&with_embed("openrouter")),
+            EmbedChoice::CloudOpenRouter
+        );
+        assert_eq!(
+            choose_embed(&with_embed("openai")),
+            EmbedChoice::CloudOpenAi
+        );
     }
 
     #[test]
@@ -488,13 +518,28 @@ mod tests {
 
     #[test]
     fn storage_choice_parses_all_backends() {
-        assert_eq!(choose_storage(&ResolveEnv::default()), StorageChoice::Sqlite);
-        assert_eq!(choose_storage(&with_storage("sqlite")), StorageChoice::Sqlite);
-        assert_eq!(choose_storage(&with_storage("pgvector")), StorageChoice::Pgvector);
-        assert_eq!(choose_storage(&with_storage("pglite")), StorageChoice::Pglite);
+        assert_eq!(
+            choose_storage(&ResolveEnv::default()),
+            StorageChoice::Sqlite
+        );
+        assert_eq!(
+            choose_storage(&with_storage("sqlite")),
+            StorageChoice::Sqlite
+        );
+        assert_eq!(
+            choose_storage(&with_storage("pgvector")),
+            StorageChoice::Pgvector
+        );
+        assert_eq!(
+            choose_storage(&with_storage("pglite")),
+            StorageChoice::Pglite
+        );
         assert_eq!(choose_storage(&with_storage("cloud")), StorageChoice::Cloud);
         // Unknown token falls back to the historical default.
-        assert_eq!(choose_storage(&with_storage("bogus")), StorageChoice::Sqlite);
+        assert_eq!(
+            choose_storage(&with_storage("bogus")),
+            StorageChoice::Sqlite
+        );
     }
 
     #[test]

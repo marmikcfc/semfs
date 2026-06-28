@@ -81,7 +81,6 @@ impl CacheFs {
         self.pull_documents(path).await
     }
 
-
     /// Reconstruct the full filepath for an inode by walking dentries to root.
     fn resolve_filepath(&self, ino: u64) -> Option<String> {
         if ino == super::db::ROOT_INO {
@@ -923,7 +922,8 @@ impl CacheFs {
     /// Import a host file into the VFS using root ownership. Returns
     /// `Ok(false)` if the file already exists.
     pub async fn import_file(&self, filepath: &str, contents: &[u8]) -> Result<bool, String> {
-        self.import_file_with_ownership(filepath, contents, 0, 0).await
+        self.import_file_with_ownership(filepath, contents, 0, 0)
+            .await
     }
 
     /// Import a host file into the VFS with explicit ownership. Returns
@@ -1092,8 +1092,13 @@ fn search_only_enabled() -> bool {
 }
 
 /// Files always shown even in search-first mode (orientation artifacts).
-const SEARCH_ALWAYS_VISIBLE: &[&str] =
-    &["KNOWLEDGE_GRAPH.md", "GRAPH_REPORT.md", "graph.json", "AGENTS.md", "CLAUDE.md"];
+const SEARCH_ALWAYS_VISIBLE: &[&str] = &[
+    "KNOWLEDGE_GRAPH.md",
+    "GRAPH_REPORT.md",
+    "graph.json",
+    "AGENTS.md",
+    "CLAUDE.md",
+];
 
 /// True if `dir_ino` is `/model_output` or nested inside it. Walked on the held
 /// `conn` (no re-lock). Bounded depth guards against a cycle.
@@ -1433,7 +1438,9 @@ impl FileSystem for CacheFs {
             }
             if let Some(cid) = super::graph_fs::ino_to_community(ino) {
                 let mut out = Vec::new();
-                for e in super::graph_fs::graph_community_entries(&conn, cid, &b).map_err(sql_err)? {
+                for e in
+                    super::graph_fs::graph_community_entries(&conn, cid, &b).map_err(sql_err)?
+                {
                     if let Some(rp) = e.real_path {
                         if let Some(attr) = real_attr_for_path(&conn, &rp) {
                             out.push(DirEntry { name: e.name, attr });
@@ -2254,8 +2261,7 @@ impl FileSystem for CacheFs {
         // Keep the local semantic index in sync with the path change: relabel
         // old → new (and drop anything the destination already had). Best-effort.
         if let Some(indexer) = &self.indexer {
-            if let (Some(old_fp), Some(new_fp)) =
-                (old_filepath.as_deref(), new_filepath.as_deref())
+            if let (Some(old_fp), Some(new_fp)) = (old_filepath.as_deref(), new_filepath.as_deref())
             {
                 if let Err(e) = indexer.rename(old_fp, new_fp).await {
                     tracing::warn!(old = %old_fp, new = %new_fp, "local index rename failed: {e}");

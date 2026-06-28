@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Understand it — why semfs burns tokens, and the 5 experiments that fix it</title>
+<style>
+  :root{
+    --bg:#0e1016;--bg2:#141823;--card:#181d29;--card2:#1f2533;--ink:#e9ecf4;--dim:#98a1b6;
+    --red:#ef5e54;--blue:#4aa3e0;--green:#2ecc8f;--gold:#f2c14e;--violet:#9b8cff;--line:#283044;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{background:radial-gradient(1200px 700px at 80% -10%,#1a2030 0,var(--bg) 55%);color:var(--ink);
+       font:15px/1.6 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:0;padding:0 0 80px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  header{padding:54px 24px 18px;text-align:center}
+  h1{font-size:30px;margin:0 0 8px;letter-spacing:-.4px}
+  h2{font-size:21px;margin:8px 0 4px}
+  .sub{color:var(--dim);max-width:720px;margin:0 auto}
+  section{margin:30px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 26px;margin:16px 0}
+  .card.glow{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold),0 0 40px -18px var(--gold)}
+  .kicker{font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--violet);font-weight:700;margin-bottom:6px}
+  code,pre{font-family:var(--mono)} pre{background:#0a0c12;border:1px solid var(--line);border-radius:10px;padding:14px;overflow-x:auto;font-size:13px}
+  .mono{font-family:var(--mono)}
+  button{font:inherit;cursor:pointer}
+  .pill{display:inline-block;border-radius:6px;padding:2px 9px;font-size:12px;font-weight:600}
+  .p-new{background:#243a6e;color:#bcd4ff}.p-rem{background:#3a2c55;color:#d8c6ff}.p-safe{background:#16402f;color:#9bf0c8}.p-80{background:#5a4708;color:#ffe08a}
+  .dim{color:var(--dim)} .tnum{font-variant-numeric:tabular-nums}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#1f2533}
+  input[type=range]{width:100%;accent-color:var(--gold)}
+  .row{display:flex;gap:22px;flex-wrap:wrap}
+  .col{flex:1;min-width:230px}
+  .big{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+  .barwrap{height:30px;background:#0a0c12;border-radius:6px;overflow:hidden;display:flex;border:1px solid var(--line)}
+  .barwrap>div{height:100%;transition:width .25s}
+  .legend span{display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-size:12.5px}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  /* depth control */
+  .depthbar{display:flex;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;max-width:560px;margin:14px auto}
+  .depthbar button{flex:1;background:var(--bg2);color:var(--dim);border:0;padding:9px 4px;font-size:12.5px;border-right:1px solid var(--line)}
+  .depthbar button:last-child{border-right:0}
+  .depthbar button.on{background:var(--violet);color:#0e1016;font-weight:700}
+  .depthpanel{min-height:84px}
+  /* flow diagram */
+  .node{cursor:pointer}
+  .node rect{transition:fill .2s,stroke .2s}
+  .node.sel rect{stroke:var(--gold);stroke-width:2.5}
+  .nodelabel{fill:var(--ink);font-size:12px;font-weight:600;pointer-events:none}
+  .nodesub{fill:var(--dim);font-size:9.5px;pointer-events:none}
+  .flowdetail{margin-top:10px;border-left:3px solid var(--gold);padding:6px 0 6px 14px;min-height:44px}
+  /* scatter */
+  .scatter circle{cursor:pointer;transition:opacity .2s,r .15s}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0}
+  .toggle{border:1px solid var(--line);background:var(--bg2);color:var(--dim);border-radius:20px;padding:5px 14px;font-size:13px}
+  .toggle.on{color:var(--ink)}
+  .toggle.on.nokg{border-color:var(--red);background:rgba(239,94,84,.15)}
+  .toggle.on.plain{border-color:var(--blue);background:rgba(74,163,224,.15)}
+  /* whys */
+  .why{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden}
+  .why summary{padding:12px 16px;background:var(--bg2);font-weight:600;list-style:none}
+  .why summary::before{content:"▸ ";color:var(--gold)}
+  .why[open] summary::before{content:"▾ "}
+  .why .body{padding:12px 16px;color:var(--dim)}
+  .why .ev{color:var(--green);font-size:12.5px;font-family:var(--mono)}
+  .exp{display:grid;grid-template-columns:1fr;gap:14px}
+  .tag{font-size:11px;color:var(--dim)}
+  .floorcalc label{font-size:13px;color:var(--dim)}
+  .savings{font-size:46px;font-weight:800;color:var(--green);font-variant-numeric:tabular-nums}
+  footer{color:#5d6680;font-size:12px;text-align:center;margin-top:40px;padding:0 24px}
+  .hl{color:var(--gold);font-weight:700}
+  .clip-vis{font-family:var(--mono);font-size:11px;line-height:1.35;background:#0a0c12;border:1px solid var(--line);border-radius:8px;padding:10px;height:190px;overflow:hidden;position:relative}
+  .clip-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gone{opacity:.18}
+  .clip-notice{color:var(--red);font-weight:700}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="kicker">Workspace-Bench × semfs · token economy</div>
+  <h1>Why does semfs burn more tokens — and the 5 fixes</h1>
+  <p class="sub">An interactive walk-through of the 30-cell experiment data. Drag the sliders. The whole argument
+  is one piece of counter-intuitive physics — better to <i>feel</i> it than read it.</p>
+</header>
+
+<div class="wrap">
+
+<!-- ===================== DEPTH CONTROL ===================== -->
+<section>
+  <div class="card">
+    <div class="kicker">The big idea — pick your depth</div>
+    <div class="depthbar" id="depthbar">
+      <button data-d="0" class="on">🧒 ELI5</button>
+      <button data-d="1">🎓 Beginner</button>
+      <button data-d="2">🛠️ Practitioner</button>
+      <button data-d="3">🔬 Engineer</button>
+      <button data-d="4">🧠 Expert</button>
+    </div>
+    <div class="depthpanel" id="depthpanel"></div>
+  </div>
+</section>
+
+<!-- ===================== SECTION 1: THE SYSTEM ===================== -->
+<section>
+  <h2>1 · What the system <i>is</i> (click a box)</h2>
+  <p class="dim">Data flows left→right. The agent (codex/GPT-5.4) does a task in a workspace; <b>semfs</b> is an
+  optional layer that indexes the corpus so the agent can <code>semfs grep</code> instead of crawling files.
+  The packets show information moving. Click any stage to see <b>what is stored there</b>.</p>
+
+  <div class="card">
+  <svg viewBox="0 0 1040 250" width="100%">
+    <defs>
+      <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 z" fill="#4a5573"/>
+      </marker>
+    </defs>
+    <!-- edges -->
+    <path d="M150,90 H205" stroke="#4a5573" stroke-width="2" marker-end="url(#arr)" fill="none"/>
+    <path d="M355,90 H410" stroke="#4a5573" stroke-width="2" marker-end="url(#arr)" fill="none"/>
+    <path d="M560,90 H615" stroke="#4a5573" stroke-width="2" marker-end="url(#arr)" fill="none"/>
+    <path d="M765,90 H820" stroke="#4a5573" stroke-width="2" marker-end="url(#arr)" fill="none"/>
+    <path d="M690,135 V200 H300 V118" stroke="#4a5573" stroke-width="2" marker-end="url(#arr)" fill="none" stroke-dasharray="5 4"/>
+    <text x="430" y="218" fill="#5d6680" font-size="11">the agent re-pays its whole context every turn ↻ (this is the cost)</text>
+
+    <!-- flowing packets -->
+    <circle r="4.5" fill="#2ecc8f"><animateMotion dur="2.6s" repeatCount="indefinite" path="M150,90 H205"/></circle>
+    <circle r="4.5" fill="#f2c14e"><animateMotion dur="2.6s" begin="0.6s" repeatCount="indefinite" path="M355,90 H410"/></circle>
+    <circle r="4.5" fill="#4aa3e0"><animateMotion dur="2.6s" begin="1.2s" repeatCount="indefinite" path="M560,90 H615"/></circle>
+    <circle r="4.5" fill="#9b8cff"><animateMotion dur="2.6s" begin="1.8s" repeatCount="indefinite" path="M765,90 H820"/></circle>
+
+    <!-- nodes -->
+    <g class="node" data-k="corpus"><rect x="20" y="55" width="130" height="70" rx="10" fill="#1f2533" stroke="#283044"/>
+      <text class="nodelabel" x="85" y="85" text-anchor="middle">Corpus</text>
+      <text class="nodesub" x="85" y="103" text-anchor="middle">1,452 files (xlsx/txt/…)</text></g>
+    <g class="node" data-k="seed"><rect x="225" y="55" width="130" height="70" rx="10" fill="#1f2533" stroke="#283044"/>
+      <text class="nodelabel" x="290" y="80" text-anchor="middle">semfs seed DB</text>
+      <text class="nodesub" x="290" y="97" text-anchor="middle">chunks + .extracted.md</text>
+      <text class="nodesub" x="290" y="110" text-anchor="middle">+ AGENTS.md hint</text></g>
+    <g class="node" data-k="grep"><rect x="430" y="55" width="130" height="70" rx="10" fill="#1f2533" stroke="#283044"/>
+      <text class="nodelabel" x="495" y="85" text-anchor="middle">semfs grep</text>
+      <text class="nodesub" x="495" y="103" text-anchor="middle">ranked render (capped)</text></g>
+    <g class="node" data-k="codex"><rect x="635" y="55" width="130" height="70" rx="10" fill="#1f2533" stroke="#283044"/>
+      <text class="nodelabel" x="700" y="80" text-anchor="middle">codex context</text>
+      <text class="nodesub" x="700" y="97" text-anchor="middle">GPT-5.4, clips@10KB</text>
+      <text class="nodesub" x="700" y="110" text-anchor="middle">cached_input = 0</text></g>
+    <g class="node" data-k="judge"><rect x="840" y="55" width="130" height="70" rx="10" fill="#1f2533" stroke="#283044"/>
+      <text class="nodelabel" x="905" y="85" text-anchor="middle">Deliverable → Judge</text>
+      <text class="nodesub" x="905" y="103" text-anchor="middle">Seed-2.0 rubrics</text></g>
+  </svg>
+  <div class="flowdetail" id="flowdetail"><span class="dim">Click a box above…</span></div>
+  </div>
+</section>
+
+<!-- ===================== SECTION 2: THE PHYSICS ===================== -->
+<section>
+  <h2>2 · The physics — drag turns, watch the bill explode</h2>
+  <p class="dim">Because <code>cached_input=0</code>, every turn re-reads the entire conversation so far. A tool
+  output at turn <i>s</i> is paid again on every later turn — so cost grows <span class="hl">quadratically</span>
+  in turn-count <b>T</b>, not linearly. This one fact explains the whole dataset.</p>
+
+  <div class="card">
+    <pre style="margin-top:0">Tokens ≈ <b style="color:#f2c14e">T·S</b>  +  <b style="color:#ef5e54">Σ (T−s)·oₛ</b>  +  <b style="color:#2ecc8f">G</b>
+         scaffold      re-paid tool outputs    generated
+         every turn    (the quadratic term)    (small)</pre>
+    <div class="row">
+      <div class="col">
+        <label>Turns <b id="tT" class="hl tnum">9</b> <span class="dim">(tool calls)</span></label>
+        <input type="range" id="sT" min="2" max="30" value="9">
+        <label>Per-call output + reasoning <b id="tc" class="tnum">2.2K</b></label>
+        <input type="range" id="sc" min="500" max="8000" step="100" value="2200">
+        <label>Scaffold S — task+hint <b id="tS" class="tnum">3.0K</b></label>
+        <input type="range" id="sS" min="1000" max="8000" step="100" value="3000">
+        <p class="dim" style="font-size:12.5px">Defaults roughly track plain-289 (T≈7→78K). The point isn't the exact number — it's the <b>shape</b>.</p>
+      </div>
+      <div class="col">
+        <div class="dim">Total tokens (this run)</div>
+        <div class="big" id="ttotal">—</div>
+        <div class="barwrap" id="bar" style="margin:10px 0"></div>
+        <div class="legend">
+          <span><i class="dot" style="background:#f2c14e"></i>scaffold re-reads <b id="lS" class="tnum"></b></span>
+          <span><i class="dot" style="background:#ef5e54"></i>re-paid outputs <b id="lc" class="tnum"></b></span>
+          <span><i class="dot" style="background:#2ecc8f"></i>generated <b id="lG" class="tnum"></b></span>
+        </div>
+        <div id="physnote" style="margin-top:14px;font-size:13.5px"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SECTION 3: THE CLIP ===================== -->
+<section>
+  <h2>3 · Why big results stopped mattering — the codex clip</h2>
+  <p class="dim">codex truncates every tool output <b>before the model sees it</b>: ~10 KB / 256 lines, head+tail,
+  middle silently dropped (measured on the box, E6). So payload size is already bounded — and overflow is
+  <span class="hl">catastrophic, not graceful</span>. Drag the payload past the cliff:</p>
+  <div class="card">
+    <div class="row">
+      <div class="col">
+        <label>Search result size <b id="tclip" class="hl tnum">6 KB</b></label>
+        <input type="range" id="sclip" min="1" max="60" value="6">
+        <div id="clipverdict" style="margin-top:12px;font-size:14px"></div>
+        <p class="dim" style="font-size:12.5px;margin-top:14px">This is why <code>SEMFS_GREP_RESULT_CAP=6KB</code>
+        isn't about saving bytes — it's about <b>choosing which bytes survive</b> the clip. And why the old
+        "uncapped 300K-char grep" never actually reached the model anyway.</p>
+      </div>
+      <div class="col">
+        <div class="clip-vis" id="clipvis"></div>
+        <div class="dim" style="font-size:11.5px;text-align:center;margin-top:4px">↑ what the model actually receives</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SECTION 4: THE EVIDENCE ===================== -->
+<section>
+  <h2>4 · The evidence — 30 real cells (hover the dots)</h2>
+  <p class="dim">E8 Modal run, 5 cases × 2 arms × 3 reps. Tokens track calls; score barely moves with tokens.
+  The killer: nokg's <b>means</b> look bad, but they're dragged up by a few right-tail runs. Toggle "show means"
+  to see how 3 fat runs distort the picture.</p>
+
+  <div class="card">
+    <div class="controls">
+      <button class="toggle on nokg" id="tgNokg">● nokg (semfs)</button>
+      <button class="toggle on plain" id="tgPlain">● plain (baseline)</button>
+      <span style="width:14px"></span>
+      <button class="toggle" id="tgMean">show case means →</button>
+      <span class="dim" id="hoverinfo">hover a dot</span>
+    </div>
+    <svg viewBox="0 0 1000 430" width="100%" class="scatter" id="scatter">
+      <!-- axes -->
+      <line x1="70" y1="380" x2="960" y2="380" stroke="#3a4358"/>
+      <line x1="70" y1="380" x2="70" y2="30" stroke="#3a4358"/>
+      <text x="515" y="414" fill="#98a1b6" font-size="13" text-anchor="middle">tool calls  (T)  →</text>
+      <text x="22" y="210" fill="#98a1b6" font-size="13" transform="rotate(-90 22 210)" text-anchor="middle">total tokens  →</text>
+      <!-- gridlines -->
+      <g id="grid"></g>
+      <line x1="70" y1="372" x2="960" y2="372" stroke="#2ecc8f" stroke-dasharray="5 4"/>
+      <text x="955" y="365" fill="#2ecc8f" font-size="11" text-anchor="end">floor band ~21K (measured 3×)</text>
+      <g id="dots"></g>
+      <g id="means"></g>
+    </svg>
+  </div>
+</section>
+
+<!-- ===================== SECTION 5: FIVE WHYS ===================== -->
+<section>
+  <h2>5 · Five whys — where the fat turns come from</h2>
+  <p class="dim">Each layer is backed by an artifact, not a guess (the rule on this project: verify, don't hypothesize).</p>
+  <div id="whys"></div>
+</section>
+
+<!-- ===================== SECTION 6: THE 5 EXPERIMENTS ===================== -->
+<section>
+  <h2>6 · The 5 experiments — understand each at your depth</h2>
+  <p class="dim">Same ladder as the top, but applied <b>per experiment</b>: what are we building, and why.
+  Pick a depth — all five cards re-explain themselves at that level.</p>
+  <div class="depthbar" id="expdepthbar" style="max-width:560px">
+    <button data-d="0" class="on">🧒 ELI5</button>
+    <button data-d="1">🎓 Beginner</button>
+    <button data-d="2">🛠️ Practitioner</button>
+    <button data-d="3">🔬 Engineer</button>
+  </div>
+  <div class="exp" id="exps"></div>
+</section>
+
+<!-- ===================== SLICE DEEP DIVE ===================== -->
+<section>
+  <h2>7 · Deep dive — the floor lever, done the <i>filesystem-consistent</i> way</h2>
+  <p class="dim">The 80% lever, grounded in real code paths (<code>grep.rs</code>, <code>init.rs</code>, the daemon IPC).
+  Key correction: the original "<code>semfs slice</code>" idea invents a verb — but the filesystem already <i>has</i> the verb.
+  Toggle the two worlds below and watch the running bill.</p>
+
+  <div class="card">
+    <div class="kicker">The key realization (from reading the code)</div>
+    <p>The daemon <b>already computes the full ranked result set</b> — every hit's filepath, matched chunk,
+    similarity, and the file content behind it (<code>Vec&lt;SearchHit&gt;</code>, <span class="mono">backend/mod.rs:21</span>).
+    Then the render loop <b>throws ~90% of it away</b>: <code>grep_result_cap()</code> trims each hit to 6KB and
+    <code>grep_total_cap()</code> caps the whole render at 10KB (<span class="mono">grep.rs:420–478</span>).
+    <span class="hl">The expensive thing already exists in memory — today we delete it.</span> <code>slice</code> keeps it
+    behind a tiny pointer.</p>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <button class="toggle on" id="wWith">▶ With slice (the floor)</button>
+      <button class="toggle" id="wWithout">Today (re-grep spiral)</button>
+      <span class="dim" id="worldtag"></span>
+    </div>
+    <div class="row">
+      <div class="col" style="min-width:360px">
+        <div id="turnlist" style="font-family:var(--mono);font-size:12.5px"></div>
+      </div>
+      <div class="col">
+        <div class="dim">running token bill</div>
+        <div class="big" id="worldtotal">—</div>
+        <div class="barwrap" id="worldbar" style="margin:10px 0;height:22px"></div>
+        <div id="worldnote" style="font-size:13px;margin-top:10px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="kicker">Wait — is <code>slice</code> even a filesystem command? (it isn't)</div>
+    <p><code>grep</code> is consistent because it's literally a <b>shadow of real <code>grep</code></b>: <code>semfs init</code>
+    installs a shell wrapper where <code>grep "natural language"</code> → semantic search and <code>grep -flag</code> falls
+    through to the real grep (<span class="mono">init.rs SHELL_WRAPPER</span>). semfs's naming rule is
+    <b>"overload the command the agent already reaches for"</b> — not invent verbs. <code>slice</code> breaks that: there's
+    no Unix <code>slice</code>, so the agent must <i>learn</i> it from the hint — and hint compliance is ~2/3, which is
+    E14's own kill condition. <span class="hl">slice's job is already a filesystem primitive the agent has and uses:</span></p>
+    <table>
+      <tr><th>slice's job</th><th>the filesystem command for it</th></tr>
+      <tr><td>exact line range a–b</td><td><code>sed -n '40,60p' FILE</code> · <code>head</code>/<code>tail</code></td></tr>
+      <tr><td>filter lines by term</td><td><code>grep TERM FILE</code> (real grep, with flags)</td></tr>
+      <tr><td>the whole readable form</td><td><code>cat FILE</code></td></tr>
+    </table>
+    <p class="dim" style="margin-top:8px">And in the local/mount arm the content is <b>already a real file</b>: the
+    <code>.extracted.md</code> sibling (format-trap fix). The v4_i2 trace shows the agent already slicing with python
+    <code>Path</code> reads unprompted — it reaches for native slicing, not a learned verb.</p>
+  </div>
+
+  <div class="card glow">
+    <div class="kicker" style="color:var(--gold)">The consistent redesign — cite the path, let the FS slice</div>
+    <pre style="margin:6px 0"><span style="color:#4aa3e0">$ grep</span> "top10 product transaction amount conversion rate" .
+<span class="dim"># ≤1KB back — top excerpt + ranked paths, each citing the readable sibling + a line hint</span>
+  ▸ hit 1  product_data/..._work_plan.xlsx.extracted.md   (sim 0.71)
+       挑选爆款 | top10 | 成交金额 | 转化率 …   <span class="dim">(answer rows ~40–60)</span>
+  ▸ hit 2  product_data/sales_summary.xlsx.extracted.md   (sim 0.63)
+
+<span style="color:#4aa3e0">$ sed -n '40,60p'</span> product_data/..._work_plan.xlsx.extracted.md
+<span class="dim"># exact verbatim rows — a command the agent already has, zero new verbs, never compressed</span></pre>
+    <p style="margin:6px 0 0">Same 3-turn floor (<code>grep → sed → write</code>), but <b>nothing new to learn</b>, so the
+    ~2/3-compliance risk evaporates. The only real work: make <code>grep</code> return small + cite the exact sibling path
+    and a line hint.</p>
+  </div>
+
+  <details class="why" open>
+    <summary>Two consistent ways to build it (pick by arm) — and why not a new verb</summary>
+    <div class="body">
+      <table style="margin-top:4px">
+        <tr><th>Design</th><th>How</th><th>New commands</th><th>Works when</th></tr>
+        <tr><td><b>A · Cite-the-path</b> <span class="dim">(cheapest)</span></td><td><code>grep</code> returns ≤1KB + the <code>.extracted.md</code> sibling path + a line-range hint; agent uses <code>sed</code>/<code>cat</code>/<code>head</code>.</td><td style="color:#2ecc8f"><b>zero</b></td><td>local/mount arm — the arm WB runs. Sibling already materialized.</td></tr>
+        <tr><td><b>B · Results-as-files</b> <span class="dim">(thesis-pure)</span></td><td>Daemon writes the full ranked set to a virtual dir <code>&lt;mount&gt;/.semfs/last/2_&lt;name&gt;</code>; the "id" becomes a <i>directory</i>. <code>cat/sed/grep/wc</code> all just work.</td><td style="color:#2ecc8f"><b>zero</b> <span class="dim">(FUSE plumbing)</span></td><td>any arm incl. cloud/no-file — content becomes a real path.</td></tr>
+        <tr><td><span class="dim">C · <code>slice</code> verb (original)</span></td><td><span class="dim">New subcommand + <code>Request::Slice</code> IPC + daemon LRU. Justified only if A &amp; B are both impossible.</span></td><td style="color:#ef5e54">one new verb</td><td><span class="dim">teaches against the grep convention; ~2/3 compliance risk.</span></td></tr>
+      </table>
+      <p style="margin-top:8px"><b>Recommendation:</b> <b>A</b> for the WB benchmark (immediate, no FUSE work),
+      <b>B</b> as the durable thesis-consistent form (search results <i>are</i> files). Reserve <b>C</b> for nothing —
+      the filesystem already has the verb.</p>
+    </div>
+  </details>
+
+  <div class="card">
+    <div class="kicker">Why this is THE 80% lever (not the others)</div>
+    <p>Sections 2 &amp; 5 proved the bill is <b>turn-count</b>, and the fat turns come from the agent's <b>verify
+    instinct</b> having no cheap outlet — when it distrusts a 6KB excerpt it re-greps (another 10KB dump, re-paid every
+    later turn) or crawls/reads whole files. <code>slice</code> gives that instinct a <b>1-turn, ~1KB outlet</b>:
+    "give me rows 40–60 of hit 2, verbatim." The floor flow <code>grep(1KB) → slice(2KB) → write</code> = 3 turns ≈
+    21–30K tokens. That floor <b>already happened 3 times by luck</b> (21,473 / 21,743 / 20,754) — <code>slice</code>
+    turns luck into the default. <b>Kill condition:</b> if the agent ignores <code>slice</code> in ≥2/3 runs, it's a
+    hint/UX problem, not an architecture one.</p>
+  </div>
+</section>
+
+<!-- ===================== THE 80% ===================== -->
+<section>
+  <div class="card glow floorcalc">
+    <div class="kicker" style="color:var(--gold)">8 · The one that moves the metric 80%</div>
+    <h2 style="margin-top:2px">E14 · search-session as files — make the floor run the <i>default</i></h2>
+    <p class="dim">The cheap run already exists in the data: <code>grep → sed → write</code> = 3 turns ≈ 21–30K
+    tokens (measured 3×: 21,473 / 21,743 / 20,754). Today it's a 1-in-3 coin flip — codex either trusts the first
+    result or spirals into 20+ verify turns. E14 gives the verify instinct a 1-turn outlet (<code>sed</code> the cited
+    sibling path — a command it already has) so the floor becomes the design, not the luck. Pick what you compare against:</p>
+    <div class="row">
+      <div class="col">
+        <label>Compare E14 floor against:</label>
+        <div class="controls">
+          <button class="toggle on" id="cmpPlain">plain-289 mean (108K)</button>
+          <button class="toggle" id="cmpNokg">current nokg-289 mean (391K)</button>
+        </div>
+        <label style="margin-top:10px">E14 typical run <b id="tfloor" class="tnum">24K</b></label>
+        <input type="range" id="sfloor" min="21" max="40" value="24">
+      </div>
+      <div class="col" style="text-align:center">
+        <div class="dim">token reduction</div>
+        <div class="savings" id="savings">−78%</div>
+        <div class="dim" id="savedetail"></div>
+        <div class="dim" style="font-size:12px;margin-top:8px">accuracy: unchanged by construction —<br>verbatim rows, same files surfaced</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Built from <span class="mono">artifacts/run2/e8/*.json</span> (30 cells) · trace breakdowns of
+  <span class="mono">e95v4/v4_i2</span> &amp; <span class="mono">e8seq/w1</span> ·
+  <span class="mono">RUN_MANIFEST · TOKEN_ECONOMY · EXPERIMENTS_NEXT · LEARNINGS · RESEARCH_NOTES</span>.
+  Numbers are real; the token simulator is a teaching model (quadratic shape exact, constants tuned).
+</footer>
+</div>
+
+<script>
+/* ---------- DEPTH CONTROL ---------- */
+const depths=[
+ "The robot reads its <b>whole notebook out loud every time</b> it does one small thing. semfs gives it a smart index so it can find answers fast — but if it keeps double-checking, the notebook gets huge and that's what costs money. The fix: let it grab the <b>exact</b> answer once and stop re-reading.",
+ "The agent pays for the entire conversation again on <b>every</b> tool call. So a run with 27 calls costs way more than one with 9 — even with the same search results. semfs adds value (accuracy) but sometimes triggers more calls (re-searching, file-crawling), which is where the extra tokens come from.",
+ "Cost is dominated by <b>turn count T</b>, not payload. After the grep-cap + codex's 10KB clip, no single result can blow up a run. The fat runs are made of repeat-query loops (4 identical greps) and python crawls — each extra deep turn re-pays ~8–10K of context. nokg's bad <i>means</i> are 3 right-tail runs dragging the average.",
+ "Formally: <code>Tokens ≈ T·S + Σ(T−s)·oₛ + G</code> under <code>cached_input=0</code>. The quadratic term <code>Σ(T−s)·oₛ</code> means early outputs are re-paid (T−s) times — and T's right tail is the only unbounded variable left. Root causes: miss-path retry loops, un-pre-paid discovery (crawls), hit-path distrust. Accuracy is ~independent of tokens within an arm.",
+ "The constraint (Theory-of-Constraints) has <b>moved</b>: payload was the bottleneck pre-grep-cap; now it's the <b>turn-tail</b>. Every viable experiment must collapse T's right tail on one of three paths — hit (search answers in 1 trusted turn → E14), miss (a miss is terminal, not a retry invitation → E16), or discovery (map pre-paid in S, not re-derived → E13). The 289 caveat: accuracy is <i>coupled</i> to exploration via the 403-discovery rubrics, so turn-cutting must preserve source-status visibility (E9-final's metadata line)."
+];
+const dpanel=document.getElementById('depthpanel');
+document.querySelectorAll('#depthbar button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#depthbar button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); dpanel.innerHTML=depths[+b.dataset.d];
+});
+dpanel.innerHTML=depths[0];
+
+/* ---------- FLOW DIAGRAM ---------- */
+const flow={
+ corpus:["<b>Corpus</b> — the raw workspace","Stores: 1,452 real files (Chinese e-commerce — xlsx tables, txt descriptions, docs). <b>plain</b> arm reads these directly with find/grep. Note: 3 of case-289's source files are <span style='color:#ef5e54'>403-Forbidden HTML stubs</span> — the data was never acquired, so 289 is partly unanswerable for <i>every</i> arm."],
+ seed:["<b>semfs seed DB</b> — the index","Stores: embedded text <i>chunks</i> for semantic search, <code>.extracted.md</code> siblings (binary table → readable rows, the proven −80% 'format-trap' fix), and the baked <code>AGENTS.md</code> <i>hint</i> that tells the agent how to behave. The hint is a ~2KB text artifact — and the campaign's biggest single win was <i>deleting</i> the bad parts of it."],
+ grep:["<b>semfs grep</b> — the delivery surface","Stores nothing; it <i>renders</i>. Returns a ranked list capped at <code>SEMFS_GREP_RESULT_CAP=6KB</code>/hit with honest COMPLETE/TRUNCATED markers. This is the layer the PwC paper says matters more than the retriever itself — a 38pp accuracy swing came from delivery <i>form</i> alone."],
+ codex:["<b>codex context</b> — where tokens are spent","The agent's conversation. Two brutal facts live here: (1) <code>cached_input=0</code> → every turn re-pays the full context; (2) every tool output is <b>clipped to ~10KB head+tail</b> before the model sees it. Together these make <i>turn count</i> the cost driver and <i>payload size</i> nearly irrelevant."],
+ judge:["<b>Deliverable → Judge</b> — the score","The agent writes a file to <code>model_output/</code>; a Seed-2.0 rubric judge grades it (e.g. 15 rubrics for case 289). Caveat baked into the data: case-95's filename is judge-side-only → its score is a <i>lottery</i>; use the token axis there, not accuracy."]
+};
+let selNode=null;
+document.querySelectorAll('.node').forEach(n=>n.onclick=()=>{
+  document.querySelectorAll('.node').forEach(x=>x.classList.remove('sel'));
+  n.classList.add('sel');
+  const f=flow[n.dataset.k];
+  document.getElementById('flowdetail').innerHTML="<b>"+f[0]+"</b><br><span class='dim'>"+f[1]+"</span>";
+});
+
+/* ---------- TOKEN SIMULATOR ---------- */
+const sT=document.getElementById('sT'),sc=document.getElementById('sc'),sS=document.getElementById('sS');
+function k(n){return n>=1000?(n/1000).toFixed(n<10000?1:0)+'K':n.toFixed(0)}
+function physics(){
+  const T=+sT.value, c=+sc.value, S=+sS.value, G=2000;
+  const scaff=T*S, repaid=c*T*(T-1)/2, tot=scaff+repaid+G;
+  document.getElementById('tT').textContent=T;
+  document.getElementById('tc').textContent=k(c);
+  document.getElementById('tS').textContent=k(S);
+  document.getElementById('ttotal').textContent=k(tot)+' tokens';
+  const bar=document.getElementById('bar');
+  bar.innerHTML='';
+  [['#f2c14e',scaff],['#ef5e54',repaid],['#2ecc8f',G]].forEach(([col,v])=>{
+    const d=document.createElement('div');d.style.background=col;d.style.width=(v/tot*100)+'%';bar.appendChild(d);
+  });
+  document.getElementById('lS').textContent=k(scaff);
+  document.getElementById('lc').textContent=k(repaid);
+  document.getElementById('lG').textContent=k(G);
+  const note=document.getElementById('physnote');
+  const pct=Math.round(repaid/tot*100);
+  if(T<=6) note.innerHTML="<span style='color:#2ecc8f'>Floor-band behaviour.</span> Few turns → little re-pay. This is what a trusted single-search run looks like.";
+  else if(T<=12) note.innerHTML="Typical run. The <span style='color:#ef5e54'>re-paid output term is now "+pct+"%</span> of the bill and climbing.";
+  else note.innerHTML="<span style='color:#ef5e54'>Tail run.</span> Re-paid outputs = "+pct+"% of cost. <b>Same search results, "+(T-9)+" extra verify/crawl turns</b> — this is the 659K-token case 289 run.";
+}
+[sT,sc,sS].forEach(s=>s.oninput=physics); physics();
+
+/* ---------- CLIP CLIFF ---------- */
+const sclip=document.getElementById('sclip');
+function clip(){
+  const kb=+sclip.value;
+  document.getElementById('tclip').textContent=kb+' KB';
+  const vis=document.getElementById('clipvis');
+  const verdict=document.getElementById('clipverdict');
+  vis.innerHTML='';
+  const totalLines=Math.round(kb*4.2); // ~rough lines
+  const over = kb>10;
+  const shownTop = over?7:Math.min(totalLines,14);
+  for(let i=0;i<14;i++){
+    const div=document.createElement('div');div.className='clip-line';
+    if(!over){
+      div.textContent= i<totalLines? "▸ result row "+(i+1)+"  …ranked hit, verbatim content here…" : "";
+      if(i>=totalLines) div.style.opacity=0;
+    } else {
+      if(i<6) div.textContent="▸ result row "+(i+1)+"  …head survives…";
+      else if(i===6){div.innerHTML="<span class='clip-notice'>… ~"+Math.round((kb-10)*250)+" tokens truncated (middle dropped) …</span>";}
+      else if(i>=12) {div.textContent="▸ result row "+(totalLines-(13-i))+"  …tail survives…";}
+      else {div.textContent="▸ result row "+(i+1)+"  …content lost…";div.classList.add('gone');}
+    }
+    vis.appendChild(div);
+  }
+  if(!over){
+    verdict.innerHTML="<span style='color:#2ecc8f'>✓ Passes whole.</span> The model sees every byte. Safe zone (≤10KB).";
+  }else{
+    const lost=Math.round((kb-10)/kb*100);
+    verdict.innerHTML="<span style='color:#ef5e54'>✗ Clipped — ~"+lost+"% silently gone.</span> Only head+tail survive. A 'slightly over' payload loses its <b>middle</b> — where the answer often is.";
+  }
+}
+sclip.oninput=clip; clip();
+
+/* ---------- SCATTER ---------- */
+const data=[
+ ['15','nokg',16,208715],['15','nokg',18,894726],['15','nokg',11,375816],
+ ['15','plain',8,147998],['15','plain',13,389474],['15','plain',13,490612],
+ ['44','nokg',9,92666],['44','nokg',9,105789],['44','nokg',8,78944],
+ ['44','plain',8,81967],['44','plain',8,114914],['44','plain',6,110872],
+ ['95','nokg',22,291698],['95','nokg',14,179754],['95','nokg',24,438482],
+ ['95','plain',19,178701],['95','plain',6,57412],['95','plain',10,118381],
+ ['175','nokg',11,126681],['175','nokg',8,118285],['175','nokg',9,86256],
+ ['175','plain',6,93926],['175','plain',5,61629],['175','plain',13,200978],
+ ['289','nokg',19,399355],['289','nokg',10,113589],['289','nokg',27,659333],
+ ['289','plain',9,104161],['289','plain',9,130220],['289','plain',6,88823],
+];
+const X0=70,X1=960,Y0=380,Y1=40,Tmax=30,TOKmax=900000;
+const px=t=>X0+t/Tmax*(X1-X0), py=v=>Y0-v/TOKmax*(Y0-Y1);
+const grid=document.getElementById('grid');
+[0,300000,600000,900000].forEach(v=>{
+  grid.innerHTML+=`<line x1="${X0}" y1="${py(v)}" x2="${X1}" y2="${py(v)}" stroke="#1c2230"/>`+
+                  `<text x="${X0-6}" y="${py(v)+4}" fill="#5d6680" font-size="10" text-anchor="end">${v/1000}K</text>`;
+});
+[0,10,20,30].forEach(t=>grid.innerHTML+=`<text x="${px(t)}" y="${Y0+18}" fill="#5d6680" font-size="10" text-anchor="middle">${t}</text>`);
+let show={nokg:true,plain:true},showMean=false;
+const dots=document.getElementById('dots'),means=document.getElementById('means'),hi=document.getElementById('hoverinfo');
+function draw(){
+  dots.innerHTML='';means.innerHTML='';
+  data.forEach(([cs,arm,t,tok])=>{
+    if(!show[arm])return;
+    const col=arm==='nokg'?'#ef5e54':'#4aa3e0';
+    const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',px(t));c.setAttribute('cy',py(tok));c.setAttribute('r',6);
+    c.setAttribute('fill',col);c.setAttribute('opacity',showMean?0.25:0.8);
+    c.onmouseenter=()=>{hi.innerHTML=`<b style="color:${col}">case ${cs} · ${arm}</b> — ${t} calls, ${tok.toLocaleString()} tokens`;c.setAttribute('r',9);};
+    c.onmouseleave=()=>{c.setAttribute('r',6);};
+    dots.appendChild(c);
+  });
+  if(showMean){
+    const cases=['15','44','95','175','289'];
+    cases.forEach(cs=>['nokg','plain'].forEach(arm=>{
+      if(!show[arm])return;
+      const rows=data.filter(d=>d[0]===cs&&d[1]===arm);
+      const mt=rows.reduce((a,b)=>a+b[2],0)/rows.length, mtok=rows.reduce((a,b)=>a+b[3],0)/rows.length;
+      const col=arm==='nokg'?'#ef5e54':'#4aa3e0';
+      means.innerHTML+=`<circle cx="${px(mt)}" cy="${py(mtok)}" r="11" fill="${col}" stroke="#fff" stroke-width="2"><title>case ${cs} ${arm} MEAN: ${Math.round(mt)} calls, ${Math.round(mtok).toLocaleString()} tok</title></circle>`+
+                       `<text x="${px(mt)}" y="${py(mtok)-16}" fill="${col}" font-size="10" text-anchor="middle" font-weight="700">${cs}</text>`;
+    }));
+  }
+}
+document.getElementById('tgNokg').onclick=function(){show.nokg=!show.nokg;this.classList.toggle('on');draw();};
+document.getElementById('tgPlain').onclick=function(){show.plain=!show.plain;this.classList.toggle('on');draw();};
+document.getElementById('tgMean').onclick=function(){showMean=!showMean;this.classList.toggle('on');hi.innerHTML=showMean?"big rings = case means; faded dots = individual runs. See how 1–2 fat runs pull a mean far above the cluster.":"hover a dot";draw();};
+draw();
+
+/* ---------- WHYS ---------- */
+const whys=[
+ ["Why is nokg's mean-tokens worse than plain on 3/5 cases?","A few right-tail runs (659K@27 calls, 894K@18, 438K@24) dominate the n=3 average. Medians are far closer.","30-cell table; toggle 'means' in §4"],
+ ["Why do tail runs cost 3–6× the low mode?","18–27 calls vs 8–10. Cost is superlinear in T — context re-pay.","TOKEN_ECONOMY §1.1, verified on traces"],
+ ["Why 18–27 calls?","Repeat-query loops after thin/empty results + imperative python file-crawls (plus, on 289, hunting the 403-stub files).","v4_i2 trace: 4 near-identical re-greps @~400 chars + 8 rglob crawls; total tool output only 40K chars in a 158K-token run — NO blob"],
+ ["Why do misses breed retries instead of stopping?","The render has no terminal-miss semantics; the HIGH stop-signal never fires (RRF spread compression; agent often skips grep entirely).","E9w2 kill condition 3/3; E9w1 calibration bug"],
+ ["Why is discovery re-derived every run?","No pre-paid workspace map; semfs grep is one probabilistic surface among many; hint compliance only ~2/3. The system never makes the first search sufficient and final.","LEARNINGS §3/§5"]
+];
+const wc=document.getElementById('whys');
+whys.forEach((w,i)=>{
+  wc.innerHTML+=`<details class="why" ${i===0?'open':''}><summary>Why #${i+1}: ${w[0]}</summary>
+   <div class="body">${w[1]}<br><span class="ev">evidence ▸ ${w[2]}</span></div></details>`;
+});
+
+/* ---------- EXPERIMENTS (per-experiment depth ladder) ---------- */
+// ladder[i] = [ELI5, Beginner, Practitioner, Engineer]; each = "<b>What:</b> … <br><b>Why:</b> …"
+const exps=[
+ {name:"E16",title:"Terminal-miss + repeat-query guard",tags:[["p-new","NEW"],["p-safe","accuracy-proof"]],rc:"RC1 miss-loops",
+  ladder:[
+   "<b>What:</b> When the robot looks for something that isn't there, it shrugs and looks <i>again</i>… and again. We teach the search to say \"it's not here — go look in that room instead,\" and to remember its last question so an identical re-ask just gets \"same as before.\"<br><b>Why:</b> Stop the robot pacing in circles.",
+   "<b>What:</b> Make an empty/weak search result a <i>clear dead-end</i> with a next step, and short-circuit near-identical repeat searches with a 1-line \"same results as your last query.\"<br><b>Why:</b> Right now vague misses look like \"maybe try again,\" so the agent re-runs the same search 4× — pure wasted turns, and turns are the whole cost.",
+   "<b>What:</b> Render-side: on 0 hits / all-sub-threshold scores, emit one authoritative line (nearest indexed terms + \"best next action: read &lt;top dir&gt;\") instead of a thin noise render. Daemon-side: keep the last few query embeddings; a new query ≥0.9 cosine to a prior one returns a ~50-token stub.<br><b>Why:</b> Directly kills the trace pattern we found — 4 consecutive near-identical re-greps. Arena = case 15 (missing file, accuracy frozen at 1/16 in all 6 cells), so any token saved is free.",
+   "<b>What:</b> Hook the empty-hits branch in grep's render + a small ring buffer of (embedding,id) in the daemon search handler.<br><b>Why / kill:</b> Predict tail-mode frequency halves on 15/95; case-15 nokg mean −40%+. <b>Kill:</b> tails persist <i>with</i> miss-stubs visible in the trace → tails are crawl-driven, weight shifts to E13."
+  ]},
+ {name:"E14",title:"search-session as files (cite-the-path / results-as-files)",tags:[["p-rem","REMAINING"],["p-80","THE 80%"]],rc:"RC3 hit-path distrust",
+  ladder:[
+   "<b>What:</b> Today the robot gets handed a thick stack of papers on every search and has to lug the whole stack around all day, re-reading it. Instead, keep the papers as a real file and just tell the robot \"the answer is on lines 40–60\" — it reads exactly those lines with a tool it already owns.<br><b>Why:</b> Carrying less = paying less, every single step — and you don't teach it a new trick.",
+   "<b>What:</b> <code>grep</code> returns a tiny summary + the <i>exact readable file path</i> + a line hint; if the agent needs exact numbers it does <code>sed -n '40,60p' &lt;path&gt;</code> — a command it already uses. No new verb.<br><b>Why:</b> Today grep dumps up to 10KB into the conversation, re-paid every later step; worse, when the agent doubts the snippet it searches <i>again</i>. Small-in + a cited path it can slice removes both, the filesystem-native way.",
+   "<b>What:</b> The daemon already computes the full ranked set then discards it at render time. Don't invent <code>slice</code> — keep the content <i>as files</i>: (A) return the <code>.extracted.md</code> sibling path + line hint so the agent uses <code>sed</code>/<code>cat</code>; or (B) expose the ranked set as virtual files under <code>.semfs/last/</code>.<br><b>Why:</b> <code>slice</code> is a non-Unix verb the agent must learn (hint compliance ~2/3 = the kill condition). The agent already reaches for <code>sed</code>/python slicing unprompted (v4_i2 trace).",
+   "<b>What:</b> Option A (ship first): make <code>grep</code> return ≤1KB + cite the sibling path + a line range — delivery-form change only, zero new commands, local arm. Option B (durable): daemon materializes results as virtual files so <code>cat/sed/grep</code> work on any arm incl. cloud. Reserve a <code>slice</code> verb for nothing. Verbatim always (dual-store rule → protects exact-value rubrics).<br><b>Why / kill:</b> Floor flow grep(1KB)→sed(2KB)→write = T3 ≈ 21–30K (measured 3×: 21,473/21,743/20,754). <b>Kill:</b> agent doesn't slice the cited path in ≥2/3 runs → it's the hint, not the architecture."
+  ]},
+ {name:"E9-final",title:"paths vs two-tier duel, n≥5, median-judged",tags:[["p-rem","REMAINING"],["p-safe","+ metadata line"]],rc:"tail variance + RC5",
+  ladder:[
+   "<b>What:</b> There are two ways to hand over results: \"here's the answer written out\" vs \"here's where to look.\" We finally test which wins for each kind of task — fairly, many times — and on the tricky case we add a tag: \"heads up, this file is actually a broken 321-byte error page.\"<br><b>Why:</b> Stop guessing which hand-off is better; let the data say.",
+   "<b>What:</b> Run the render-mode duel to completion: paths-mode (pointers) vs two-tier (one full excerpt + pointers), judged by <i>median</i> not mean.<br><b>Why:</b> paths-mode was the most stable setup ever measured but it crawled on a multi-file task; two-tier suits single-answer tasks. We need the per-task-shape default, measured honestly.",
+   "<b>What:</b> Both modes already exist (<code>SEMFS_GREP_RENDER_MODE=paths|two-tier</code>); the experiment <i>is</i> the discipline — n≥5, report median + tail-rate separately (means measure the lottery). Add a per-hit factual metadata line on 289 (\"HTML error page, 321B\").<br><b>Why:</b> The metadata line moves 403-discovery to turn 1 — a token win that can only <i>help</i> the 403 rubrics (RC5 coupling), and it's delivery design, not coaching (the defensible side of the reverted integrity-banner line).",
+   "<b>What:</b> No new architecture — runs + a ~2h metadata line in the render.<br><b>Why / kill:</b> Predict paths wins QA-shaped (289/175) on median+tail-rate; two-tier wins synthesis (95/15). <b>Kill:</b> no arm separates on medians at n=5 → render mode is exhausted as a lever."
+  ]},
+ {name:"E13",title:"≤1KB workspace map in the hint",tags:[["p-rem","REMAINING"],["p-safe","accuracy-proof"]],rc:"RC2 crawls",
+  ladder:[
+   "<b>What:</b> Before the robot hunts room to room, tape a little map by the door: \"kitchen here, files there.\"<br><b>Why:</b> It walks straight to the right room instead of opening every door.",
+   "<b>What:</b> Inject a ~1KB map (top dirs + file-type counts + where-things-live one-liners) into the hint.<br><b>Why:</b> The agent burns ~8 turns running python just to learn which folders exist — info the index already has. Pre-pay discovery once instead of re-deriving it every run.",
+   "<b>What:</b> +~250 tokens to the per-turn scaffold S to delete 2–6 discovery turns — a pure S-for-T trade. Retrieval-free, so it helps plain-like behavior too and accuracy can't move.<br><b>Why:</b> v4_i2's trace shows ~8 python crawls locating dirs the index already knew. Aider repo-map / hermesagent lazy-bootstrap precedent.",
+   "<b>What:</b> Generate the map at seed-build (dir census + file-type histogram), bake into AGENTS.md.<br><b>Why / kill:</b> Predict discovery probes 4–8 → 1–2; −15–30% median tokens on crawl-heavy cases (95/15). <b>Kill:</b> probe count unchanged in traces → maps don't steer codex; drop."
+  ]},
+ {name:"E11-v2",title:"discovery corpus that actually stresses discovery",tags:[["p-new","REDESIGN"],["p-safe","accuracy-proof"]],rc:"the arena itself",
+  ladder:[
+   "<b>What:</b> We tried to prove smart-search wins at \"needle in a haystack\" — but our haystack was tiny, so plain scanning was just as fast. Build a <i>real</i> haystack: thousands of fat files with the answer's filename hidden.<br><b>Why:</b> You can't show search beats scanning when scanning is trivially cheap.",
+   "<b>What:</b> Rebuild the E11 corpus with ≥1,000 files and/or ≥10KB each, unnamed answer files, near-duplicate siblings, cross-lingual tasks (Chinese question ↔ English files).<br><b>Why:</b> E11-v1 was a null result because 200×1KB files cost only ~70K to scan — nothing for search to save.",
+   "<b>What:</b> The token <i>delta</i> vs plain scales with scan cost: plain grows linearly with corpus size, semfs stays flat. Also fix the rubric name-strictness (accept \"Widget-Sigma (variant 42)\").<br><b>Why:</b> This is where the field's −97% discovery-phase numbers live (GrepAI), and where the proven cross-lingual rewrite (#417→#1) becomes decisive — grep can't bridge zh↔en at all.",
+   "<b>What:</b> Author corpus + rubrics; reuse the <code>SEMFS_INDEX_ONLY</code> seed builder.<br><b>Why / kill:</b> Predict plain tokens ≥2× semfs at equal accuracy on ≥2/3 cases. <b>Kill:</b> semfs ≤ plain here → the problem is deeper than arena choice (O8's falsifier)."
+  ]}
+];
+let expDepth=0;
+const ec=document.getElementById('exps');
+function renderExps(){
+  ec.innerHTML='';
+  exps.forEach((e,i)=>{
+    const glow=e.tags.some(t=>t[0]==='p-80');
+    const pills=e.tags.map(t=>`<span class="pill ${t[0]}">${t[1]}</span>`).join('');
+    ec.innerHTML+=`<div class="card${glow?' glow':''}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <b style="font-size:17px">${i+1} · ${e.name} — ${e.title}</b>${pills}
+      </div>
+      <p style="margin:10px 0 8px">${e.ladder[expDepth]}</p>
+      <p style="margin:0"><span class="tag">attacks <b style="color:#f2c14e">${e.rc}</b></span></p>
+    </div>`;
+  });
+}
+document.querySelectorAll('#expdepthbar button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#expdepthbar button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); expDepth=+b.dataset.d; renderExps();
+});
+renderExps();
+
+/* ---------- SLICE: TWO WORLDS ---------- */
+const worlds={
+ with:{tag:"grep → sed → write · 3 turns, trusted · zero new commands",
+   turns:[["grep \"…\"","1KB excerpt + paths citing .extracted.md + line hint",1],["sed -n '40,60p' …extracted.md","exact rows, verbatim",1],["write deliverable","done",1]],
+   S:3000,c:1800,
+   note:"<span style='color:#2ecc8f'>The floor.</span> The verify instinct got a cheap 1-turn outlet — <code>sed</code> on the cited sibling, a command it already has — so no re-search, no whole-file crawl. ≈24K — already happened 3× by luck; citing the path makes it the default."},
+ without:{tag:"grep → distrust → re-grep ×3 → crawl → read whole files → write",
+   turns:[["semfs grep \"…\"","10KB dump (re-paid hereafter)",1],["distrust partial excerpt","",0],["semfs grep \"…\" (again)","another 10KB dump",1],["semfs grep variant","~400 chars, thin",1],["python rglob crawl","6.7KB dir listing",1],["cat whole file","40KB, clipped to 10KB",1],["re-grep once more","",1],["write deliverable","done",1]],
+   S:3000,c:2600,
+   note:"<span style='color:#ef5e54'>The tail.</span> Every doubt costs a fresh full search or whole-file read — each re-paid on all later turns. This is the 8–27-call spiral behind the 400–900K runs."}
+};
+let world='with';
+const tl=document.getElementById('turnlist'),wt=document.getElementById('worldtotal'),wb=document.getElementById('worldbar'),wn=document.getElementById('worldnote'),wtag=document.getElementById('worldtag');
+function drawWorld(){
+  const w=worlds[world];
+  const T=w.turns.filter(t=>t[2]).length;
+  let total=0,run=0;
+  tl.innerHTML='';
+  let s=0;
+  w.turns.forEach((t,idx)=>{
+    const billed=t[2];
+    if(billed){ s++; const turnCost=w.S + w.c*(s-1); run+=turnCost; }
+    const cum=run;
+    const col=billed?(world==='with'?'#2ecc8f':'#ef5e54'):'#5d6680';
+    tl.innerHTML+=`<div style="padding:5px 0;border-bottom:1px solid #1c2230;display:flex;justify-content:space-between;gap:10px">
+      <span style="color:${billed?'#e9ecf4':'#5d6680'}">${billed?'↻':'·'} ${t[0]} <span class="dim">${t[1]}</span></span>
+      <span class="tnum" style="color:${col}">${billed?'+'+k(w.S+w.c*(s-1)):''}</span></div>`;
+  });
+  total=run+2000;
+  wt.textContent=k(total)+' tokens';
+  wtag.textContent=w.tag;
+  wb.innerHTML='';
+  const seg=document.createElement('div');seg.style.background=world==='with'?'#2ecc8f':'#ef5e54';seg.style.width='100%';wb.appendChild(seg);
+  // scale bar width relative to the without-world max (~600K)
+  const maxRef=600000; seg.style.width=Math.min(100,total/maxRef*100)+'%';
+  wn.innerHTML=w.note+`<br><span class="dim">turns billed: ${T} · quadratic re-pay makes the spiral cost ~${Math.round(total/24000)}× the floor</span>`;
+}
+document.getElementById('wWith').onclick=function(){world='with';this.classList.add('on');document.getElementById('wWithout').classList.remove('on');drawWorld();};
+document.getElementById('wWithout').onclick=function(){world='without';this.classList.add('on');document.getElementById('wWith').classList.remove('on');drawWorld();};
+drawWorld();
+
+/* ---------- 80% CALCULATOR ---------- */
+const bars={plain:107734,nokg:390759};
+let cmp='plain';
+const sfloor=document.getElementById('sfloor');
+function savings(){
+  const fl=+sfloor.value*1000, base=bars[cmp];
+  const pct=Math.round((1-fl/base)*100);
+  document.getElementById('tfloor').textContent=(+sfloor.value)+'K';
+  document.getElementById('savings').textContent='−'+pct+'%';
+  document.getElementById('savedetail').innerHTML=`${k(fl)} vs ${k(base)} (${cmp==='plain'?'plain baseline':'current nokg'})`;
+}
+document.getElementById('cmpPlain').onclick=function(){cmp='plain';this.classList.add('on');document.getElementById('cmpNokg').classList.remove('on');savings();};
+document.getElementById('cmpNokg').onclick=function(){cmp='nokg';this.classList.add('on');document.getElementById('cmpPlain').classList.remove('on');savings();};
+sfloor.oninput=savings; savings();
+</script>
+</body>
+</html>

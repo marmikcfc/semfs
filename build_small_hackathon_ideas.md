@@ -1,3 +1,5 @@
+> <!-- STALE-BANNER --> ⚠️ **STALE — not a semfs project doc** (2026-06-25). Skill/brainstorm scratch output; kept for history, not part of project documentation. Project state → [CURRENT_STATE.md](CURRENT_STATE.md).
+
 # Build Small Hackathon — 10 GAN-Validated Ideas
 
 **Generated:** 2026-06-07 · **Method:** GAN-style ideation (researcher → generator → blind discriminator), 10 rounds, 114 agents, ~4M tokens.

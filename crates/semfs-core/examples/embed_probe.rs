@@ -36,7 +36,10 @@ fn main() -> anyhow::Result<()> {
     ];
     let v = e.embed(&texts)?;
     if v.iter().any(|x| x.len() != 768) {
-        anyhow::bail!("unexpected vector dims: {:?}", v.iter().map(|x| x.len()).collect::<Vec<_>>());
+        anyhow::bail!(
+            "unexpected vector dims: {:?}",
+            v.iter().map(|x| x.len()).collect::<Vec<_>>()
+        );
     }
     let related = cosine(&v[0], &v[1]);
     let unrelated = cosine(&v[0], &v[2]);
@@ -45,8 +48,10 @@ fn main() -> anyhow::Result<()> {
         println!("SANE: q4 embeddings discriminate (related ≫ unrelated). OK to seed.");
         Ok(())
     } else {
-        println!("SUSPECT: embeddings do NOT discriminate — try SEMFS_EMBED_ONNX_BASE=model_q4f16, \
-                  or a different QuantizationMode/output_key. DO NOT seed with this.");
+        println!(
+            "SUSPECT: embeddings do NOT discriminate — try SEMFS_EMBED_ONNX_BASE=model_q4f16, \
+                  or a different QuantizationMode/output_key. DO NOT seed with this."
+        );
         std::process::exit(3);
     }
 }

@@ -148,7 +148,11 @@ async fn test_import_file_with_ownership_preserves_uid_gid_for_file_and_dirs() {
 
     let nested = fs.lookup(ROOT, "nested").await.unwrap().unwrap();
     let nested_path = fs.lookup(nested.ino, "path").await.unwrap().unwrap();
-    let imported_file = fs.lookup(nested_path.ino, "imported.txt").await.unwrap().unwrap();
+    let imported_file = fs
+        .lookup(nested_path.ino, "imported.txt")
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(nested.uid, UID);
     assert_eq!(nested.gid, GID);

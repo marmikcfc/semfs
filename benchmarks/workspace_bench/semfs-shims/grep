@@ -13,14 +13,26 @@ SEMFS_HOME="${SEMFS_REAL_HOME:-/home/ubuntu}"
 
 printf '[%s] grep argv: %s\n' "$(date -u +%H:%M:%S)" "$*" >> "$LOG" 2>/dev/null || true
 
-# Any flag → literal grep (semantic doesn't understand grep flags). Also bail to
-# real grep if stdin is piped (no path to scope a mount to).
-for a in "$@"; do [[ "$a" == -* && "$a" != "--" ]] && exec "$REAL_GREP" "$@"; done
-[[ ! -t 0 ]] && exec "$REAL_GREP" "$@"
+# Flags: a SAFE set (recursion / line-number / case / files-only / with-filename) is
+# STRIPPED and the search still routes to semantic — these don't change the "find this
+# content" intent, and semfs output already names files + line ranges. So the agent's
+# reflexive `grep -rn "q" .` is semantic too. ANY other flag (-F -E -P -v -c -o -w -x
+# -A -B -C -e ...) means the caller wants real literal grep semantics → bail.
+safe_flag='^-([rRnilhH]+|-recursive|-line-number|-ignore-case|-files-with-matches|-with-filename|-no-filename)$'
+pos=()
+for a in "$@"; do
+  if   [[ "$a" == -- ]]; then continue
+  elif [[ "$a" == -* ]]; then [[ "$a" =~ $safe_flag ]] || exec "$REAL_GREP" "$@"
+  else pos+=("$a"); fi
+done
+# A true stdin PIPE with no positional path = a stdin filter (`cmd | grep x`) → literal.
+# (`! -t 0` over-fires for EVERY non-interactive caller — codex, `bash -c`, scripts —
+#  silently disabling the shim; `-p` trips only on an actual pipe.)
+[[ -p /dev/stdin && -z "${pos[1]:-}" ]] && exec "$REAL_GREP" "$@"
 
-# args: PATTERN PATH...
-pattern="${1:-}"; shift || true
-searchpath="${1:-$PWD}"
+# pos: PATTERN [PATH]   (no path → SEMFS_MOUNT_PATH or cwd, so a bare `grep "q"` works)
+pattern="${pos[0]:-}"
+searchpath="${pos[1]:-${SEMFS_MOUNT_PATH:-$PWD}}"
 abspath="$(readlink -f "$searchpath" 2>/dev/null || echo "$searchpath")"
 
 is_mount=0; dir="$abspath"
@@ -45,4 +57,5 @@ if [[ -n "$pattern" && $is_mount -eq 1 ]]; then
     printf '%s\n' "$out"; exit 0
   fi
 fi
-exec "$REAL_GREP" "$pattern" "$searchpath"
+# Not in a mount (or semfs grep failed) → real grep with the ORIGINAL args (keep flags).
+exec "$REAL_GREP" "$@"

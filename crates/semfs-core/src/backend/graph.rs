@@ -138,8 +138,11 @@ pub fn clean_relations(
     entities: &[ExtractedEntity],
     relations: Vec<ExtractedRelation>,
 ) -> Vec<ExtractedRelation> {
-    let names: std::collections::HashSet<&str> =
-        entities.iter().map(|e| e.name.trim()).filter(|n| !n.is_empty()).collect();
+    let names: std::collections::HashSet<&str> = entities
+        .iter()
+        .map(|e| e.name.trim())
+        .filter(|n| !n.is_empty())
+        .collect();
     relations
         .into_iter()
         .filter(|r| {
@@ -198,7 +201,14 @@ pub fn extract_graph(client: &LlmClient, content: &str) -> anyhow::Result<GraphE
         INCLUDE it, do NOT omit. NEVER invent edges. Use semantically_similar_to only when the \
         similarity is genuinely non-obvious. Return empty lists if there is nothing. JSON only.";
     // Bigger budget than the 512 default — entities + relations would truncate.
-    let raw = client.complete_structured_n(system, content, schema, 2048)?;
+    // Tunable via SEMFS_KG_MAX_TOKENS (default 4096): entity-dense docs overflow a
+    // smaller budget → the JSON truncates and the whole file's extraction is dropped.
+    let max_tokens = std::env::var("SEMFS_KG_MAX_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|n| *n >= 512)
+        .unwrap_or(4096);
+    let raw = client.complete_structured_n(system, content, schema, max_tokens)?;
     let json = strip_code_fence(&raw);
     let parsed: GraphExtractionRaw = serde_json::from_str(&json)
         .map_err(|e| anyhow::anyhow!("graph JSON parse failed: {e}; raw: {raw}"))?;
@@ -208,7 +218,10 @@ pub fn extract_graph(client: &LlmClient, content: &str) -> anyhow::Result<GraphE
         .filter(|e| !e.name.trim().is_empty())
         .collect();
     let relations = clean_relations(&entities, parsed.relations);
-    Ok(GraphExtraction { entities, relations })
+    Ok(GraphExtraction {
+        entities,
+        relations,
+    })
 }
 
 /// The memory-page path an entity maps to (its graph node).
@@ -270,7 +283,10 @@ mod tests {
     use super::*;
 
     fn ent(n: &str) -> ExtractedEntity {
-        ExtractedEntity { name: n.into(), kind: "Concept".into() }
+        ExtractedEntity {
+            name: n.into(),
+            kind: "Concept".into(),
+        }
     }
     fn rel(s: &str, t: &str) -> ExtractedRelation {
         ExtractedRelation {
@@ -286,10 +302,10 @@ mod tests {
     fn clean_relations_keeps_only_edges_between_known_entities() {
         let ents = vec![ent("Auth Service"), ent("Token Store")];
         let rels = vec![
-            rel("Auth Service", "Token Store"), // both known → keep
+            rel("Auth Service", "Token Store"),   // both known → keep
             rel("Auth Service", "Unknown Thing"), // target unknown → drop
-            rel("Auth Service", "Auth Service"), // self-loop → drop
-            rel("", "Token Store"),              // empty endpoint → drop
+            rel("Auth Service", "Auth Service"),  // self-loop → drop
+            rel("", "Token Store"),               // empty endpoint → drop
         ];
         let out = clean_relations(&ents, rels);
         assert_eq!(out.len(), 1);

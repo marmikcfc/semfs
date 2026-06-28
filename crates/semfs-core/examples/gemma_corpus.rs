@@ -29,7 +29,9 @@ fn main() -> anyhow::Result<()> {
 
     // arg 2 = model: "gemma" (default) | "e5"  — lets us measure the answer's true
     // full-corpus vector rank per embedder (decides whether a bigger KNN k helps).
-    let which = std::env::args().nth(2).unwrap_or_else(|| "gemma".to_string());
+    let which = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "gemma".to_string());
     let em = match which.as_str() {
         "e5" => EmbeddingModel::MultilingualE5Small,
         _ => EmbeddingModel::EmbeddingGemma300M,
@@ -58,8 +60,14 @@ fn main() -> anyhow::Result<()> {
     let answer = "best_selling_product_core_data_list";
     let dash = "6-product-sales-analysis-dashboard";
     let queries: &[(&str, &str)] = &[
-        ("CLOUD", "best-selling product data file top10 product title transaction amount conversion rate"),
-        ("LOCAL", "best-selling product data file title transaction amount conversion rate"),
+        (
+            "CLOUD",
+            "best-selling product data file top10 product title transaction amount conversion rate",
+        ),
+        (
+            "LOCAL",
+            "best-selling product data file title transaction amount conversion rate",
+        ),
         ("LOCAL2", "best-selling product data file"),
         ("LOCAL4", "best selling product"),
     ];
@@ -77,15 +85,25 @@ fn main() -> anyhow::Result<()> {
         }
         let mut ranked: Vec<(&str, f32)> = best.into_iter().collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        let arank = ranked.iter().position(|(fp, _)| fp.contains(answer)).map(|p| p + 1);
-        let drank = ranked.iter().position(|(fp, _)| fp.contains(dash)).map(|p| p + 1);
+        let arank = ranked
+            .iter()
+            .position(|(fp, _)| fp.contains(answer))
+            .map(|p| p + 1);
+        let drank = ranked
+            .iter()
+            .position(|(fp, _)| fp.contains(dash))
+            .map(|p| p + 1);
         println!(
             "\n[{qlabel}] answer.txt rank = {arank:?} / {} files   dashboard.xlsx rank = {drank:?}",
             ranked.len()
         );
         for (i, (fp, s)) in ranked.iter().take(8).enumerate() {
             let short = fp.rsplit('/').next().unwrap_or(fp);
-            let mark = if fp.contains(answer) || fp.contains(dash) { " <==" } else { "" };
+            let mark = if fp.contains(answer) || fp.contains(dash) {
+                " <=="
+            } else {
+                ""
+            };
             println!("   {:>2}. {:.4}  {}{}", i + 1, s, short, mark);
         }
     }

@@ -281,9 +281,25 @@ mod start_gating_tests {
     #[tokio::test]
     async fn start_gates_loops_on_pull_and_push_flags() {
         let (_tx, rx) = watch::channel(false);
-        assert_eq!(SyncEngine::start(fs(), opts(true, true), rx.clone()).len(), 5, "pull+push");
-        assert_eq!(SyncEngine::start(fs(), opts(true, false), rx.clone()).len(), 3, "--no-push: pull loops only");
-        assert_eq!(SyncEngine::start(fs(), opts(false, true), rx.clone()).len(), 2, "--no-sync: push loops only");
-        assert_eq!(SyncEngine::start(fs(), opts(false, false), rx.clone()).len(), 0, "both off");
+        assert_eq!(
+            SyncEngine::start(fs(), opts(true, true), rx.clone()).len(),
+            5,
+            "pull+push"
+        );
+        assert_eq!(
+            SyncEngine::start(fs(), opts(true, false), rx.clone()).len(),
+            3,
+            "--no-push: pull loops only"
+        );
+        assert_eq!(
+            SyncEngine::start(fs(), opts(false, true), rx.clone()).len(),
+            2,
+            "--no-sync: push loops only"
+        );
+        assert_eq!(
+            SyncEngine::start(fs(), opts(false, false), rx.clone()).len(),
+            0,
+            "both off"
+        );
     }
 }

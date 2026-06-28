@@ -37,7 +37,10 @@ pub struct Bounds {
 
 impl Default for Bounds {
     fn default() -> Self {
-        Bounds { top_topics: 30, files_per_node: 25 }
+        Bounds {
+            top_topics: 30,
+            files_per_node: 25,
+        }
     }
 }
 
@@ -149,8 +152,9 @@ pub fn community_dir_name(conn: &Connection, community_id: i64) -> String {
 /// id 0 = largest at materialize time), capped at `top_topics`. Names are
 /// deduplicated within the listing.
 pub fn graph_root_entries(conn: &Connection, b: &Bounds) -> rusqlite::Result<Vec<GraphEntry>> {
-    let mut stmt = conn
-        .prepare("SELECT DISTINCT community_id FROM graph_community ORDER BY community_id LIMIT ?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT community_id FROM graph_community ORDER BY community_id LIMIT ?1",
+    )?;
     let cids: Vec<i64> = stmt
         .query_map([b.top_topics as i64], |r| r.get::<_, i64>(0))?
         .filter_map(|r| r.ok())
@@ -260,7 +264,13 @@ mod tests {
         .unwrap();
     }
 
-    fn add_community(conn: &Connection, cid: i64, label_path: &str, label_name: &str, files: &[&str]) {
+    fn add_community(
+        conn: &Connection,
+        cid: i64,
+        label_path: &str,
+        label_name: &str,
+        files: &[&str],
+    ) {
         for f in files {
             conn.execute(
                 "INSERT INTO graph_community(file_path,community_id,is_primary) VALUES (?1,?2,1)",
@@ -284,7 +294,13 @@ mod tests {
     fn root_lists_communities_largest_first_as_dirs() {
         let conn = Connection::open_in_memory().unwrap();
         seed(&conn);
-        add_community(&conn, 0, "/memories/sales.md", "成交金额", &["/a.txt", "/b.txt", "/c.txt"]);
+        add_community(
+            &conn,
+            0,
+            "/memories/sales.md",
+            "成交金额",
+            &["/a.txt", "/b.txt", "/c.txt"],
+        );
         add_community(&conn, 1, "/memories/tao.md", "taobao", &["/x.md", "/y.md"]);
 
         let entries = graph_root_entries(&conn, &Bounds::default()).unwrap();
@@ -302,7 +318,10 @@ mod tests {
         add_community(&conn, 0, "/memories/a.md", "topic-a", &["/a.txt"]);
         add_community(&conn, 1, "/memories/b.md", "topic-b", &["/b.txt"]);
         add_community(&conn, 2, "/memories/c.md", "topic-c", &["/c.txt"]);
-        let b = Bounds { top_topics: 2, files_per_node: 25 };
+        let b = Bounds {
+            top_topics: 2,
+            files_per_node: 25,
+        };
         let entries = graph_root_entries(&conn, &b).unwrap();
         assert_eq!(entries.len(), 2, "capped at top_topics");
         assert_eq!(entries[0].community_id, Some(0));
@@ -326,7 +345,13 @@ mod tests {
     fn community_lists_member_files_as_real_entries_sorted() {
         let conn = Connection::open_in_memory().unwrap();
         seed(&conn);
-        add_community(&conn, 0, "/memories/s.md", "sales", &["/c.txt", "/a.txt", "/b.txt"]);
+        add_community(
+            &conn,
+            0,
+            "/memories/s.md",
+            "sales",
+            &["/c.txt", "/a.txt", "/b.txt"],
+        );
         let entries = graph_community_entries(&conn, 0, &Bounds::default()).unwrap();
         assert_eq!(entries.len(), 3);
         assert!(entries.iter().all(|e| e.kind == EntryKind::File));
@@ -343,7 +368,10 @@ mod tests {
         let files: Vec<String> = (0..50).map(|i| format!("/f{i:02}.txt")).collect();
         let refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
         add_community(&conn, 0, "/memories/s.md", "sales", &refs);
-        let b = Bounds { top_topics: 30, files_per_node: 25 };
+        let b = Bounds {
+            top_topics: 30,
+            files_per_node: 25,
+        };
         let entries = graph_community_entries(&conn, 0, &b).unwrap();
         assert_eq!(entries.len(), 25, "member files capped");
     }
@@ -368,22 +396,37 @@ mod tests {
         let uniq: HashSet<&String> = seen.iter().collect();
         assert_eq!(seen.len(), uniq.len(), "each file appears exactly once");
         assert_eq!(seen.len(), 4);
-        assert!(seen.len() <= b.top_topics * b.files_per_node, "bounded by caps");
+        assert!(
+            seen.len() <= b.top_topics * b.files_per_node,
+            "bounded by caps"
+        );
     }
 
     #[test]
     fn community_disambiguates_files_with_same_basename() {
         let conn = Connection::open_in_memory().unwrap();
         seed(&conn);
-        add_community(&conn, 0, "/memories/s.md", "sales", &["/x/report.txt", "/y/report.txt"]);
+        add_community(
+            &conn,
+            0,
+            "/memories/s.md",
+            "sales",
+            &["/x/report.txt", "/y/report.txt"],
+        );
         let entries = graph_community_entries(&conn, 0, &Bounds::default()).unwrap();
         let names: HashSet<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names.len(), 2, "same basename must not produce duplicate dentries");
+        assert_eq!(
+            names.len(),
+            2,
+            "same basename must not produce duplicate dentries"
+        );
         assert!(names.contains("report.txt"));
         assert!(names.contains("report-1.txt"));
         // real_path still points at the true distinct files
-        let reals: HashSet<&str> =
-            entries.iter().filter_map(|e| e.real_path.as_deref()).collect();
+        let reals: HashSet<&str> = entries
+            .iter()
+            .filter_map(|e| e.real_path.as_deref())
+            .collect();
         assert!(reals.contains("/x/report.txt") && reals.contains("/y/report.txt"));
     }
 
@@ -392,7 +435,11 @@ mod tests {
         assert!(!is_graph_ino(1));
         assert!(!is_graph_ino(1_000_000));
         assert!(is_graph_ino(BY_TOPIC_INO));
-        assert_eq!(ino_to_community(BY_TOPIC_INO), None, "overlay root is not a community");
+        assert_eq!(
+            ino_to_community(BY_TOPIC_INO),
+            None,
+            "overlay root is not a community"
+        );
         for cid in [0i64, 1, 5, 158] {
             let ino = community_to_ino(cid);
             assert!(is_graph_ino(ino));
@@ -404,14 +451,24 @@ mod tests {
     fn resolve_member_maps_disambiguated_name_to_real_path() {
         let conn = Connection::open_in_memory().unwrap();
         seed(&conn);
-        add_community(&conn, 0, "/memories/s.md", "sales", &["/x/report.txt", "/y/report.txt"]);
+        add_community(
+            &conn,
+            0,
+            "/memories/s.md",
+            "sales",
+            &["/x/report.txt", "/y/report.txt"],
+        );
         let b = Bounds::default();
         assert_eq!(
-            resolve_member(&conn, 0, "report.txt", &b).unwrap().as_deref(),
+            resolve_member(&conn, 0, "report.txt", &b)
+                .unwrap()
+                .as_deref(),
             Some("/x/report.txt")
         );
         assert_eq!(
-            resolve_member(&conn, 0, "report-1.txt", &b).unwrap().as_deref(),
+            resolve_member(&conn, 0, "report-1.txt", &b)
+                .unwrap()
+                .as_deref(),
             Some("/y/report.txt")
         );
         assert_eq!(resolve_member(&conn, 0, "nope.txt", &b).unwrap(), None);

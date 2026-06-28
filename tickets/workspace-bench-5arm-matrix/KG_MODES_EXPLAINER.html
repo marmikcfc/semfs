@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KG Modes Explainer</title>
+  <style>
+    :root {
+      --bg: #f6f2e8;
+      --paper: #fffdf8;
+      --ink: #1f1a14;
+      --muted: #5d5448;
+      --line: #d8cbb8;
+      --accent: #0f6b5b;
+      --accent-2: #b85c38;
+      --bad: #8b2e1d;
+      --good: #1e6b33;
+      --chip: #efe4d3;
+      --shadow: 0 12px 30px rgba(53, 39, 23, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(184, 92, 56, 0.12), transparent 28%),
+        radial-gradient(circle at left 20%, rgba(15, 107, 91, 0.10), transparent 24%),
+        var(--bg);
+    }
+
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #f4ead8 0%, #fffdf8 55%, #ecf7f3 100%);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    h1 {
+      font-size: clamp(32px, 5vw, 54px);
+      letter-spacing: -0.03em;
+      max-width: 10ch;
+    }
+
+    .lead {
+      max-width: 72ch;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.55;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 10px 16px;
+      font: inherit;
+      font-size: 15px;
+      cursor: pointer;
+      transition: 160ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: var(--accent);
+    }
+
+    button.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+    }
+
+    .meta {
+      margin-top: 10px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .chip {
+      background: var(--chip);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #fffefb, #faf5ec);
+      padding: 14px 16px;
+    }
+
+    .step b {
+      display: block;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .scorebox {
+      margin-top: 18px;
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px dashed var(--line);
+      background: #fcfaf4;
+    }
+
+    .scorebox code {
+      display: block;
+      white-space: pre-wrap;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .callout {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      line-height: 1.5;
+    }
+
+    .callout.bad {
+      background: #fff0eb;
+      border: 1px solid #efc1b3;
+      color: var(--bad);
+    }
+
+    .callout.good {
+      background: #eef8f1;
+      border: 1px solid #bfd9c6;
+      color: var(--good);
+    }
+
+    .compare {
+      margin-top: 26px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    th, td {
+      padding: 14px 16px;
+      text-align: left;
+      border-bottom: 1px solid #e9dece;
+      vertical-align: top;
+      line-height: 1.45;
+    }
+
+    th {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      background: #f5ede0;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>KG Today vs KG I Would Want</h1>
+      <p class="lead">
+        This explains the difference between the current SemFS graph usage and the hidden-routing KG design that is more likely to help both accuracy and tokens.
+      </p>
+      <div class="controls">
+        <button class="mode active" data-mode="current">Current L7 + surfaced KG</button>
+        <button class="mode" data-mode="ideal">Ideal hidden KG</button>
+      </div>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <h2 id="mode-title">Current L7 + surfaced KG</h2>
+        <p class="meta" id="mode-summary"></p>
+        <div class="chips" id="mode-chips"></div>
+        <div class="flow" id="mode-flow"></div>
+      </section>
+
+      <aside class="card">
+        <h2>Does L7 compete?</h2>
+        <p class="meta" id="compete-summary"></p>
+        <div class="scorebox">
+          <code id="mode-formula"></code>
+        </div>
+        <div id="mode-callout" class="callout bad"></div>
+      </aside>
+    </div>
+
+    <section class="compare">
+      <h2>Experiment Advice</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Arm</th>
+            <th>What it really tests</th>
+            <th>Signal quality</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>plain</b></td>
+            <td>Raw crawl / grep / cat workflow with no SemFS retrieval help.</td>
+            <td>Required baseline.</td>
+          </tr>
+          <tr>
+            <td><b>oc + dedup + prompt + compress</b></td>
+            <td>The current best semfs delivery stack from the evo run.</td>
+            <td>Good current ship candidate.</td>
+          </tr>
+          <tr>
+            <td><b>oc + dedup + prompt + compress + current KG</b></td>
+            <td>SemFS plus agent-visible KG artifacts and current L7/co-mention behavior.</td>
+            <td>Mostly re-tests a known risk: overlay-driven exploration and contamination.</td>
+          </tr>
+          <tr>
+            <td><b>oc + dedup + prompt + compress + ideal hidden KG</b></td>
+            <td>SemFS plus internal KG routing/priors, with no `/kg` browsing surface.</td>
+            <td>High-value experiment, but only after that mode actually exists.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="footer-note">
+        Bottom line: <b>plain vs current best vs current best + surfaced KG</b> is not the experiment I would spend money on. It mostly tells you whether the known-bad overlay still hurts. The real experiment is <b>plain vs current best vs current best + hidden-internal KG only</b>, after you separate `KG_INTERNAL` from `KG_SURFACE`.
+      </p>
+    </section>
+
+    <section class="card" style="margin-top: 20px;">
+      <h2>What I Would Test Next</h2>
+      <p class="meta">
+        If you want an opinion-forming experiment before building the full hidden-KG mode, the useful control split is:
+      </p>
+      <div class="scorebox">
+        <code>1. plain
+2. current best semfs config
+3. current best semfs config + current KG surface
+
+Expected outcome:
+- arm 2 should be the serious contender
+- arm 3 probably underperforms because it mixes retrieval with graph browsing overhead
+
+What this does NOT tell you:
+- whether hidden KG routing would help
+- whether KG as an internal prior can cut tokens</code>
+      </div>
+      <div class="callout good">
+        The good experiment is not “KG on vs KG off” in the current product shape. It is “hidden KG prior on vs hidden KG prior off” with the agent-facing graph surface held off in both arms.
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const modes = {
+      current: {
+        title: "Current L7 + surfaced KG",
+        summary: "Today the graph mostly appears after retrieval as a small co-mention score nudge, while the mount can also surface `/kg/` and optionally `/by-topic` to the agent. That means part of the graph is hidden rank logic, but part of it is also a new browsing surface.",
+        chips: [
+          "RRF + rerank first",
+          "L7 co-mention after rerank",
+          "KG artifacts visible to agent",
+          "Can trigger exploration loops"
+        ],
+        flow: [
+          ["Step 1", "Recall candidates from lexical / dense / sparse-ish lanes."],
+          ["Step 2", "Rerank the candidate pool."],
+          ["Step 3", "Apply a small entity-overlap boost if returned files share graph edges."],
+          ["Step 4", "Agent may still read `/kg/KNOWLEDGE_GRAPH.md`, browse `/kg`, or walk `/by-topic` if available."],
+          ["Step 5", "The graph can become both a rank signal and a token sink."]
+        ],
+        formula: "score = rerank_score\n      + tiny entity_overlap_boost\n      + salience\n\nplus agent-visible graph artifacts outside the score",
+        compete: "Partly yes. L7 itself does not fundamentally fight the hidden-KG design, because it is just a bounded graph prior. What competes with the ideal design is the agent-visible KG surface: `/kg/`, graph docs, and graph-FS exploration.",
+        calloutClass: "bad",
+        callout: "Risk: the graph helps ranking a little, but the surfaced overlay can still pull the agent into high-token orientation behavior."
+      },
+      ideal: {
+        title: "Ideal hidden KG",
+        summary: "The graph stays entirely inside retrieval and ranking. The agent never reads graph files, never browses graph directories, and only sees better top real-source results. KG is used to narrow or boost the search region, not to create another reasoning interface.",
+        chips: [
+          "Graph invisible to agent",
+          "Community routing before rerank",
+          "Entity expansion as rank prior",
+          "Same normal grep output"
+        ],
+        flow: [
+          ["Step 1", "Map the query to top communities / entities using lexical + dense evidence."],
+          ["Step 2", "Recall candidates with normal search, but boost or constrain the candidate pool using the KG neighborhood."],
+          ["Step 3", "Rerank a smaller, cleaner set."],
+          ["Step 4", "Return ordinary inline excerpts from real source files only."],
+          ["Step 5", "Agent stays on evidence instead of graph browsing."]
+        ],
+        formula: "score = rerank_score\n      + small community_match_boost\n      + entity_overlap_boost\n      + structural_edge_boost\n      - giant_cluster_penalty",
+        compete: "No, if implemented correctly. L7-style overlap is compatible as one bounded term inside the hidden-KG design. The change is not “remove graph from ranking”; it is “move graph value earlier and hide graph artifacts from the agent.”",
+        calloutClass: "good",
+        callout: "Goal: use the graph to reduce search scope and improve top-5 quality, while keeping the evidence channel exactly the same."
+      }
+    };
+
+    const title = document.getElementById("mode-title");
+    const summary = document.getElementById("mode-summary");
+    const chips = document.getElementById("mode-chips");
+    const flow = document.getElementById("mode-flow");
+    const formula = document.getElementById("mode-formula");
+    const compete = document.getElementById("compete-summary");
+    const callout = document.getElementById("mode-callout");
+
+    function render(modeKey) {
+      const data = modes[modeKey];
+      title.textContent = data.title;
+      summary.textContent = data.summary;
+      chips.innerHTML = data.chips.map((chip) => `<span class="chip">${chip}</span>`).join("");
+      flow.innerHTML = data.flow.map(([label, text]) => `
+        <div class="step">
+          <b>${label}</b>
+          <p>${text}</p>
+        </div>
+      `).join("");
+      formula.textContent = data.formula;
+      compete.textContent = data.compete;
+      callout.className = `callout ${data.calloutClass}`;
+      callout.textContent = data.callout;
+
+      document.querySelectorAll(".mode").forEach((button) => {
+        button.classList.toggle("active", button.dataset.mode === modeKey);
+      });
+    }
+
+    document.querySelectorAll(".mode").forEach((button) => {
+      button.addEventListener("click", () => render(button.dataset.mode));
+    });
+
+    render("current");
+  </script>
+</body>
+</html>

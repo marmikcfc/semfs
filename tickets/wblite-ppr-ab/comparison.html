@@ -1,0 +1,91 @@
+<!doctype html><html><head><meta charset="utf-8"><title>houqin: prev run vs today</title>
+<style>
+body{background:#0d1117;color:#c9d1d9;font:14px/1.5 -apple-system,Segoe UI,sans-serif;margin:0;padding:28px;max-width:1080px;margin:auto}
+h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;color:#58a6ff;margin:26px 0 10px;border-bottom:1px solid #21262d;padding-bottom:6px}
+.sub{color:#8b949e;margin-bottom:18px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:5px 9px;text-align:right;border-bottom:1px solid #21262d}
+th{color:#8b949e;font-weight:600;font-size:12px;position:sticky;top:0;background:#0d1117}
+td.case{text-align:left;color:#8b949e} td.na{color:#30363d}
+.win{background:rgba(46,160,67,.22);color:#3fb950} .loss{background:rgba(248,81,73,.20);color:#f85149}
+.grp{background:#161b22}
+.bartrack{position:relative;height:22px;background:#161b22;border-radius:4px;width:200px;display:inline-block;vertical-align:middle}
+.bar{height:22px;border-radius:4px} .barlab{position:absolute;left:8px;top:2px;font-size:12px;color:#fff;text-shadow:0 0 3px #000}
+.kpi{display:flex;gap:10px;align-items:center;margin:6px 0} .kpi .lab{width:170px;color:#8b949e}
+.card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:16px 18px;margin:10px 0}
+.big{font-size:19px;color:#e6edf3} .up{color:#3fb950} .flat{color:#d29922} .down{color:#f85149}
+ul{margin:6px 0 6px 0;padding-left:20px} li{margin:5px 0} code{background:#21262d;padding:1px 5px;border-radius:4px}
+.legend{font-size:12px;color:#8b949e;margin:8px 0}
+</style></head><body>
+<h1>houqin — previous WB-Lite run &nbsp;vs&nbsp; today's map run</h1>
+<div class="sub">houqin 30 cases · <b>ALL truncation-fixed</b> (SEM-42 P0 — judge now sees full deliverables, not 2000 chars) · prev ppr = PPR A/B (re-judged) · plain = 5-arm run (re-judged) · today = map run (Jun 27)</div>
+
+<h2>Aggregate (mean per-case accuracy, houqin)</h2>
+<div class="kpi"><div class="lab">prev · plain</div><div class="barrow"><div class="bartrack"><div class="bar" style="width:45.11166364499698px;background:#6e7681"></div><span class="barlab">28.2%</span></div></div></div>
+<div class="kpi"><div class="lab">prev · ppr_off</div><div class="barrow"><div class="bartrack"><div class="bar" style="width:29.19307255447606px;background:#6e7681"></div><span class="barlab">18.2%</span></div></div></div>
+<div class="kpi"><div class="lab">prev · ppr_on</div><div class="barrow"><div class="bartrack"><div class="bar" style="width:32.971149188693055px;background:#8b949e"></div><span class="barlab">20.6%</span></div></div></div>
+<div class="kpi"><div class="lab">TODAY · ppr_on</div><div class="barrow"><div class="bartrack"><div class="bar" style="width:41.80923890923892px;background:#58a6ff"></div><span class="barlab">26.1%</span></div></div></div>
+<div class="kpi"><div class="lab">TODAY · ppr_map</div><div class="barrow"><div class="bartrack"><div class="bar" style="width:43.100699300699304px;background:#a371f7"></div><span class="barlab">26.9%</span></div></div></div>
+
+<h2>Tokens (mean total per cell, houqin) <span style="font-size:12px;color:#8b949e">— lower better · eff = accuracy pts per 100K tok (higher = more cost-effective) · cache_read=0 overcounts re-sent prefix</span></h2>
+<div class="kpi"><div class="lab">prev · plain</div><div class="bartrack"><div class="bar" style="width:162.527646371177px;background:#d29922"></div><span class="barlab">619K</span></div><span style="margin-left:12px;color:#8b949e;font-size:12px">eff 4.6</span></div>
+<div class="kpi"><div class="lab">prev · ppr_off</div><div class="bartrack"><div class="bar" style="width:150.27597886277871px;background:#d29922"></div><span class="barlab">573K</span></div><span style="margin-left:12px;color:#8b949e;font-size:12px">eff 3.2</span></div>
+<div class="kpi"><div class="lab">prev · ppr_on</div><div class="bartrack"><div class="bar" style="width:121.05340067156314px;background:#d29922"></div><span class="barlab">461K</span></div><span style="margin-left:12px;color:#8b949e;font-size:12px">eff 4.5</span></div>
+<div class="kpi"><div class="lab">TODAY · ppr_on</div><div class="bartrack"><div class="bar" style="width:130.5069081112557px;background:#d29922"></div><span class="barlab">497K</span></div><span style="margin-left:12px;color:#8b949e;font-size:12px">eff 5.3</span></div>
+<div class="kpi"><div class="lab">TODAY · ppr_map</div><div class="bartrack"><div class="bar" style="width:200.0px;background:#d29922"></div><span class="barlab">762K</span></div><span style="margin-left:12px;color:#8b949e;font-size:12px">eff 3.5</span></div>
+
+<div class="card">
+<div class="big">What changed: the judge can now see the full deliverable (SEM-42 P0)</div>
+<ul>
+<li><b>Every arm jumped ~+10pp.</b> The judge was truncating deliverables to 2000 chars and false-failing what it couldn't see (~⅓ of correct work hidden). The pre-fix SEM-40 verdict (<code>plain 17 &gt; ppr_off 12.9 &gt; ppr_on 11.9</code>) was measuring that bug.</li>
+<li><b>The ppr_off-vs-ppr_on ordering flipped.</b> Was ppr_on 9.2 &lt; ppr_off 9.6 ("ppr_on worst → PPR net-negative"); corrected it's ppr_on <span class="up">20.6%</span> ≥ ppr_off <span class="flat">18.2%</span> (within noise). "PPR is worst" was an artifact.</li>
+<li><b>Corrected 3-way (houqin):</b> plain <b>28%</b> · ppr_off <b>18%</b> · ppr_on <b>21%</b> — read the ordering against the original plain&gt;ppr_off&gt;ppr_on.</li>
+<li><b>The map still adds nothing:</b> ppr_map <span class="flat">26.9%</span> ≈ today's ppr_on <span class="flat">26.1%</span> (+37% tokens). Parked.</li>
+</ul></div>
+
+<h2>Per-case (green = better than the column to its left's baseline)</h2>
+<div class="legend">TODAY·ppr_on shaded vs prev·ppr_on (harness effect) · TODAY·ppr_map shaded vs TODAY·ppr_on (the map effect)</div>
+<table>
+<tr><th>case</th><th>prev plain</th><th>prev ppr_off</th><th>prev ppr_on</th><th>TODAY ppr_on</th><th>TODAY ppr_map</th></tr>
+<tr><td class="case">23</td><td class="">22%</td><td class="">0%</td><td class="">0%</td><td class="win">28%</td><td class="">30%</td></tr>
+<tr><td class="case">35</td><td class="">22%</td><td class="">22%</td><td class="">13%</td><td class="win">19%</td><td class="loss">10%</td></tr>
+<tr><td class="case">37</td><td class="">38%</td><td class="">38%</td><td class="">43%</td><td class="">45%</td><td class="">48%</td></tr>
+<tr><td class="case">47</td><td class="">15%</td><td class="">12%</td><td class="">12%</td><td class="win">15%</td><td class="">12%</td></tr>
+<tr><td class="case">54</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td></tr>
+<tr><td class="case">72</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td></tr>
+<tr><td class="case">79</td><td class="">0%</td><td class="">0%</td><td class="">33%</td><td class="loss">0%</td><td class="">0%</td></tr>
+<tr><td class="case">83</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td></tr>
+<tr><td class="case">85</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td></tr>
+<tr><td class="case">87</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td></tr>
+<tr><td class="case">100</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td></tr>
+<tr><td class="case">102</td><td class="">0%</td><td class="">0%</td><td class="">17%</td><td class="loss">0%</td><td class="">0%</td></tr>
+<tr><td class="case">116</td><td class="">33%</td><td class="">22%</td><td class="">22%</td><td class="win">38%</td><td class="loss">33%</td></tr>
+<tr><td class="case">207</td><td class="">5%</td><td class="">3%</td><td class="">3%</td><td class="">2%</td><td class="">5%</td></tr>
+<tr><td class="case">251</td><td class="">80%</td><td class="">0%</td><td class="">0%</td><td class="win">61%</td><td class="win">84%</td></tr>
+<tr><td class="case">255</td><td class="">43%</td><td class="">0%</td><td class="">0%</td><td class="win">36%</td><td class="win">44%</td></tr>
+<tr><td class="case">258</td><td class="">12%</td><td class="">0%</td><td class="">0%</td><td class="win">6%</td><td class="win">12%</td></tr>
+<tr><td class="case">267</td><td class="">92%</td><td class="">81%</td><td class="">77%</td><td class="win">97%</td><td class="loss">88%</td></tr>
+<tr><td class="case">274</td><td class="">53%</td><td class="">0%</td><td class="">0%</td><td class="win">55%</td><td class="">55%</td></tr>
+<tr><td class="case">276</td><td class="">67%</td><td class="">27%</td><td class="">77%</td><td class="win">82%</td><td class="">80%</td></tr>
+<tr><td class="case">314</td><td class="">65%</td><td class="">61%</td><td class="">63%</td><td class="loss">53%</td><td class="loss">47%</td></tr>
+<tr><td class="case">328</td><td class="">50%</td><td class="">15%</td><td class="">10%</td><td class="win">31%</td><td class="">31%</td></tr>
+<tr><td class="case">329</td><td class="">0%</td><td class="">12%</td><td class="">0%</td><td class="">0%</td><td class="">0%</td></tr>
+<tr><td class="case">337</td><td class="">6%</td><td class="">4%</td><td class="">0%</td><td class="win">8%</td><td class="">8%</td></tr>
+<tr><td class="case">354</td><td class="">0%</td><td class="">21%</td><td class="">30%</td><td class="loss">0%</td><td class="">0%</td></tr>
+<tr><td class="case">357</td><td class="">73%</td><td class="">64%</td><td class="">55%</td><td class="win">64%</td><td class="win">68%</td></tr>
+<tr><td class="case">358</td><td class="">60%</td><td class="">53%</td><td class="">44%</td><td class="loss">20%</td><td class="win">50%</td></tr>
+<tr><td class="case">372</td><td class="">10%</td><td class="">28%</td><td class="">18%</td><td class="win">28%</td><td class="">30%</td></tr>
+<tr><td class="case">373</td><td class="">45%</td><td class="">27%</td><td class="">38%</td><td class="win">45%</td><td class="">45%</td></tr>
+<tr><td class="case">374</td><td class="">56%</td><td class="">58%</td><td class="">62%</td><td class="loss">50%</td><td class="loss">27%</td></tr>
+<tr class="grp"><td class="case"><b>MEAN</b></td><td><b>28%</b></td><td><b>18%</b></td><td><b>21%</b></td><td><b>26%</b></td><td><b>27%</b></td></tr>
+</table>
+
+<h2>Analyst's read</h2>
+<div class="card"><ul>
+<li><b>The magnitudes were bug-deflated, but the headline HELD.</b> All three arms ~doubled once the judge saw full deliverables — yet plain stayed on top: corrected (houqin) plain <b>28%</b> &gt; ppr_on <b>21%</b> &gt; ppr_off <b>18%</b>. Only the ppr_off/ppr_on sub-order flipped.</li>
+<li><b>Plain wins by MORE, not less.</b> Corrected gap plain→ppr is ~9–11pp (original ~5pp). Plain's longer full-workspace deliverables were truncated harder, so the fix lifted plain most → "plain &gt; PPR" is CONFIRMED + strengthened, not refuted.</li>
+<li><b>Truncation was the dominant measurement bug</b> — +10.6pp on ppr_on alone, airtight (same deliverables, judge-only change). It did NOT reduce run-to-run variance (that's agent-side, find-vs-miss).</li>
+<li><b>The map is neutral</b> (ppr_map ≈ ppr_on, +37% tokens) — parked.</li>
+<li><b>Caveats:</b> houqin only · n=2 (rep noise ~6.7pp) · cross-run (plain from the 5-arm run, ppr from the PPR A/B run — same as the original) · today's ppr also carries the filename fix (fresher run, so 27.6% &gt; the re-judged-old 19.8%).</li>
+</ul></div>
+</body></html>

@@ -16,6 +16,9 @@ token number is NOT automatically "more efficient" — check whether the agent d
 | Path | What |
 |---|---|
 | `artifacts/run5arm/<case>_<arm>/` | The 5×5 matrix (cases 15/44/95/175/289 × arms plain/nokg/gfs_off/gfs_on/cloud), 2026-06-10 |
+| `artifacts/matrix_artifacts_FULL.tgz` | 70 MB archive of `run5arm/` only (snapshot 2026-06-10 20:32 — predates the Phase 1–7 EC2 runs below) |
+| `artifacts/matrix_artifacts/<phase-dir>/` | **All Phase 1–7 EC2 runs, pulled local 2026-06-12** — see the phase→experiment map below |
+| `artifacts/run2/<exp>/` | **Modal run 2** (2026-06-12): `smoke/`, `e9w2/`, `e8/`, `e11/` — see EXPERIMENT_RUN_2.md |
 | `e3_summary_ab/e_sum2.jsonl` | E3 summary-vs-raw A/B metrics (5 lines) |
 | `e3_summary_ab/runs/<label>/` | Surviving E3 traces: `44_raw`, `289_raw`, `44_sum_dualstore` |
 | `e3_summary_ab/corpus_403_stubs.txt` | The 3 corpus files that are 403 stubs |
@@ -33,6 +36,40 @@ Each `<run>/output/raw/codex_stdout.jsonl` holds the agent's tool calls + output
 **cloud** arm, the `semfs grep` outputs in that file ARE Supermemory's response (rewritten
 query + ranked filepaths + verbatim chunks). The raw API scores/candidate set are NOT
 archived (the daemon log isn't copied) — you have the rendered ranked output, not the scores.
+
+---
+
+## Phase 1–7 EC2 run artifacts → which experiment (pulled local 2026-06-12)
+
+All under `artifacts/matrix_artifacts/`. Cross-reference [`EXPERIMENT_MATRIX.md`](EXPERIMENT_MATRIX.md)
+phases and [`EXPERIMENTS_NEXT.md`](EXPERIMENTS_NEXT.md). Each leaf `<cell>/output/raw/codex_stdout.jsonl`
+is the trace; `<cell>/telemetry/` has timing/snapshots. Source: EC2 box
+`/srv/semfs-benchmark/matrix_artifacts/` (`run5arm/` excluded — already at `artifacts/run5arm/`).
+
+| dir | mtime | phase / experiment | cells | maps to (doc) |
+|---|---|---|---|---|
+| `e8seq/` | 06-11 15:40 | **Phase 3 · E7/E8 scout-stack sequence** | `p1-3` (plain), `w1-3` (scout/leanhint v2), `wp1-3` (scout+provenance v3) | EXPERIMENT_MATRIX Phase 3; RESULTS addendum |
+| `e9w1/` | 06-11 16:46 | **Phase 4 · E9 wave 1 render-mode duel** | `e9b1-3` (two-tier), `e9c1-2` (paths) | EXPERIMENT_MATRIX Phase 4; EXPERIMENTS_NEXT E9 |
+| `e9d/` | 06-11 18:12 | **Phase 5 · E9(d) query-time caveman compression** | `e9d_c1,c2` (compress), `e9d_x1,x2` (control) | EXPERIMENTS_NEXT E9(d); MATRIX Phase 5 |
+| `e95v4/` | 06-11 18:57 | **Phase 7 · clean-hint v4.1 on case 95** | `v4_i1,i2` (inline), `v4_p1,p2` (paths) | EXPERIMENT_MATRIX Phase 7; the case-95 lottery bug |
+| `rune_lh/` | 06-11 03:22 | **Phase 1 · leanhint (hint v2)** on 289 | `289_nokg` | RESULTS "leanhint" row (78.4K) |
+| `rune_sum2/` | 06-11 11:34 | **Phase 1 · E3 summaries A/B** | `289_nokg`, `44_nokg` | RESULTS E3; e3_summary_ab/ |
+| `run44ds/` | 06-11 12:21 | **Phase 1 · E3 case-44 dual-store** | `44_nokg` | RUN_MANIFEST E3 table (`44_sum_dualstore`) |
+| `rune_289{c,p,t,m,v,so}/` | 06-11 02:08–03:08 | **Phase 1 · E1–E4′ case-289 cells** (cap / search-only / render variants) | `289_nokg` | RESULTS H1/H2/H4 rows |
+| `rune_c15/`, `rune_c15f/`, `rune_15p/`, `rune_15lh/`, `rune_c15def/` | 06-11 01:17–03:31 | **Phase 1 · case-15 frontier (H4)** | `15_nokg` (`15p`=plain-cmp) | RESULTS case-15 frontier |
+| `rune_c44/` | 06-11 02:22 | **Phase 1 · case-44 cell** | `44_nokg` | RESULTS clean-nokg-vs-plain |
+| `rune_b3,b4,b5/`, `rune_smoke/`, `validate/` | 06-10 13:43 → 06-11 01:01 | **Phase 0/1 · prep/smoke/validation** (b3 empty/aborted) | mixed (289/15/95/15_cloud) | — |
+
+**Empty dirs (aborted runs, 0 B):** `rune_b3`, `rune_289so`, `rune_c15def`, `rune_15lh` —
+launched then killed; kept for provenance, no trace inside.
+
+**Confound notes for these dirs** (same rules as the 5-arm matrix apply):
+- `e8seq/` and `e9d/`/`e95v4/` case-95 cells carry the **filename-lottery asterisk** — use
+  token/call axis, not score. `e9d/` is additionally **confounded by the hint-v3 provenance
+  backfire** (the `_x*` controls scored 0 for the same reason the `_c*` did — not a
+  compression effect). See EXPERIMENTS_NEXT E9(d) forensics.
+- `rune_sum2/`/`run44ds/`: the only valid summary read is case 44 dual-store (2/16 vs raw
+  4/16, token-neutral) — other xlsx on chanpin-sum are summary-only (can't read tables).
 
 ---
 
