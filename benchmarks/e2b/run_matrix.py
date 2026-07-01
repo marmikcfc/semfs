@@ -25,6 +25,72 @@ CLAUDECODE_JS = REPO / "benchmarks/vendor/Workspace-Bench/evaluation/baselines/C
 CELL_DRIVER = REPO / "benchmarks/e2b/cell_driver.py"
 SEMFS_MAP = REPO / "benchmarks/e2b/semfs_map.py"   # workspace-map generator (ppr_map arm)
 CODEX_AUTH = REPO / "codex_auth.json"
+# next-plaid (colgrep) arm assets: the `semfs-np` wrapper (semfs-shaped, colgrep backend
+# behind `semfs grep`) + the RRF merge shim. The agent uses the REAL semfs grep shim (proven
+# firing); SEMFS_BIN→semfs-np swaps only the backend, so it's `semfs grep` with colgrep underneath.
+_NP_DIR = REPO / "tickets/next-plaid-late-interaction"
+NP_SEMFS_WRAPPER = (_NP_DIR / "semfs_np_wrapper.sh").read_text() if (_NP_DIR / "semfs_np_wrapper.sh").exists() else ""
+NP_RRF_MERGE = (_NP_DIR / "rrf_merge.py").read_text() if (_NP_DIR / "rrf_merge.py").exists() else ""
+# arm → baked-cell + corpus/xdg/model. Cells are baked by bake_nextplaid.py into np-<cell> templates.
+NP_CELLS = {
+    "next_plaid_houqin_A": {"tar": "houqin_all", "corpus": "/srv/np/houqin_all/corpus",
+                            "xdg": "/srv/np/houqin_all/_xdg", "model": "/lfm2/lfm2-colbert-350m-onnx",
+                            "lfm2": True, "merge": False},
+    "next_plaid_xafs_A":   {"tar": "xafs_all", "corpus": "/srv/np/xafs_all/corpus",
+                            "xdg": "/srv/np/xafs_all/_xdg", "model": "lightonai/LateOn",
+                            "lfm2": False, "merge": False},
+    # kaifa-C: dual model — LateOn-Code (code lane) + LFM2 (doc lane), RRF-merged. The agent's
+    # "mount" is the doc-lane corpus; rrf_merge queries BOTH lanes and returns absolute paths.
+    "next_plaid_kaifa_C":  {"tars": ["kaifa_code", "kaifa_doc"], "merge": True, "lfm2": True,
+                            "corpus": "/srv/np/kaifa_doc/corpus", "xdg": "/srv/np/kaifa_doc/_xdg",
+                            "model": "/lfm2/lfm2-colbert-350m-onnx",
+                            "code": {"dir": "/srv/np/kaifa_code/corpus", "xdg": "/srv/np/kaifa_code/_xdg",
+                                     "model": "lightonai/LateOn-Code"},
+                            "doc":  {"dir": "/srv/np/kaifa_doc/corpus", "xdg": "/srv/np/kaifa_doc/_xdg",
+                                     "model": "/lfm2/lfm2-colbert-350m-onnx"}},
+}
+
+
+def setup_nextplaid(sbx, arm):
+    """Boot a next_plaid cell: relocate the baked index+corpus to its stable path (so colgrep
+    finds the prebuilt index by path-hash — verified in phase2_reloc_test), install the colgrep
+    binary + the grep shim (→ colgrep). Runs once per arm-batch, like a mount."""
+    c = NP_CELLS[arm]
+    tars = c.get("tars") or [c["tar"]]                       # kaifa-C extracts two index tars
+    untar = " && ".join(f"sudo tar xzf /opt/np/{t}.tgz -C /srv/np" for t in tars)
+    sh(sbx, f"sudo mkdir -p /srv/np /lfm2 /opt/np && {untar} && "
+            "sudo cp /opt/np/colgrep /usr/local/bin/colgrep && sudo chmod +x /usr/local/bin/colgrep && "
+            "sudo chmod -R a+rwX /srv/np",   # colgrep writes a .lock under _xdg at query time → agent (non-root) needs write
+       timeout=900)
+    if c.get("lfm2"):   # skip if already baked into the image (kaifa-C bakes lfm2 read-only → no writable extract)
+        sh(sbx, "test -d /lfm2/lfm2-colbert-350m-onnx || sudo tar xzf /opt/np/lfm2.tgz -C /lfm2; "
+                "sudo chmod -R a+rX /lfm2 2>/dev/null || true", timeout=600)
+    # Install the semfs-np wrapper (colgrep backend behind `semfs grep`) + drop a .semfs marker
+    # on EACH corpus so the REAL semfs grep shim treats it as a mount and routes there.
+    sbx.files.write("/tmp/semfs-np", NP_SEMFS_WRAPPER)
+    sh(sbx, "sudo cp /tmp/semfs-np /usr/local/bin/semfs-np && sudo chmod +x /usr/local/bin/semfs-np")
+    corpora = [c["corpus"]] + ([c["code"]["dir"]] if c.get("merge") else [])
+    for cp in corpora:
+        sh(sbx, f"printf 'mount_path=%s\\n' '{cp}' | sudo tee {cp}/.semfs >/dev/null")
+    # codex runs `bash -lc 'grep …'`; the LOGIN shell re-sources /etc/profile and clobbers the
+    # process PATH, so system grep wins (semfs arms tolerate this via the FUSE mount; we have
+    # none). Put /opt/semfs-shims on the login PATH so the agent's `grep` → shim → semfs-np → colgrep.
+    sh(sbx, "echo 'export PATH=/opt/semfs-shims:$PATH' | sudo tee /etc/profile.d/00-np-shims.sh >/dev/null "
+            "&& sudo chmod +x /etc/profile.d/00-np-shims.sh")
+    if c.get("merge") and NP_RRF_MERGE:
+        sbx.files.write("/tmp/np_rrf.py", NP_RRF_MERGE)
+        sh(sbx, "sudo cp /tmp/np_rrf.py /opt/np/rrf_merge.py")
+    # probe via the SAME path the agent takes: semfs-np → colgrep (single) or rrf_merge (dual)
+    if c.get("merge"):
+        cd, dd = c["code"], c["doc"]
+        env = (f"WB_NP_MERGE=1 WB_NP_CORPUS={c['corpus']} "
+               f"NP_CODE_DIR={cd['dir']} NP_CODE_MODEL={cd['model']} NP_CODE_XDG={cd['xdg']} "
+               f"NP_DOC_DIR={dd['dir']} NP_DOC_MODEL={dd['model']} NP_DOC_XDG={dd['xdg']} ")
+    else:
+        env = f"WB_NP_CORPUS={c['corpus']} WB_NP_MODEL={c['model']} XDG_DATA_HOME={c['xdg']} "
+    o, _ = sh(sbx, f"{env}/usr/local/bin/semfs-np grep 'staffing summary report' "
+                   f"{c['corpus']} 2>&1 | head -c 280 || true", timeout=400)
+    print(f"  np-setup {arm}: semfs-np probe → {o.strip()[:200]}", flush=True)
 # Optional semfs binary override. Use ONLY when explicitly requested via WB_FIXED_BIN;
 # the baked template binary is the default/stable path for routine E2B runs.
 FIXED_BIN = pathlib.Path(os.environ["WB_FIXED_BIN"]) if os.environ.get("WB_FIXED_BIN") else None
@@ -55,7 +121,8 @@ OUT = (pathlib.Path(os.environ["WB_OUT"]).resolve() if os.environ.get("WB_OUT")
 OUT.mkdir(parents=True, exist_ok=True)
 CASES_FULL = ["15", "44", "45", "53", "55", "95", "171", "175", "386", "388"]   # 289 excluded (seed leak)
 DEFAULT_ARMS = ["plain", "best", "hiddenkg"]
-SUPPORTED_ARMS = {"plain", "cloud", "kg", "nokg", "nokgAK", "best", "hiddenkg", "hiddenkg_edges", "hiddenkg_l7", "hiddenkg_retrieval", "hiddenkg_retrieval_l7", "ppr_off", "ppr_on", "ppr_map"}
+SUPPORTED_ARMS = {"plain", "cloud", "kg", "nokg", "nokgAK", "best", "hiddenkg", "hiddenkg_edges", "hiddenkg_l7", "hiddenkg_retrieval", "hiddenkg_retrieval_l7", "ppr_off", "ppr_on", "ppr_map",
+                  "next_plaid_houqin_A", "next_plaid_kaifa_C", "next_plaid_xafs_A"}   # next-plaid (colgrep) arms — NOT in MOUNT_ARMS (own index, no semfs mount)
 # codex (OpenAI, on the ChatGPT subscription = no per-token $) runs FIRST; Claude
 # (OpenRouter = real $) only after all codex cells complete. Override with --agents.
 AGENTS = ["codex", "claude"]
@@ -439,6 +506,12 @@ def run_cell(sbx, agent, case, arm, rep, real_rg, remount=True):
     label = f"pm_{agent}_{case}_{arm}_r{rep}"
     sbx.set_timeout(3600)
     print(f"  ▶ {label} …", flush=True)
+    # next_plaid arms: relocate the baked colgrep index + install the grep shim (once per
+    # arm-batch). NOT in MOUNT_ARMS, so the semfs mount block below is skipped.
+    if arm.startswith("next_plaid"):
+        if remount or not arm in getattr(run_cell, "_np_ready", set()):
+            setup_nextplaid(sbx, arm)
+            run_cell._np_ready = getattr(run_cell, "_np_ready", set()) | {arm}
     # MOUNT: full re-mount only when the arm changed (remount=True) — else just the cheap
     # SEM-35 health gate (mount_live), so the queue worker doesn't pay a ~30-60s unmount+
     # re-seed+remount on EVERY same-arm cell. A dead daemon still triggers a re-mount.
@@ -490,9 +563,19 @@ def run_cell(sbx, agent, case, arm, rep, real_rg, remount=True):
            "MODAL_VLLM_API_KEY": os.environ.get("MODAL_VLLM_API_KEY", ""),
            "WB_MODAL_BASE": os.environ.get("WB_MODAL_BASE", ""),    # vLLM /v1 base override (e.g. nvfp4 endpoint)
            "WB_MODAL_MODEL": os.environ.get("WB_MODAL_MODEL", ""),  # served model name (e.g. claude-haiku-4-5-20251001)
+           "WB_HEADROOM": os.environ.get("WB_HEADROOM", ""),        # headroom arm: route codex→adapter→headroom→GLM (compress)
+           "HEADROOM_GLM_BASE": os.environ.get("HEADROOM_GLM_BASE", ""),  # headroom Modal proxy /v1 endpoint
            "WB_AGENT_TIMEOUT": os.environ.get("WB_AGENT_TIMEOUT", ""),  # propagate to in-sandbox cell_driver (else it defaults 1500s=25min)
            "WB_OUTPUT_FILES": expected_output_files(case)}  # filename hint → cell_driver prompt
     env.update(KNOBS)   # sweep overrides reach the grep client (caps/result-limit/rewrite)
+    if arm.startswith("next_plaid"):   # next_plaid: corpus/model/index for cell_driver + the colgrep grep shim
+        _c = NP_CELLS[arm]
+        env.update({"WB_NP_CORPUS": _c["corpus"], "WB_NP_MODEL": _c["model"], "XDG_DATA_HOME": _c["xdg"]})
+        if _c.get("merge"):           # kaifa-C: rrf_merge needs both lanes' dir/model/xdg
+            cd, dd = _c["code"], _c["doc"]
+            env.update({"WB_NP_MERGE": "1",
+                        "NP_CODE_DIR": cd["dir"], "NP_CODE_MODEL": cd["model"], "NP_CODE_XDG": cd["xdg"],
+                        "NP_DOC_DIR": dd["dir"], "NP_DOC_MODEL": dd["model"], "NP_DOC_XDG": dd["xdg"]})
     cell_timeout = int(os.environ.get("WB_CELL_TIMEOUT") or 1750)  # > WB_AGENT_TIMEOUT (driver wraps the agent)
     o, e = sh(sbx, f"cd /home/user && python3 cell_driver.py --label {label} --agent {agent} "
                    f"--case {case} --arm {arm} 2>>/tmp/{label}.err", timeout=cell_timeout, env=env)

@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>next_plaid — implementation options planner</title>
+<style>
+:root{
+  --bg:#0d1117;--card:#161b22;--bd:#30363d;--tx:#c9d1d9;--mut:#8b949e;
+  --np:#2dd4bf;--ppr:#58a6ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--seed:#bc8cff;
+  --crit:#f85149;--par:#58a6ff;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--tx);font:15px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:0}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 22px 90px}
+h1{font-size:26px;margin:0 0 6px}
+h2{font-size:20px;margin:40px 0 10px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+h3{font-size:15px;margin:18px 0 6px}
+p{margin:8px 0}
+.lede{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;margin:12px 0}
+code{background:#1c2230;padding:1px 6px;border-radius:5px;font-size:13px}
+.pill{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid}
+.p-np{color:var(--np);border-color:var(--np)} .p-ppr{color:var(--ppr);border-color:var(--ppr)}
+.p-ok{color:var(--ok);border-color:var(--ok)} .p-warn{color:var(--warn);border-color:var(--warn)} .p-bad{color:var(--bad);border-color:var(--bad)}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--bd);background:#21262d;color:var(--tx);padding:8px 14px}
+button:hover{border-color:var(--mut)}
+button.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.muted{color:var(--mut)}
+table{border-collapse:collapse;width:100%;margin:10px 0;font-variant-numeric:tabular-nums}
+th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:#1c2230;color:var(--mut)}
+.note{font-size:13px;color:var(--mut);border-left:3px solid var(--bd);padding-left:12px;margin:10px 0}
+.lvlbtns button{font-size:13px;padding:6px 11px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:820px){.grid2{grid-template-columns:1fr}}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:820px){.grid3{grid-template-columns:1fr}}
+.tasks{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.task{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;cursor:pointer;transition:.15s}
+.task:hover{border-color:var(--mut);transform:translateY(-2px)}
+.task .tt{font-weight:700;font-size:15px;margin-bottom:4px}
+.task .meta{font-size:12px;color:var(--mut)}
+.task .det{display:none;margin-top:10px;border-top:1px dashed var(--bd);padding-top:10px;font-size:13px}
+.task.open .det{display:block}
+.tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:6px;margin-right:5px;font-weight:600}
+.t-crit{background:rgba(248,81,73,.15);color:var(--crit);border:1px solid var(--crit)}
+.t-par{background:rgba(88,166,255,.13);color:var(--par);border:1px solid var(--par)}
+.bars div{font-size:12px}
+.flowbox{border:1px solid var(--bd);border-radius:8px;padding:9px 11px;margin:6px 0;background:#11161d;font-size:13px;position:relative}
+.flowbox b{color:var(--tx)} .flowbox .s{color:var(--mut);font-size:12px}
+.arrow{text-align:center;color:var(--mut);font-size:14px;line-height:1}
+.same{border-left:3px solid var(--mut)} .diff{border-left:3px solid var(--np)}
+.kpi{display:inline-block;border:1px solid var(--bd);border-radius:8px;padding:8px 12px;margin:4px 6px 4px 0;background:#11161d}
+.kpi b{font-size:19px} .kpi span{display:block;font-size:11px;color:var(--mut)}
+svg{display:block;margin:6px auto;max-width:100%}
+.scopecol{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}
+.scopecol li{margin:5px 0}
+.legend{font-size:12px;color:var(--mut);margin:6px 0}
+.fork{border:1px dashed var(--warn);border-radius:8px;padding:10px 12px;margin:8px 0;background:rgba(210,153,34,.06)}
+.stepper{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:8px 0}
+.chip{border:1px solid var(--bd);border-radius:8px;padding:7px 9px;font-size:12px;cursor:pointer;background:#11161d;white-space:nowrap;transition:.15s}
+.chip:hover{border-color:var(--mut)}
+.chip.active{border-color:var(--np);box-shadow:0 0 0 2px rgba(45,212,191,.3);background:#16221f}
+.chip.star{border-color:var(--np)}
+.chip .n{color:var(--np);font-weight:700;margin-right:5px}
+.sep{color:var(--mut);font-size:13px}
+.stagebox b.sk{color:var(--np)}
+.store{font-size:12px;color:var(--mut);margin-top:6px;border-top:1px dashed var(--bd);padding-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>next_plaid — <span class="p-np" id="planbadge">Option A</span> plan</h1>
+<p class="lede" id="planlede">Run LightOn's real <b>next-plaid / PLAID late-interaction</b> engine over our Chinese WB-Lite corpus as a <b>separate parallel path</b> (zero semfs-core changes), measured for real on <b>E2B</b>. This page = the engineering breakdown (EM view) + the agent UX. Click things.</p>
+
+<div class="row lvlbtns" id="optbtns" style="margin:10px 0 12px">
+  <button data-opt="A" class="active">Implementation A · parallel benchmark</button>
+  <button data-opt="B">Implementation B · semfs integration</button>
+  <button data-opt="C">Implementation C · reimplementation</button>
+</div>
+<p class="note" id="optnote"><b>These buttons switch implementation paths, not retrieval configs.</b> The rest of the page's shared retrieval material stays constant; the top summary, UX diff, task breakdown, risks, and definition of done update per option.</p>
+
+<div class="card" id="plankpis">
+<span class="kpi"><b>~1 week</b><span>full A, realistic E2B result</span></span>
+<span class="kpi"><b>0</b><span>semfs-core Rust changes (that's B)</span></span>
+<span class="kpi"><b>LFM2-ColBERT-350M</b><span>multilingual ColBERT (zh), dim 128</span></span>
+<span class="kpi"><b>OpenRouter</b><span>agent LLM — no GPU deploy</span></span>
+</div>
+
+<!-- ============ SCOPE ============ -->
+<h2>① Scope — what A is (and isn't)</h2>
+<div class="grid2">
+  <div class="scopecol" id="scopein">
+    <h3 style="color:var(--ok);margin-top:0">✓ IN — Option A, parallel path</h3>
+    <ul>
+      <li>next-plaid lives <b>outside</b> semfs — own index, own tool</li>
+      <li>Agent calls <code>colgrep</code> instead of <code>semfs grep</code></li>
+      <li><b>Realistic E2B</b> end-to-end agent run (real FUSE mount, real deliverable, rubric-judged)</li>
+      <li>LLM = <b>OpenRouter</b> (no GLM-on-Modal GPU)</li>
+      <li>Model = <b>LFM2-ColBERT-350M</b> (Chinese)</li>
+      <li><b style="color:var(--np)">FIRST TEST</b>: LFM2 on a <b>non-code (doc-only) persona</b> — houqin <code>358/357/251/267</code>, n=2, vs <span class="pill p-ppr">ppr_on</span> / <span class="pill" style="color:var(--mut);border-color:var(--mut)">plain</span>. LFM2's home turf; no code-quality unknown.</li>
+      <li><b style="color:var(--bad)">THE REAL TARGET</b>: <b>kaifa</b> (mixed code+docs) — where every PPR variant ran high / didn't help. Docs-first just validates the tooling cheaply; kaifa is the problem we're actually solving, via <b>Config B/C</b> (split code + doc lanes).</li>
+    </ul>
+  </div>
+  <div class="scopecol" id="scopeout">
+    <h3 style="color:var(--mut);margin-top:0">✗ OUT — deferred until A's result is in</h3>
+    <ul>
+      <li><b>B</b> — vendoring the crate into <code>semfs-core</code> (not specced yet, on purpose)</li>
+      <li><b>C</b> — reimplementing PLAID ourselves</li>
+      <li>Full matrix / all personas</li>
+      <li>Production integration into the daemon/delivery path</li>
+      <li>ONNX-export <i>if</i> we take the sidecar route</li>
+    </ul>
+  </div>
+</div>
+<p class="note" id="scopenote"><b>Tradeoff of the parallel path:</b> the agent uses colgrep's output format, not semfs's delivery — so an end-to-end win could partly be "colgrep presents results better," not purely "late interaction ranks better." We compare <b>within-persona</b> and lean on <b>kaifa</b> (code), where the mechanism is strongest, to read the signal.</p>
+
+<!-- ============ ELI5 → EXPERT ============ -->
+<h2>② What we're actually building, in 5 zoom levels</h2>
+<div class="row lvlbtns" id="lvlbtns">
+  <button data-l="0" class="active">🧒 ELI5</button>
+  <button data-l="1">🎓 Beginner</button>
+  <button data-l="2">🛠️ Practitioner</button>
+  <button data-l="3">🔬 Engineer</button>
+  <button data-l="4">🧠 Expert</button>
+</div>
+<div class="card" id="lvlbox" style="min-height:140px"></div>
+
+<!-- ============ UX / DATA FLOW ============ -->
+<h2>③ The agent's experience — today vs next_plaid</h2>
+<p id="uxlede">Same task, same workspace. The <b>only</b> thing that changes is the search tool the agent reaches for. Toggle:</p>
+<div class="row">
+  <button id="bt-ppr" class="active">Today · <code>semfs grep</code> (ppr_on)</button>
+  <button id="bt-np">next_plaid · <code>colgrep</code></button>
+</div>
+<div class="grid2" style="margin-top:12px">
+  <div>
+    <h3 id="flowtitle">Today — pooled vector + RRF + graph prior</h3>
+    <div id="flow"></div>
+  </div>
+  <div>
+    <h3>What's stored / scored <span class="muted" id="storenote"></span></h3>
+    <div class="card" id="storebox" style="min-height:160px"></div>
+  </div>
+</div>
+<p class="note" id="uxnote"></p>
+
+<!-- ============ ENTIRE PIPELINE ============ -->
+<h2>④ The two flows — seed creation (embedding) + query</h2>
+<div class="card">
+<b>Does next-plaid need an initial embedding? — <span style="color:var(--np)">Yes, always.</span></b> The flow you shared <i>is</i> it: <code>corpus → tree-sitter → structured text → [model] multi-vector embedding → NextPlaid index</code> is the <b>build/embedding stage</b>; <b>Search</b> only runs once that index exists. "Incremental" = you can <i>add</i> files later without a full re-embed — the initial corpus must still be embedded first. For us that's the <b>seed-creation stage</b>, done off-box and baked into the E2B template.
+<div class="store">vs the stock diagram: our model is <b>LFM2-ColBERT-350M</b> (Chinese), not LateOn-Code; and the front-end has <b>two routes</b> — tree-sitter for code, <code>extract → .extracted.md</code> for office docs.</div>
+</div>
+
+<h3>① Seed-creation / embedding stage <span class="muted">(offline · one-time · baked into the E2B template)</span></h3>
+<svg id="flow-seed" width="760"></svg>
+
+<h3 style="margin-top:26px"><span style="color:var(--np)">Config A</span> — unified: 3 routes → <b>ONE model</b> → <b>ONE index</b> <span class="muted">(no second model, no merge)</span></h3>
+<p class="muted" style="margin-top:2px">This is the diagram you circled. Three input types fan out to three parsers, then <b>converge into ONE LFM2 encoder and ONE shared index</b>. <b>This is one of three options</b> — Configs B &amp; C (below) split into a code lane + doc lane.</p>
+<svg width="760" viewBox="0 0 760 320" style="max-width:100%">
+ <defs><marker id="mx" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#8b949e"/></marker></defs>
+ <line x1="192" y1="50" x2="232" y2="50" stroke="#8b949e" stroke-width="1.5" marker-end="url(#mx)"/>
+ <line x1="192" y1="156" x2="232" y2="156" stroke="#8b949e" stroke-width="1.5" marker-end="url(#mx)"/>
+ <line x1="192" y1="262" x2="232" y2="262" stroke="#8b949e" stroke-width="1.5" marker-end="url(#mx)"/>
+ <line x1="448" y1="50" x2="494" y2="148" stroke="#8b949e" stroke-width="1.5" marker-end="url(#mx)"/>
+ <line x1="448" y1="156" x2="494" y2="158" stroke="#8b949e" stroke-width="1.5" marker-end="url(#mx)"/>
+ <line x1="448" y1="262" x2="494" y2="170" stroke="#8b949e" stroke-width="1.5" marker-end="url(#mx)"/>
+ <line x1="621" y1="187" x2="607" y2="262" stroke="#8b949e" stroke-width="1.5" marker-end="url(#mx)"/>
+ <rect x="16" y="26" width="176" height="48" rx="7" fill="#4a78c8"/>
+ <text x="104" y="46" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">Code files</text>
+ <text x="104" y="62" text-anchor="middle" fill="#dbe6f0" font-size="10.5">.go .py .ts .vue …</text>
+ <rect x="16" y="132" width="176" height="48" rx="7" fill="#4a78c8"/>
+ <text x="104" y="152" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">Text &amp; config</text>
+ <text x="104" y="168" text-anchor="middle" fill="#dbe6f0" font-size="10.5">.md .yaml .json .sh …</text>
+ <rect x="16" y="238" width="176" height="48" rx="7" fill="#4a78c8"/>
+ <text x="104" y="258" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">Binary office docs</text>
+ <text x="104" y="274" text-anchor="middle" fill="#dbe6f0" font-size="10.5">.pptx .docx .xlsx .pdf</text>
+ <rect x="236" y="26" width="212" height="48" rx="7" fill="#5aa469"/>
+ <text x="342" y="46" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">tree-sitter</text>
+ <text x="342" y="62" text-anchor="middle" fill="#e7f1ea" font-size="10.5">→ function / class units</text>
+ <rect x="236" y="132" width="212" height="48" rx="7" fill="#5aa469"/>
+ <text x="342" y="152" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">document windows</text>
+ <text x="342" y="168" text-anchor="middle" fill="#e7f1ea" font-size="10.5">(already text — fed raw)</text>
+ <rect x="236" y="238" width="212" height="48" rx="7" fill="#5aa469"/>
+ <text x="342" y="258" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">our extract →</text>
+ <text x="342" y="274" text-anchor="middle" fill="#e7f1ea" font-size="10.5">.extracted.md → windows</text>
+ <rect x="498" y="129" width="246" height="58" rx="7" fill="#d98a3d"/>
+ <text x="621" y="153" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">Unified structured-text</text>
+ <text x="621" y="170" text-anchor="middle" fill="#fbeede" font-size="10.5">incl. File:[normalized path]</text>
+ <rect x="470" y="262" width="274" height="44" rx="7" fill="#1f9e91"/>
+ <text x="607" y="282" text-anchor="middle" fill="#fff" font-size="11.5" font-weight="600">→ LFM2 encode (ONE model)</text>
+ <text x="607" y="297" text-anchor="middle" fill="#d6f5f1" font-size="10.5">→ ONE shared PLAID index</text>
+</svg>
+<p class="note"><b>Config A in one line:</b> one LFM2 encoder, one shared centroid space → code-unit and doc-unit scores are <b>directly comparable</b> under one MaxSim, <b>no merge</b>. Caveat at k-means: centroids train over <b>all</b> tokens, so a code minority can quantize worse. <b style="color:var(--bad)">This is the config that did NOT move kaifa under PPR-style ranking — so for kaifa we look at B / C, not A.</b></p>
+
+<h3 style="margin-top:26px"><span style="color:var(--np)">Config B / C</span> — split lanes: a <b>code lane</b> + a <b>doc lane</b> → 2 indices → merge at query <span class="muted">(this is what you asked to see)</span></h3>
+<p class="muted" style="margin-top:2px">Two independent build lanes, two indices. At query time the question is encoded and searched in <b>both</b>, then fused with RRF. <b>B</b> = same model (LFM2) in both lanes. <b>C</b> = a code model in the code lane + LFM2 in the doc lane (= 2 models).</p>
+<svg width="760" viewBox="0 0 760 452" style="max-width:100%">
+ <defs><marker id="d2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#8b949e"/></marker></defs>
+ <text x="134" y="16" text-anchor="middle" fill="#2dd4bf" font-size="12" font-weight="700">CODE LANE</text>
+ <text x="626" y="16" text-anchor="middle" fill="#58a6ff" font-size="12" font-weight="700">DOC LANE</text>
+ <!-- within-lane arrows -->
+ <line x1="134" y1="72" x2="134" y2="98" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <line x1="134" y1="144" x2="134" y2="170" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <line x1="134" y1="216" x2="134" y2="242" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <line x1="626" y1="72" x2="626" y2="98" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <line x1="626" y1="144" x2="626" y2="170" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <line x1="626" y1="216" x2="626" y2="242" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <!-- index -> merge -->
+ <line x1="134" y1="288" x2="352" y2="330" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <line x1="626" y1="288" x2="408" y2="330" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <line x1="380" y1="376" x2="380" y2="400" stroke="#8b949e" stroke-width="1.5" marker-end="url(#d2)"/>
+ <!-- CODE lane boxes -->
+ <rect x="24" y="26" width="220" height="46" rx="7" fill="#4a78c8"/><text x="134" y="44" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">Code files</text><text x="134" y="60" text-anchor="middle" fill="#dbe6f0" font-size="10.5">.go .py .ts .vue</text>
+ <rect x="24" y="98" width="220" height="46" rx="7" fill="#5aa469"/><text x="134" y="116" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">tree-sitter →</text><text x="134" y="132" text-anchor="middle" fill="#e7f1ea" font-size="10.5">function / class units</text>
+ <rect x="24" y="170" width="220" height="46" rx="7" fill="#d98a3d"/><text x="134" y="188" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">encode</text><text x="134" y="204" text-anchor="middle" fill="#fbeede" font-size="10.5">B: LFM2 · C: code model</text>
+ <rect x="24" y="242" width="220" height="46" rx="7" fill="#d98a3d"/><text x="134" y="269" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">Code PLAID index</text>
+ <!-- DOC lane boxes -->
+ <rect x="516" y="26" width="220" height="46" rx="7" fill="#4a78c8"/><text x="626" y="44" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">Docs (+ .extracted.md)</text><text x="626" y="60" text-anchor="middle" fill="#dbe6f0" font-size="10.5">.md .pptx→text .pdf→text</text>
+ <rect x="516" y="98" width="220" height="46" rx="7" fill="#5aa469"/><text x="626" y="124" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">document windows</text>
+ <rect x="516" y="170" width="220" height="46" rx="7" fill="#1f9e91"/><text x="626" y="188" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">encode</text><text x="626" y="204" text-anchor="middle" fill="#d6f5f1" font-size="10.5">LFM2 (both configs)</text>
+ <rect x="516" y="242" width="220" height="46" rx="7" fill="#1f9e91"/><text x="626" y="269" text-anchor="middle" fill="#fff" font-size="12.5" font-weight="600">Doc PLAID index</text>
+ <!-- merge -->
+ <text x="380" y="322" text-anchor="middle" fill="#8b949e" font-size="11">query → encode in each lane → search both indices</text>
+ <rect x="300" y="330" width="160" height="46" rx="7" fill="#8a5fc8"/><text x="380" y="358" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">RRF merge</text>
+ <rect x="306" y="400" width="148" height="40" rx="7" fill="#8a5fc8"/><text x="380" y="424" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">top-k → agent</text>
+</svg>
+
+<table style="margin-top:6px">
+<tr><th>Config</th><th># models</th><th># indices</th><th>merge?</th><th>k-means dilution</th><th>language risk</th><th>best for</th></tr>
+<tr><td><b>A · unified</b></td><td>1 (LFM2)</td><td>1</td><td>no</td><td><span style="color:var(--warn)">yes</span> (shared centroids)</td><td>none</td><td>doc-heavy / simplest · <i>didn't move kaifa</i></td></tr>
+<tr><td><b>B · split, same model</b></td><td><b>1</b> (LFM2 both lanes)</td><td>2</td><td>RRF</td><td><span style="color:var(--ok)">no</span> (separate spaces)</td><td>none</td><td><b>kaifa-safe</b> — fixes dilution, no language risk</td></tr>
+<tr><td><b>C · split, two models</b></td><td><b>2</b> (code model + LFM2)</td><td>2</td><td>RRF</td><td><span style="color:var(--ok)">no</span></td><td><span style="color:var(--bad)">code model must match code's language</span></td><td>English-identifier code</td></tr>
+</table>
+<p class="note"><b>For kaifa specifically</b> (Chinese, mixed, unsolved by PPR): the matrix (§5) runs <b>Config C</b> first — <b>LFM2</b> docs + <b>LateOn-Code</b> code (SEM-45) — <b>deliberately</b>, to <b>measure</b> whether the English code model survives Chinese code. <b>Config B</b> (split, but <b>LFM2</b> in both lanes → <b>no</b> language risk) is the documented <b>fallback</b> if C's code lane underperforms; <b>Config A</b> (unified) is the further fallback. So "2 models" = <b>Config C</b> (what we run on kaifa); "2 indices, 1 model" = <b>Config B</b> (fallback); the diagram you circled = <b>Config A</b>.</p>
+
+<h3 style="margin-top:24px">Implementation options vs retrieval configs <span class="muted">(different A/B/Cs)</span></h3>
+<p class="muted" style="margin-top:2px">This ticket has <b>two separate decision axes</b>. <b>Option A/B/C</b> = <i>how we integrate next-plaid into our stack</i>. <b>Config A/B/C</b> = <i>how the retrieval architecture itself is shaped once next-plaid is in play</i>. They are orthogonal; the similar letters caused confusion.</p>
+<div class="grid2">
+  <div class="card">
+    <b class="p-np">Implementation options</b>
+    <table style="margin-top:8px">
+      <tr><th>Option</th><th>What it means</th><th>semfs-core?</th></tr>
+      <tr><td><b>A</b></td><td>parallel-path benchmark: build next-plaid/colgrep artifacts alongside the seed and swap the agent's search tool</td><td>no Rust changes</td></tr>
+      <tr><td><b>B</b></td><td>vendor next-plaid into <code>semfs-core</code> and serve it through <code>semfs grep</code></td><td>yes</td></tr>
+      <tr><td><b>C</b></td><td>reimplement PLAID ourselves inside semfs</td><td>yes, from scratch</td></tr>
+    </table>
+    <div class="store"><b>Original call:</b> <b>Option A first</b>, then <b>Option B only if the benchmark wins</b>. <b>Option C stays rejected</b> because it adds divergence without adding signal.</div>
+  </div>
+  <div class="card">
+    <b class="p-ppr">Retrieval configs</b>
+    <table style="margin-top:8px">
+      <tr><th>Config</th><th>What it means</th><th>Merge?</th></tr>
+      <tr><td><b>A</b></td><td>one unified index, one model</td><td>no</td></tr>
+      <tr><td><b>B</b></td><td>split code/doc lanes, but <b>LFM2</b> in both lanes</td><td>RRF</td></tr>
+      <tr><td><b>C</b></td><td>split code/doc lanes with <b>different models</b></td><td>RRF</td></tr>
+    </table>
+    <div class="store">These configs answer the retrieval question itself: unified vs split lanes, and if split, whether the code lane deserves its own model.</div>
+  </div>
+</div>
+<p class="note"><b>The load-bearing distinction:</b> saying "<b>A is still right</b>" can mean two different things. For the <b>implementation path</b>, A = <b>parallel path outside semfs</b>. For the <b>retrieval architecture</b>, A = <b>one unified index</b>. The current ticket keeps <b>Implementation Option A</b> for the benchmark, while the retrieval matrix tests <b>Config A</b> and <b>Config C</b> explicitly, with <b>Config B</b> as the documented fallback.</p>
+
+<h3>② Query stage <span class="muted">(online · in the E2B cell, per search — no re-embedding of the corpus)</span></h3>
+<svg id="flow-query" width="760"></svg>
+
+<h3>The embedding flow up close — and where LFM2 plugs in</h3>
+<div class="grid2">
+  <div class="card diff">
+    <b class="p-np">The encoder (per-token, dim 128)</b>
+    <p style="font-size:13px">tokenize → insert marker token <b>after CLS</b> (<code>[D]</code> for docs, <code>[Q]</code> for queries) → ONNX/PyLate forward → <b>projection + per-token L2-norm inside the graph</b> → output <code>[n_tokens, 128]</code>.</p>
+    <ul style="font-size:13px;margin:6px 0 0 0">
+      <li><b>Doc:</b> skiplist removes punctuation tokens → variable length (≤ <code>document_length</code> 512).</li>
+      <li><b>Query:</b> MASK-expand to fixed <code>query_length</code> 32, attn=1 (so short queries still get rich matching).</li>
+    </ul>
+    <div class="store">vs ours today: gemma emits <b>one pooled 768-d</b> vector/chunk; here it's <b>~N×128 per token</b>.</div>
+  </div>
+  <div class="card" style="border-left:3px solid var(--warn)">
+    <b class="p-warn">LFM2 has no ONNX — two ways to feed it</b>
+    <ul style="font-size:13px;margin:6px 0 0 0">
+      <li><b>(a) ONNX-export</b> via <code>pylate-onnx-export</code> → <code>model.onnx</code>, so <code>colgrep</code> encodes internally. ⚠️ hybrid backbone = export risk.</li>
+      <li><b>(b) PyLate-direct</b> (PyTorch) → precomputed vectors → next-plaid <code>update</code> API (base64 LE-f32). <b>No ONNX.</b></li>
+    </ul>
+    <div class="store">The encoder slots in at BUILD stage ④ and QUERY stage ②. Everything downstream (centroids/PQ/IVF/MaxSim) is identical either way.</div>
+  </div>
+</div>
+<p class="note">Verified from the clone: streaming build pipeline <code>colgrep/src/index/mod.rs:494–715</code> (tokenize → encode → pool → PQ → write); encoder <code>next-plaid-onnx/src/lib.rs:1118</code> <code>encode_documents</code> / <code>encode_queries</code>; index build <code>MmapIndex::create_with_kmeans</code>; precomputed-embeddings ingestion via the API <code>update</code> (base64 LE-f32, SDK <code>client.add</code> routes text→<code>update_with_encoding</code>, vectors→<code>update</code>).</p>
+
+<!-- ============ ENGLISH-ONLY VARIANT ============ -->
+<h2 style="font-size:18px">④b Contrast — what an <span style="color:var(--ppr)">English-only</span> (code + docs) workspace would look like</h2>
+<p class="muted">Our corpus is <b>Chinese + mixed</b>, which forces a single LFM2 index (the English code model can't read Chinese comments). If the workspace were <b>English-only with both code and docs</b>, the language handicap disappears and the architecture <b>flips</b>: multi-model becomes the clean <i>default</i>, not a gated escalation.</p>
+
+<div class="grid2">
+  <div class="card" style="border-left:3px solid #d98a3d">
+    <b style="color:#d98a3d">Code lane</b>
+    <p style="font-size:13px;margin:6px 0">Code files (<code>.go .py .ts …</code>) → tree-sitter units → <b>LateOn-Code</b> encode → <b>Code PLAID index</b></p>
+    <div class="store">English identifiers/comments → LateOn-Code runs at <b>full strength</b> (its training domain). No Chinese handicap.</div>
+  </div>
+  <div class="card" style="border-left:3px solid var(--ppr)">
+    <b class="p-ppr">Document lane</b>
+    <p style="font-size:13px;margin:6px 0">Docs (<code>.md</code>, pdf→text, …) → windows → <b>GTE-ModernColBERT-v1</b> encode → <b>Doc PLAID index</b></p>
+    <div class="store">English prose → an English text ColBERT at full strength.</div>
+  </div>
+</div>
+<div class="flowbox diff" style="text-align:center;margin-top:8px">↓ <b>at query time</b> ↓ &nbsp; <b>Query (English)</b> → encode with <i>both</i> models → search <i>both</i> indices → <b>RRF merge</b> → top-k → agent</div>
+
+<table style="margin-top:12px">
+<tr><th>Dimension</th><th>Our case — <span class="p-np">Chinese · mixed</span></th><th>Hypothetical — <span class="p-ppr">English · code + docs</span></th></tr>
+<tr><td><b>Model strategy</b></td><td><b>single LFM2</b> index (multi-model risky)</td><td><b>multi-model</b>: LateOn-Code (code) + GTE-ModernColBERT (docs), RRF merge</td></tr>
+<tr><td><b>Code retrieval</b></td><td><span class="mid" style="color:var(--warn)">moderate</span> — text model + lexical backstop</td><td><span class="hi" style="color:var(--ok)">strong</span> — code ColBERT at full strength</td></tr>
+<tr><td><b>Doc retrieval</b></td><td><span class="hi" style="color:var(--ok)">strong</span> — LFM2 Chinese</td><td><span class="hi" style="color:var(--ok)">strong</span> — GTE-ModernColBERT English</td></tr>
+<tr><td><b>Multi-model verdict</b></td><td>escalation only, <b>gated</b> on a preflight</td><td><b>recommended default</b></td></tr>
+<tr><td><b>Score merge</b></td><td>avoided (one model = comparable scores)</td><td>required — RRF across two score distributions</td></tr>
+<tr><td><b>What drives the choice</b></td><td><b>language</b> (Chinese kills the code model)</td><td><b>pure code-vs-text specialization</b></td></tr>
+</table>
+<p class="note"><b>Why it flips:</b> the only reason we don't reach for LateOn-Code today is its <b>English training</b> on a <b>Chinese</b> codebase. Remove the language mismatch and the code lane is strong, the doc lane is strong, and the only cost left is the RRF merge — which is worth paying when both legs are at full strength. <b>English-only is the world where "use multiple models" is clearly right.</b></p>
+
+<!-- ============ EXPERIMENT MATRIX ============ -->
+<h2>⑤ The 3 test cells — experiment matrix</h2>
+<p class="muted">Each cell = (persona × config × models), run as a <code>next_plaid</code> arm vs <code>ppr_on</code> / <code>plain</code> on E2B, LLM on OpenRouter. Steps + code changes: <code>SUBTICKETS.md</code> (Linear SEM-44/45/46).</p>
+<div class="grid3">
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><b>xAFS</b> <span class="pill p-np">Config C · 2 models</span></div>
+    <div class="muted" style="font-size:12px">SEM-44 · English</div>
+    <p style="font-size:13px;margin:8px 0 6px">docs: <b>LateOn</b><br>code: <b>LateOn-Code</b></p>
+    <div class="store">best-case English dual-model — the <b>ceiling</b> for Config C (no language handicap)</div>
+  </div>
+  <div class="card" style="border:1px solid var(--bad)">
+    <div class="row" style="justify-content:space-between"><b>kaifa</b> <span class="pill p-np">Config C · 2 models</span></div>
+    <div class="muted" style="font-size:12px">SEM-45 · High · Chinese · <b>has code</b></div>
+    <p style="font-size:13px;margin:8px 0 6px">docs: <b>LFM2</b><br>code: <b>LateOn-Code</b></p>
+    <div class="store"><b>THE unsolved target</b> (PPR ran high) — tests an English code model on Chinese code</div>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><b>houqin</b> <span class="pill p-ok">Config A · 1 model</span></div>
+    <div class="muted" style="font-size:12px">SEM-46 · Chinese · docs</div>
+    <p style="font-size:13px;margin:8px 0 6px">unified: <b>LFM2</b></p>
+    <div class="store">LFM2 home turf — the <b>doc baseline</b> (no code lane, no merge)</div>
+  </div>
+</div>
+<p class="note"><b>It's a 2×2 on the two variables that matter — code lane present? × code language.</b> <b>xAFS-C</b> = code lane + English (ceiling) · <b>kaifa-C</b> = code lane + Chinese (the real test of LateOn-Code's language penalty) · <b>houqin-A</b> = no code lane (LFM2 doc baseline). kaifa-C vs xAFS-C isolates the code model's language penalty; kaifa-C vs houqin-A isolates whether the code lane earns its keep. Read within-persona, accuracy + tokens together.</p>
+
+<h3 style="margin-top:24px">⑤a What changed once Configs B / C existed?</h3>
+<div class="grid2">
+  <div class="card">
+    <b class="p-warn">Original view</b>
+    <ul style="font-size:13px;margin:8px 0 0 0">
+      <li><b>Implementation Option A</b> looked almost identical to "just run <code>colgrep</code>" over one index.</li>
+      <li><b>Retrieval Config A</b> was the clean first read: one model, one centroid space, no merge logic.</li>
+      <li><b>Option B</b> was clearly premature before any benchmark result.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <b class="p-np">New view after adding split-lane configs</b>
+    <ul style="font-size:13px;margin:8px 0 0 0">
+      <li><b>Implementation Option A still stays for the test</b>, but it is no longer "pure colgrep" for every cell.</li>
+      <li><b>Configs B/C force extra A-side logic</b>: route corpus into code/doc dirs, build two indices, and add a query-time <b>RRF merge shim</b>.</li>
+      <li><b>Option B becomes more justified afterward</b>, because the merge logic and split-lane idea now have a direct production home inside <code>semfs grep</code>.</li>
+    </ul>
+  </div>
+</div>
+<p class="note"><b>So the recommendation shifts in nuance, not direction:</b> <b>Implementation Option A</b> is still the right benchmark path because it keeps the science cheap and keeps us on their real engine. But <b>Configs B/C</b> make the eventual production path much more likely to be <b>Implementation Option B</b>, not because B helps the test, but because the test now creates reusable merge/index-routing logic that ports naturally into semfs.</p>
+
+<h3 style="margin-top:24px">⑤b If we adopt the agreed architecture, what actually changes?</h3>
+<p class="muted" style="margin-top:2px">Current agreement = <b>benchmark on Implementation Option A</b> first, with the retrieval matrix deciding between <b>Config A</b>, <b>B</b>, or <b>C</b> for mixed corpora. If the result is good enough to keep, the productionization target becomes <b>Implementation Option B</b>.</p>
+<table style="margin-top:8px">
+  <tr><th>Surface</th><th>Agreed benchmark path now (Implementation A)</th><th>If we productionize (Implementation B)</th></tr>
+  <tr><td><b>Index location</b></td><td>next-plaid artifact sits <b>next to</b> the seed/template</td><td>next-plaid becomes a <b>seed-baked semfs backend</b></td></tr>
+  <tr><td><b>Search entrypoint</b></td><td>agent calls <code>colgrep</code> or <code>rrf_merge.py</code> via a shim</td><td>agent keeps calling <code>semfs grep</code></td></tr>
+  <tr><td><b>Merge logic</b></td><td>Python-side shim for split-lane configs</td><td>merge moves into the semfs retrieval backend</td></tr>
+  <tr><td><b>Code changes</b></td><td>harness/env/template wiring only; <b>zero semfs-core Rust edits</b></td><td>new <code>NextPlaidStore</code>, ONNX/runtime reconcile, seed-build integration, arm/backend routing</td></tr>
+  <tr><td><b>Delivery format</b></td><td>external tool returns paths/snippets that must align with the mounted tree</td><td>normal semfs delivery path; removes the extra tool-format confound</td></tr>
+  <tr><td><b>Reuse from this ticket</b></td><td>all benchmark logic is local to the arm</td><td>the routing, dual-index, and RRF ideas from Config B/C port directly</td></tr>
+</table>
+<p class="note"><b>What does not change:</b> we still do <b>not</b> jump to Implementation B before a positive result, and we still do <b>not</b> adopt reimplementation Option C. The agreed architecture is "<b>A proves it, B productizes it</b>." The open retrieval question inside that envelope is whether mixed workspaces settle on <b>Config B</b> (safe split, one model) or <b>Config C</b> (true dual-model split).</p>
+
+<!-- ============ EXECUTION ROADMAP ============ -->
+<h2>⑤c Execution roadmap — now → results on all 3</h2>
+<p class="muted" style="margin-top:2px"><b>Decision:</b> <b style="color:var(--np)">ONNX for both</b> (LFM2 exported via <code>pylate-onnx-export</code>; LateOn/LateOn-Code shipped ONNX; <code>onnxruntime</code> everywhere — no PyTorch in the cell). <b>Readiness:</b> the <i>plan</i> is complete; not yet done = the 3 Phase-0 checks + <code>rrf_merge.py</code>. The 3 builds <b>parallelize</b> but share a Phase 0, so: do Phase 0 once → fan out. <b>Wall-clock ≈ 3.5–5 days.</b></p>
+<svg width="760" viewBox="0 0 760 250" style="max-width:100%">
+ <defs><marker id="rm" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#8b949e"/></marker></defs>
+ <text x="95" y="18" text-anchor="middle" fill="#8b949e" font-size="11.5" font-weight="700">PHASE 0 · shared</text>
+ <text x="292" y="18" text-anchor="middle" fill="#8b949e" font-size="11.5" font-weight="700">PHASE 1 · build ∥</text>
+ <text x="495" y="18" text-anchor="middle" fill="#8b949e" font-size="11.5" font-weight="700">PHASE 2 · run ∥</text>
+ <text x="672" y="18" text-anchor="middle" fill="#8b949e" font-size="11.5" font-weight="700">PHASE 3</text>
+ <text x="95" y="32" text-anchor="middle" fill="#586069" font-size="10">~0.5–1d</text>
+ <text x="292" y="32" text-anchor="middle" fill="#586069" font-size="10">~1d</text>
+ <text x="495" y="32" text-anchor="middle" fill="#586069" font-size="10">~1–1.5d</text>
+ <text x="672" y="32" text-anchor="middle" fill="#586069" font-size="10">~0.5d</text>
+ <text x="186" y="50" text-anchor="middle" fill="#3fb950" font-size="9.5">ONNX ✓</text>
+ <text x="402" y="50" text-anchor="middle" fill="#3fb950" font-size="9.5">baked ✓</text>
+ <text x="590" y="50" text-anchor="middle" fill="#3fb950" font-size="9.5">judged ✓</text>
+ <!-- arrows P0->P1 -->
+ <line x1="172" y1="82" x2="202" y2="82" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <line x1="172" y1="147" x2="202" y2="147" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <line x1="172" y1="212" x2="202" y2="212" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <!-- arrows P1->P2 -->
+ <line x1="387" y1="82" x2="417" y2="82" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <line x1="387" y1="147" x2="417" y2="147" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <line x1="387" y1="212" x2="417" y2="212" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <!-- arrows P2->P3 (converge) -->
+ <line x1="577" y1="82" x2="600" y2="140" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <line x1="577" y1="147" x2="600" y2="147" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <line x1="577" y1="212" x2="600" y2="154" stroke="#8b949e" stroke-width="1.5" marker-end="url(#rm)"/>
+ <!-- Phase 0 (shared, tall) -->
+ <rect x="22" y="60" width="150" height="172" rx="8" fill="#1f9e91"/>
+ <text x="97" y="92" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Phase 0 (shared)</text>
+ <text x="97" y="118" text-anchor="middle" fill="#d6f5f1" font-size="10.5">· LFM2 → ONNX export</text>
+ <text x="97" y="138" text-anchor="middle" fill="#d6f5f1" font-size="10.5">· confirm LightOn ONNX</text>
+ <text x="97" y="158" text-anchor="middle" fill="#d6f5f1" font-size="10.5">· 3 preflights</text>
+ <text x="97" y="178" text-anchor="middle" fill="#d6f5f1" font-size="10.5">· install colgrep</text>
+ <text x="97" y="198" text-anchor="middle" fill="#d6f5f1" font-size="10.5">· colgrep loads LFM2?</text>
+ <!-- Phase 1 (3 build lanes) -->
+ <rect x="202" y="61" width="185" height="42" rx="7" fill="#d98a3d"/><text x="294" y="78" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">xAFS-C build</text><text x="294" y="94" text-anchor="middle" fill="#fbeede" font-size="10">LateOn-Code + LateOn</text>
+ <rect x="202" y="126" width="185" height="42" rx="7" fill="#d98a3d"/><text x="294" y="143" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">kaifa-C build</text><text x="294" y="159" text-anchor="middle" fill="#fbeede" font-size="10">LateOn-Code + LFM2</text>
+ <rect x="202" y="191" width="185" height="42" rx="7" fill="#d98a3d"/><text x="294" y="208" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">houqin-A build</text><text x="294" y="224" text-anchor="middle" fill="#fbeede" font-size="10">LFM2 (unified)</text>
+ <!-- Phase 2 (3 run lanes) -->
+ <rect x="417" y="61" width="160" height="42" rx="7" fill="#4a78c8"/><text x="497" y="86" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">xAFS-C E2B run</text>
+ <rect x="417" y="126" width="160" height="42" rx="7" fill="#4a78c8"/><text x="497" y="151" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">kaifa-C E2B run</text>
+ <rect x="417" y="191" width="160" height="42" rx="7" fill="#4a78c8"/><text x="497" y="216" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">houqin-A E2B run</text>
+ <!-- Phase 3 (converge) -->
+ <rect x="600" y="116" width="145" height="62" rx="8" fill="#8a5fc8"/><text x="672" y="142" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Results +</text><text x="672" y="160" text-anchor="middle" fill="#efe6ff" font-size="11">cross-cell read</text>
+</svg>
+<p class="note"><b>Build scripts? — mostly no.</b> Index build = <code>colgrep init</code> per lane (once ONNX + corpus dirs exist). The one custom script is <code>rrf_merge.py</code> (Config C) — and it's <b>test-time (Phase 2), not build-time</b>, so it doesn't gate building. Phase-0 verifies "colgrep loads our custom LFM2 ONNX"; if it can't, fallback = next-plaid API + a tiny feeder script. <b>Phase 2's arm-wiring is shared (write once); the runs parallelize.</b> Critical path: P0 (LFM2 export) → slowest P1 build → P2 run+debug → P3.</p>
+
+<!-- ============ ENGINEERING TASKS ============ -->
+<h2>⑥ Engineering breakdown (EM view) — click a task to expand</h2>
+<p class="muted" id="taskintro">5 tasks. <span class="tag t-crit">critical path</span> = T1→T2→T4→T5. <span class="tag t-par">parallel</span> = T3 runs alongside. Effort assumes one focused implementer who knows the harness.</p>
+<div class="tasks" id="taskboard"></div>
+
+<h3>Timeline — critical path &amp; the one fork</h3>
+<svg id="gantt" width="1040" height="250" viewBox="0 0 1040 250"></svg>
+<div class="legend">▮ <span style="color:var(--crit)">critical path</span> &nbsp; ▮ <span style="color:var(--par)">parallel</span> &nbsp; ◆ decision fork (ONNX export vs PyLate sidecar)</div>
+
+<!-- ============ RISKS ============ -->
+<h2>⑦ Risk register — what actually eats the week</h2>
+<table id="risks">
+<tr><th>Risk</th><th>Sev</th><th>Why</th><th>Mitigation</th></tr>
+</table>
+
+<!-- ============ DONE ============ -->
+<h2>⑧ Definition of done</h2>
+<div class="card" id="donebox">
+A <span class="pill p-np">next_plaid</span> arm that ran in <b>real E2B cells</b> on houqin <code>358/357/251/267</code> + a few kaifa code cases at n=2, judged on the rubric, producing a single table:
+<b>accuracy AND tokens</b> for <span class="p-np">next_plaid</span> vs <span class="p-ppr">ppr_on</span> vs <span class="muted">plain</span> — with the actual agent responses mined (not just scores), per the analyze-benchmark-results rule. That table answers: <i>does late interaction beat our PPR stack on our Chinese corpus, and at what token cost?</i>
+</div>
+<p class="note">Reference: <code>README.md</code> (full work breakdown + 100% parity checklist) · <code>REFERENCE.md</code> (source-grounded specs) · Linear <b>SEM-43</b>.</p>
+
+</div>
+
+<script>
+const PLANS={
+ A:{
+  title:"next_plaid — Option A plan",
+  badge:"Option A",
+  lede:`Run LightOn's real <b>next-plaid / PLAID late-interaction</b> engine over our Chinese WB-Lite corpus as a <b>separate parallel path</b> (zero semfs-core changes), measured for real on <b>E2B</b>. This page = the engineering breakdown (EM view) + the agent UX. Click things.`,
+  kpis:[
+    ["~1 week","full A, realistic E2B result"],
+    ["0","semfs-core Rust changes (that's B)"],
+    ["LFM2-ColBERT-350M","multilingual ColBERT (zh), dim 128"],
+    ["OpenRouter","agent LLM — no GPU deploy"]
+  ],
+  scopeIn:`<h3 style="color:var(--ok);margin-top:0">✓ IN — Option A, parallel path</h3><ul><li>next-plaid lives <b>outside</b> semfs — own index, own tool</li><li>Agent calls <code>colgrep</code> instead of <code>semfs grep</code></li><li><b>Realistic E2B</b> end-to-end agent run (real FUSE mount, real deliverable, rubric-judged)</li><li>LLM = <b>OpenRouter</b> (no GLM-on-Modal GPU)</li><li>Model = <b>LFM2-ColBERT-350M</b> (Chinese)</li><li><b style="color:var(--np)">FIRST TEST</b>: LFM2 on a <b>non-code (doc-only) persona</b> — houqin <code>358/357/251/267</code>, n=2, vs <span class="pill p-ppr">ppr_on</span> / <span class="pill" style="color:var(--mut);border-color:var(--mut)">plain</span>.</li><li><b style="color:var(--bad)">THE REAL TARGET</b>: <b>kaifa</b> (mixed code+docs) — the problem we are actually solving, via <b>Config B/C</b>.</li></ul>`,
+  scopeOut:`<h3 style="color:var(--mut);margin-top:0">✗ OUT — deferred until A's result is in</h3><ul><li><b>B</b> — vendoring the crate into <code>semfs-core</code></li><li><b>C</b> — reimplementing PLAID ourselves</li><li>Full matrix / all personas</li><li>Production integration into the daemon/delivery path</li><li>Mandatory ONNX export if the sidecar route works first</li></ul>`,
+  scopeNote:`<b>Tradeoff of the parallel path:</b> the agent uses colgrep's output format, not semfs's delivery — so an end-to-end win could partly be "colgrep presents results better," not purely "late interaction ranks better." We compare <b>within-persona</b> and lean on <b>kaifa</b> (code), where the mechanism is strongest, to read the signal.`,
+  uxLede:`Same task, same workspace. The <b>only</b> thing that changes is the search tool the agent reaches for. Toggle:`,
+  npButton:`next_plaid · <code>colgrep</code>`,
+  taskIntro:`5 tasks. <span class="tag t-crit">critical path</span> = T1→T2→T4→T5. <span class="tag t-par">parallel</span> = T3 runs alongside. <b>This is the per-option single-cell view; the 3-cell execution roadmap (Phase 0→3) is §⑤c above.</b>`,
+  tasks:[
+   {id:"T1",name:"Build LFM2 next-plaid index",days:"1–2d",track:"crit",role:"ML / infra",dep:"—",body:"Materialize one persona's corpus (mount seed + <code>.extracted.md</code> sidecars for binaries; <b>code files stay raw</b>) → encode with LFM2-ColBERT-350M → build the PLAID index. Off-box artifact prep.",fork:"DECIDED: <b>ONNX for both</b> — <code>pylate-onnx-export</code> LFM2; <code>onnxruntime</code> in-cell (no PyTorch). Fallback if export fails: baked PyLate sidecar (Phase 0 gate).",verify:"1-hr offline sanity: a known query surfaces the known gold file.",risk:"LFM2 ONNX export (HIGH) — Phase 0 gate; sidecar fallback."},
+   {id:"T2",name:"Bake index into E2B template",days:"0.5–1d",track:"crit",role:"infra",dep:"T1",body:"Bake the next-plaid index + the colgrep binary (+ ONNX model, if route a) into the per-persona E2B template, the way seeds are baked.",verify:"Template boots; index present + queryable; FUSE corpus + KG intact.",risk:"Bake quirks (LOW)."},
+   {id:"T3",name:"Wire the next_plaid arm",days:"1d",track:"par",role:"harness",dep:"— (parallel)",body:"Harness-only: add <code>next_plaid</code> to <code>SUPPORTED_ARMS</code>; make the cell-driver install <code>colgrep</code> as the agent's search tool; point the LLM at <b>OpenRouter</b>.",verify:"Smoke cell: agent invokes colgrep, OpenRouter LLM responds, a deliverable is produced.",risk:"Tool-swap + codex hook (MED). No semfs-core edit."},
+   {id:"T4",name:"E2B agent A/B run",days:"1–1.5d",track:"crit",role:"bench",dep:"T2 + T3",body:"Run the real arm on E2B — <b>doc-only persona first</b>: houqin <code>358/357/251/267</code>, n=2, arms <code>next_plaid</code> vs <code>ppr_on</code> vs <code>plain</code>. kaifa code cases are the follow-on.",verify:"<code>results.jsonl</code> + <code>judged.jsonl</code> land for all arms.",risk:"E2B infra landmines — daemon re-mount, sandbox death, disk ENOSPC, fastembed pollution (HIGH, historical)."},
+   {id:"T5",name:"Judge + analyze",days:"0.5d",track:"crit",role:"analysis",dep:"T4",body:"Judge, honest no-deliverable=0 scoring, then the accuracy+tokens table — and <b>mine the actual responses</b>, not just scores.",verify:"One table: accuracy AND tokens, next_plaid vs ppr_on vs plain; responses read.",risk:"Judge filename-match / no-deliverable scoring (MED)."}
+  ],
+  bars:[["T1 index",0,2,"--crit"],["T2 bake",2,1,"--crit"],["T3 arm wiring",0,1,"--par"],["T4 E2B A/B",3,1.5,"--crit"],["T5 analyze",4.5,0.5,"--crit"]],
+  timelineDays:7,
+  timelineNote:"critical path: T1 → T2 → T4 → T5  ·  T3 parallel  ·  ≈ 5–6 working days",
+  fork:{at:2,label:"◆ LFM2 export gate"},
+  risks:[
+    ["LFM2 → ONNX export","HIGH","Hybrid conv+attn backbone; no ONNX shipped — export may hit unsupported ops.","Sidecar + PyLate embeddings route needs no export; offline sanity needs no export either."],
+    ["E2B infra landmines","HIGH","Historical time-sink: daemon re-mount crash, sandbox death, disk ENOSPC corruption, fastembed pollution.","Use the health-gated driver + bake artifacts, don't build in-cell."],
+    ["Arena caveat","MED","WB-Lite hands the agent the whole workspace → ranking-only gains may not convert to accuracy.","Lead with kaifa (code), where late interaction is strongest."],
+    ["Delivery confound","MED","Agent uses colgrep's output format, not semfs delivery → a win may be presentation, not ranking.","Compare within-persona; read the actual responses."],
+    ["CPU encode latency","LOW","350M model encoding on a 4-vCPU sandbox is slow.","Bake the index; only the short query is encoded online."]
+  ],
+  done:`A <span class="pill p-np">next_plaid</span> arm that ran in <b>real E2B cells</b> on houqin <code>358/357/251/267</code> + a few kaifa code cases at n=2, judged on the rubric, producing a single table: <b>accuracy AND tokens</b> for <span class="p-np">next_plaid</span> vs <span class="p-ppr">ppr_on</span> vs <span class="muted">plain</span> — with the actual agent responses mined. That table answers: <i>does late interaction beat our PPR stack on our Chinese corpus, and at what token cost?</i>`
+ },
+ B:{
+  title:"next_plaid — Option B plan",
+  badge:"Option B",
+  lede:`Vendor the real <b>next-plaid</b> engine into <code>semfs-core</code> so the benchmark uses the <b>normal semfs delivery path</b>. This is the productionization path if Option A proves the retrieval signal is worth keeping.`,
+  kpis:[
+    ["~2 weeks","integration-grade B, including seed bake + arm routing"],
+    ["1 backend","new <code>NextPlaidStore</code> inside semfs-core"],
+    ["semfs grep","same outward interface as ppr_on"],
+    ["Lower confound","delivery format matches semfs"]
+  ],
+  scopeIn:`<h3 style="color:var(--ok);margin-top:0">✓ IN — Option B, integrated backend</h3><ul><li>Vendor <code>next-plaid</code> + encoder/runtime dependencies into <code>semfs-core</code></li><li>Implement a <code>NextPlaidStore</code> / backend path behind <code>semfs grep</code></li><li>Bake the next-plaid index into the persona seed/template path</li><li>Reuse the benchmark winner retrieval config (<b>A</b>, <b>B</b>, or <b>C</b>) behind the normal semfs interface</li><li>Run the same E2B benchmark, but now with semfs's delivery format</li></ul>`,
+  scopeOut:`<h3 style="color:var(--mut);margin-top:0">✗ OUT — still not this option's job</h3><ul><li>Reimplementing PLAID math from scratch</li><li>Broad product hardening beyond the benchmark path</li><li>Full matrix before the backend can produce a faithful smoke run</li><li>Ignoring runtime / cross-build reconciliation — that is the work</li></ul>`,
+  scopeNote:`<b>Tradeoff of the integrated path:</b> this removes the delivery-format confound and gives the cleanest apples-to-apples A/B against <span class="p-ppr">ppr_on</span>, but it front-loads the most expensive engineering risk: Rust integration, ONNX/runtime reconciliation, and seed-build plumbing before a result exists.`,
+  uxLede:`Same task, same workspace. The agent still reaches for <code>semfs grep</code>; what changes is the backend serving it. Toggle:`,
+  npButton:`next_plaid · <code>semfs grep</code> backend`,
+  taskIntro:`5 tasks. Here the critical path is backend-first: dependency/runtime reconcile → backend implementation → seed bake → E2B run → analysis. Higher engineering risk, lower presentation confound.`,
+  tasks:[
+   {id:"T1",name:"Reconcile deps + ONNX runtime",days:"2–3d",track:"crit",role:"Rust / infra",dep:"—",body:"Vendor <code>next-plaid</code> + encoder dependencies into <code>semfs-core</code>; reconcile their ONNX/runtime expectations with our existing stack and cross-build target.",verify:"<code>cargo build</code> for the E2B target succeeds with next-plaid linked in.",risk:"Runtime/dependency conflict (HIGH)."},
+   {id:"T2",name:"Implement NextPlaidStore",days:"2–3d",track:"crit",role:"Rust / retrieval",dep:"T1",body:"Add the semfs backend that builds/loads the index and serves query-time MaxSim search, including structured-text shaping and path normalization parity.",verify:"Unit test: small corpus query matches direct next-plaid results.",risk:"Backend invariant mismatch (HIGH)."},
+   {id:"T3",name:"Wire seed build + arm routing",days:"1–2d",track:"par",role:"infra / harness",dep:"— (parallel)",body:"Bake the index into persona templates, add arm/backend flags, and route <code>semfs grep</code> to <code>NextPlaidStore</code> for the selected arm.",verify:"Smoke cell: <code>semfs grep</code> returns next-plaid results through the normal path.",risk:"Mount/env wiring (MED)."},
+   {id:"T4",name:"Integrated E2B benchmark",days:"1–1.5d",track:"crit",role:"bench",dep:"T2 + T3",body:"Run the same within-persona benchmark in real E2B cells, now through semfs's native delivery surface.",verify:"Matched-arm <code>results.jsonl</code> + <code>judged.jsonl</code> land.",risk:"More moving pieces when a cell fails (MED)."},
+   {id:"T5",name:"Parity check + analyze",days:"1d",track:"crit",role:"analysis",dep:"T4",body:"Confirm the integrated backend still matches the external benchmark shape, then read accuracy + tokens and inspect actual agent responses.",verify:"One table plus a parity note: external A result vs integrated B result.",risk:"Quality drift vs the external reference path (MED)."}
+  ],
+  bars:[["T1 deps",0,2.5,"--crit"],["T2 backend",2.5,2.5,"--crit"],["T3 seed+arm",1,2,"--par"],["T4 E2B run",5,1.5,"--crit"],["T5 parity+analysis",6.5,1,"--crit"]],
+  timelineDays:9,
+  timelineNote:"critical path: T1 → T2 → T4 → T5  ·  T3 parallel  ·  ≈ 8–10 working days",
+  fork:{at:1.5,label:"◆ runtime reconcile"},
+  risks:[
+    ["ONNX/runtime conflict","HIGH","next-plaid's runtime expectations may collide with our existing embed/runtime stack.","Resolve before backend work; keep the external A path as a working reference."],
+    ["Backend invariant mismatch","HIGH","semfs is built around single-vector assumptions in places; per-token MaxSim is a different backend shape.","Isolate it behind a dedicated backend boundary."],
+    ["Seed-bake / cross-build complexity","MED","The integrated path has more build surfaces than the external tool path.","Use a minimal smoke seed and target the exact E2B runtime early."],
+    ["Parity drift from upstream","MED","Once integrated, bugs can come from our wrapper rather than next-plaid itself.","Keep a tiny direct next-plaid fixture as a golden reference."],
+    ["Arena caveat still applies","MED","Even a perfect integration may not beat PPR in WB-Lite if ranking is not the bottleneck.","Treat integration cleanliness and benchmark outcome as separate questions."]
+  ],
+  done:`A <span class="pill p-np">next_plaid</span> backend behind <code>semfs grep</code> that runs in <b>real E2B cells</b>, produces the same style of deliverable as <span class="p-ppr">ppr_on</span>, and yields an accuracy+tokens table that can be read without the external-tool-format confound.`
+ },
+ C:{
+  title:"next_plaid — Option C plan",
+  badge:"Option C",
+  lede:`Reimplement PLAID ourselves inside <code>semfs-core</code>. This is the original "if forced" path, not the recommended one. The point of making it visible here is to show <b>why it stays rejected</b>, not to endorse it.`,
+  kpis:[
+    ["4+ weeks","best-case before a trustworthy benchmark"],
+    ["Max divergence","we own every algorithmic bug"],
+    ["No upstream anchor","harder to explain wins or losses"],
+    ["Rejected","use only if upstream use becomes impossible"]
+  ],
+  scopeIn:`<h3 style="color:var(--warn);margin-top:0">! IF FORCED — Option C, reimplementation</h3><ul><li>Rebuild k-means, PQ, IVF, MaxSim, and search staging ourselves</li><li>Recreate the encoder/output contract and structured-text path</li><li>Integrate the result into semfs like Option B</li><li>Build a parity harness against upstream so we can tell if we are even implementing the same thing</li></ul>`,
+  scopeOut:`<h3 style="color:var(--mut);margin-top:0">✗ Why this stays rejected</h3><ul><li>No licensing blocker forces this today</li><li>Reimplementation adds divergence without improving the science</li><li>A bad result would be uninterpretable: retrieval idea failure or our port failure?</li><li>Maintenance cost becomes ours permanently</li></ul>`,
+  scopeNote:`<b>Tradeoff of the reimplementation path:</b> maximum control, maximum uncertainty. It is the worst path for answering the benchmark question because every quality or performance result is confounded by our own porting fidelity.`,
+  uxLede:`Same task, same workspace. Outwardly this would look like Option B — the agent still uses <code>semfs grep</code> — but internally every retrieval stage becomes our own implementation. Toggle:`,
+  npButton:`next_plaid · reimplemented <code>semfs grep</code>`,
+  taskIntro:`5 tasks. Every task here is expensive and fidelity-heavy. This is not a "next step" plan; it is the cost of ignoring upstream code even though upstream is available.`,
+  tasks:[
+   {id:"T1",name:"Lock upstream spec + fixtures",days:"1–2d",track:"crit",role:"research / test",dep:"—",body:"Freeze the exact next-plaid behavior we are trying to copy: tokenization, vector shape, k-means defaults, PQ packing, IVF, and MaxSim staging. Build golden fixtures first.",verify:"Golden corpus + expected top-k results exist.",risk:"Spec ambiguity (HIGH)."},
+   {id:"T2",name:"Rebuild core PLAID pipeline",days:"5–7d",track:"crit",role:"Rust / retrieval",dep:"T1",body:"Implement centroid training, residual PQ compression, postings, decompression, and exact MaxSim scoring in semfs-owned code.",verify:"Synthetic corpus returns the same ranked results as upstream on golden fixtures.",risk:"Algorithmic divergence (HIGH)."},
+   {id:"T3",name:"Integrate with semfs build + grep",days:"2–3d",track:"par",role:"infra / retrieval",dep:"— (parallel after T1)",body:"Hook the reimplementation into seed build, backend routing, and the semfs delivery path.",verify:"Smoke cell boots and queries through <code>semfs grep</code>.",risk:"Integration complexity (MED)."},
+   {id:"T4",name:"Parity and performance validation",days:"2–3d",track:"crit",role:"analysis / perf",dep:"T2 + T3",body:"Prove the port matches upstream well enough on quality and does not collapse on CPU performance.",verify:"Parity report against upstream and a basic latency profile.",risk:"Perf gap + hidden correctness bugs (HIGH)."},
+   {id:"T5",name:"Run the real benchmark anyway",days:"1–1.5d",track:"crit",role:"bench",dep:"T4",body:"Only after parity do the real E2B benchmark. Until then, benchmark numbers are not trustworthy.",verify:"Accuracy+tokens table annotated with parity confidence.",risk:"Benchmark remains confounded by implementation fidelity (MED)."}
+  ],
+  bars:[["T1 spec",0,1.5,"--crit"],["T2 core port",1.5,5.5,"--crit"],["T3 integration",2,2.5,"--par"],["T4 parity+perf",7,2.5,"--crit"],["T5 benchmark",9.5,1.5,"--crit"]],
+  timelineDays:12,
+  timelineNote:"critical path: T1 → T2 → T4 → T5  ·  T3 parallel  ·  ≈ 4+ weeks once debugging is real",
+  fork:null,
+  risks:[
+    ["Algorithmic divergence","HIGH","Our port can differ subtly from upstream in ways that look like benchmark signal.","Golden fixtures first; parity before benchmarking."],
+    ["Performance miss","HIGH","CPU performance is easy to lose when redoing MaxSim / PQ / postings.","Do not trust results until perf is measured."],
+    ["Debuggability collapse","HIGH","A failure can be in ranking, compression, scoring, integration, or our fixtures.","Keep the upstream implementation runnable as an oracle."],
+    ["Maintenance burden","MED","Every future next-plaid improvement becomes our work to port.","Avoid this path unless forced."],
+    ["Science confound","MED","A benchmark loss tells us nothing if we cannot trust implementation fidelity.","Reason enough to keep C rejected."]
+  ],
+  done:`A semfs-native PLAID reimplementation with a parity report against upstream good enough that a benchmark result is interpretable. <b>That parity burden is exactly why this option remains rejected.</b>`
+ }
+};
+let currentOption='A', currentFlow='ppr';
+
+/* ---------- ② ladder ---------- */
+const LV=[
+ {t:"🧒 ELI5",h:`Today, semfs reads a whole file and squishes its meaning into <b>one dot</b> on a map, then asks "is the question's dot near the file's dot?" Fast, but a lot is lost in the squish.<br><br><b>Late interaction</b> keeps a dot for <b>every word</b>. For each word in your question it finds the single best-matching word in the file, and adds those up. It's like comparing two pages with a highlighter instead of judging each by a one-line summary. <b>next-plaid</b> is the engine that makes keeping all those dots fast and small enough to store.`},
+ {t:"🎓 Beginner",h:`A normal "dense" embedder is a <b>bi-encoder</b>: doc → 1 vector, query → 1 vector, compare. Lossy for long/structured text.<br><br><b>ColBERT / late interaction</b> keeps <b>one vector per token</b> and scores with <b>MaxSim</b>: for each query token, take its best match among the doc's tokens, sum them. More expressive, near-lexical, multilingual-friendly. <b>next-plaid</b> = the storage + search engine (PLAID) that keeps this affordable.`},
+ {t:"🛠️ Practitioner",h:`Pipeline: <code>LFM2-ColBERT-350M</code> encodes each doc to ~N×<b>128</b> token vectors → k-means centroids + <b>product-quantize</b> (nbits=4) to shrink storage → build an inverted list (centroid→docs) + mmap. Query → its token vectors → <b>MaxSim = Σ<sub>q</sub> max<sub>d</sub> (q·d)</b>. next-plaid runs a multi-stage prune so it doesn't score every doc. We index our extracted text (docs) + raw code (kaifa) and let <code>colgrep</code> serve it.`},
+ {t:"🔬 Engineer",h:`PLAID search stages (next-plaid defaults): per query token pick top <b>8</b> centroids → prune centroids with max score &lt; <b>0.4</b> → "bag-of-centroids" cheap approx → keep top <b>4096</b> → decompress <b>1024</b> residuals → exact MaxSim → top <b>10</b>. PQ residual = emb − nearest centroid, quantized to nbits=4 buckets. <code>LFM2-ColBERT-350M</code>: LFM2 hybrid backbone, 8 langs incl <b>zh</b>, dim 128, doc 512 / query 32, PyLate-compatible (no ONNX shipped).`},
+ {t:"🧠 Expert",h:`vs our <span class="p-ppr">ppr_on</span>: we re-rank <b>files</b> by <b>graph topology</b> (PPR diffusion, bounded additive ≤0.15, then a cross-encoder overwrites similarity); next-plaid re-ranks <b>tokens</b> by <b>content</b> (MaxSim). Complementary mechanisms. Two live confounds to respect: (1) <b>arena caveat</b> — WB-Lite hands the agent the whole workspace, so ranking-only gains may not convert to accuracy (E8/E11/PPR findings); (2) next-plaid embeds the <b>filename</b> in its <code>File:</code> field — our single biggest measured lever — so attribute a win to MaxSim only if it persists where filenames are uninformative.`}
+];
+const lvlbox=document.getElementById('lvlbox');
+function setLv(i){lvlbox.innerHTML=LV[i].h;[...document.querySelectorAll('#lvlbtns button')].forEach(b=>b.classList.toggle('active',+b.dataset.l===i));}
+document.getElementById('lvlbtns').addEventListener('click',e=>{if(e.target.dataset.l)setLv(+e.target.dataset.l)});
+setLv(0);
+
+/* ---------- ③ UX flows ---------- */
+const PPR_FLOW={title:"Today — pooled vector + RRF + graph prior",
+   note:"The graph prior is bounded (≤0.15) and only re-orders files search already found; the cross-encoder then overwrites similarity. All inside the semfs daemon.",
+   store:`<b>Per chunk:</b> ONE mean-pooled <b>gemma-768</b> vector (<code>vchunks</code>).<br><b>Score:</b> RRF over 5 lanes + PPR additive prior + cross-encoder rerank.<br><b>Granularity:</b> ~200-word chunk → 1 vector.<br><b>Filename:</b> a weak path-lane signal (often off).`,
+   storenote:"(single-vector, graph-aware)",
+   steps:[
+     ["Agent gets the task","reads rubric, plans"],
+     ["<code>semfs grep \"query\"</code>","via PATH shim → daemon IPC","same"],
+     ["query → 1 pooled gemma-768 vec","one vector for the whole query","same"],
+     ["5 lanes: vec · code · BM25 · path · integrity","candidate generation","same"],
+     ["RRF fuse + PPR prior (≤0.15)","graph topology re-orders files","diff"],
+     ["cross-encoder rerank (top-50)","overwrites similarity","diff"],
+     ["top-10 + grep-inline delivery","stitched 'COMPLETE FILE' text","same"],
+     ["Agent writes deliverable","judged on rubric"]
+   ]};
+const NP_FLOWS={
+ A:{title:"next_plaid — per-token vectors + MaxSim (parallel)",
+   note:"semfs is untouched. next-plaid is a separate index + tool; the agent simply reaches for colgrep. Filename is baked into the embedded text.",
+   store:`<b>Per doc:</b> ~N×<b>128</b> per-token LFM2 vectors, PQ-compressed (nbits=4) in a PLAID index.<br><b>Score:</b> centroid prune → <b>MaxSim</b> (Σ<sub>q</sub> max<sub>d</sub> q·d).<br><b>Granularity:</b> code unit (tree-sitter) or doc window.<br><b>Filename:</b> embedded in the <code>File:</code> field → matched directly.`,
+   storenote:"(multi-vector, content-aware)",
+   steps:[
+     ["Agent gets the task","reads rubric, plans"],
+     ["<code>colgrep \"query\"</code>","separate tool, own index","diff"],
+     ["query → per-token 128-d vecs","one vector per query token","diff"],
+     ["PLAID: probe centroids → prune","cheap candidate gen","diff"],
+     ["exact <b>MaxSim</b> over survivors","Σ<sub>q</sub> max<sub>d</sub> (q·d)","diff"],
+     ["top-k files + snippets","filename embedded in score","diff"],
+     ["Agent reads files from FUSE mount","real corpus bytes","same"],
+     ["Agent writes deliverable","judged on rubric"]
+   ]},
+ B:{title:"next_plaid — per-token vectors + MaxSim (integrated)",
+   note:"The agent keeps using <code>semfs grep</code>; the daemon routes the request to a next-plaid backend instead of the current pooled-vector path. This removes the output-format confound.",
+   store:`<b>Per doc:</b> the same ~N×<b>128</b> per-token vectors and PLAID index as Option A, but loaded by a semfs backend instead of an external tool.<br><b>Score:</b> centroid prune → <b>MaxSim</b> inside semfs.<br><b>Granularity:</b> code unit or doc window.<br><b>Filename:</b> still embedded in the <code>File:</code> field, but delivery uses semfs's normal path.`,
+   storenote:"(multi-vector, integrated)",
+   steps:[
+     ["Agent gets the task","reads rubric, plans"],
+     ["<code>semfs grep \"query\"</code>","same outward tool as today","same"],
+     ["daemon routes to <code>NextPlaidStore</code>","different backend under the hood","diff"],
+     ["query → per-token 128-d vecs","one vector per query token","diff"],
+     ["PLAID: probe centroids → prune","cheap candidate gen","diff"],
+     ["exact <b>MaxSim</b> over survivors","Σ<sub>q</sub> max<sub>d</sub> (q·d)","diff"],
+     ["normal semfs delivery format","same presentation surface as ppr_on","diff"],
+     ["Agent writes deliverable","judged on rubric"]
+   ]},
+ C:{title:"next_plaid — reimplemented PLAID inside semfs",
+   note:"Outwardly this resembles Option B, but every retrieval stage is now ours. That is exactly why this path is the hardest one to trust scientifically.",
+   store:`<b>Per doc:</b> semfs-owned per-token vectors, semfs-owned PLAID-like index, semfs-owned MaxSim path.<br><b>Score:</b> whatever our port computes — which is why a parity harness is mandatory before benchmarking.<br><b>Granularity:</b> intended to match upstream.<br><b>Filename:</b> still should be embedded, but now fidelity is our responsibility too.`,
+   storenote:"(multi-vector, reimplemented)",
+   steps:[
+     ["Agent gets the task","reads rubric, plans"],
+     ["<code>semfs grep \"query\"</code>","same outward tool as B","same"],
+     ["daemon routes to our PLAID port","not upstream code anymore","diff"],
+     ["query → per-token vecs","must match upstream shape","diff"],
+     ["our prune + candidate staging","must match upstream enough","diff"],
+     ["our exact <b>MaxSim</b>","quality now depends on port fidelity","diff"],
+     ["normal semfs delivery format","same surface, higher internal risk","same"],
+     ["Agent writes deliverable","judged on rubric"]
+   ]}
+};
+function renderFlow(key){
+  currentFlow=key;
+  const f=key==='ppr'?PPR_FLOW:NP_FLOWS[currentOption];
+  document.getElementById('flowtitle').textContent=f.title;
+  document.getElementById('storebox').innerHTML=f.store;
+  document.getElementById('storenote').textContent=f.storenote;
+  document.getElementById('uxnote').innerHTML="<b>Note:</b> "+f.note;
+  document.getElementById('flow').innerHTML=f.steps.map((s,i)=>{
+    const cls=s[2]==='diff'?'diff':(s[2]==='same'?'same':'');
+    const a=i<f.steps.length-1?'<div class="arrow">▼</div>':'';
+    return `<div class="flowbox ${cls}"><b>${s[0]}</b> <span class="s">— ${s[1]}</span></div>${a}`;
+  }).join('');
+  document.getElementById('bt-ppr').classList.toggle('active',key==='ppr');
+  document.getElementById('bt-np').classList.toggle('active',key==='np');
+}
+document.getElementById('bt-ppr').onclick=()=>renderFlow('ppr');
+document.getElementById('bt-np').onclick=()=>renderFlow('np');
+const board=document.getElementById('taskboard');
+function renderTasks(opt){
+  const tasks=PLANS[opt].tasks;
+  board.innerHTML=tasks.map(t=>`<div class="task" data-id="${t.id}">
+    <div class="tt">${t.id} · ${t.name}</div>
+    <div class="meta"><span class="tag ${t.track==='crit'?'t-crit':'t-par'}">${t.track==='crit'?'critical':'parallel'}</span> ${t.days} · ${t.role}</div>
+    <div class="det">
+      <p>${t.body}</p>
+      ${t.fork?`<div class="fork">◆ ${t.fork}</div>`:''}
+      <p><b>Depends on:</b> ${t.dep}</p>
+      <p><b>Verify gate:</b> ${t.verify}</p>
+      <p><b>Risk:</b> ${t.risk}</p>
+    </div></div>`).join('');
+}
+board.addEventListener('click',e=>{const c=e.target.closest('.task');if(c)c.classList.toggle('open')});
+
+/* ---------- ④ gantt ---------- */
+function renderGantt(opt){
+ const plan=PLANS[opt];
+ const svg=document.getElementById('gantt'),W=1040,padL=120,padT=34,rowH=34,gap=10,days=plan.timelineDays;
+ const bottomY=padT+plan.bars.length*(rowH+gap)+18;
+ const H=bottomY+32;
+ svg.setAttribute('height',H);
+ svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+ let h=`<style>.gl{stroke:#30363d}.gt{fill:#8b949e;font:12px sans-serif}.bt{fill:#fff;font:12px sans-serif;font-weight:600}</style>`;
+ const colW=(W-padL-20)/days;
+ for(let d=0;d<days;d++){
+   const x=padL+d*colW;
+   h+=`<line class="gl" x1="${x}" y1="${padT-6}" x2="${x}" y2="${bottomY}"/><text class="gt" x="${x+4}" y="${padT-12}">D${d+1}</text>`;
+ }
+ h+=`<line class="gl" x1="${padL+days*colW}" y1="${padT-6}" x2="${padL+days*colW}" y2="${bottomY}"/>`;
+ plan.bars.forEach((b,i)=>{
+   const y=padT+i*(rowH+gap), x=padL+b[1]*colW, w=b[2]*colW;
+   const col=getComputedStyle(document.documentElement).getPropertyValue(b[3]).trim();
+   h+=`<text class="gt" x="6" y="${y+rowH/2+4}">${b[0]}</text>`;
+   h+=`<rect x="${x}" y="${y}" width="${w}" height="${rowH}" rx="6" fill="${col}" opacity="0.9"/>`;
+   h+=`<text class="bt" x="${x+8}" y="${y+rowH/2+4}">${b[2]}d</text>`;
+ });
+ if(plan.fork){
+   const fy=padT+rowH/2, fx=padL+plan.fork.at*colW;
+   h+=`<polygon points="${fx},${fy-9} ${fx+9},${fy} ${fx},${fy+9} ${fx-9},${fy}" fill="var(--warn)"/>`;
+   h+=`<text class="gt" x="${fx+14}" y="${fy-12}">${plan.fork.label}</text>`;
+ }
+ h+=`<text class="gt" x="${padL}" y="${bottomY+18}">${plan.timelineNote}</text>`;
+ svg.innerHTML=h;
+}
+
+/* ---------- ⑤ risks ---------- */
+const rt=document.getElementById('risks');
+const sevcol={HIGH:'p-bad',MED:'p-warn',LOW:'p-ok'};
+function renderRisks(opt){
+  rt.innerHTML=`<tr><th>Risk</th><th>Sev</th><th>Why</th><th>Mitigation</th></tr>`;
+  PLANS[opt].risks.forEach(r=>{rt.innerHTML+=`<tr><td><b>${r[0]}</b></td><td><span class="pill ${sevcol[r[1]]}">${r[1]}</span></td><td>${r[2]}</td><td>${r[3]}</td></tr>`;});
+}
+
+function renderPlan(opt){
+  currentOption=opt;
+  const plan=PLANS[opt];
+  document.title=plan.title;
+  document.getElementById('planbadge').textContent=plan.badge;
+  document.getElementById('planlede').innerHTML=plan.lede;
+  document.getElementById('plankpis').innerHTML=plan.kpis.map(k=>`<span class="kpi"><b>${k[0]}</b><span>${k[1]}</span></span>`).join('');
+  document.getElementById('scopein').innerHTML=plan.scopeIn;
+  document.getElementById('scopeout').innerHTML=plan.scopeOut;
+  document.getElementById('scopenote').innerHTML=`<b>Tradeoff:</b> ${plan.scopeNote.replace(/^<b>[^<]+<\/b>\s*/,'')}`;
+  document.getElementById('uxlede').innerHTML=plan.uxLede;
+  document.getElementById('bt-np').innerHTML=plan.npButton;
+  document.getElementById('taskintro').innerHTML=plan.taskIntro;
+  document.getElementById('donebox').innerHTML=plan.done;
+  [...document.querySelectorAll('#optbtns button')].forEach(b=>b.classList.toggle('active',b.dataset.opt===opt));
+  renderTasks(opt);
+  renderGantt(opt);
+  renderRisks(opt);
+  renderFlow(currentFlow);
+}
+document.getElementById('optbtns').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-opt]');
+  if(b) renderPlan(b.dataset.opt);
+});
+
+/* ---------- ④ flowcharts (seed-creation + query) ---------- */
+const COL={blue:"#4a78c8",green:"#5aa469",orange:"#d98a3d",purple:"#8a5fc8",teal:"#1f9e91"};
+const SEED=[
+ {t:"Persona corpus",c:COL.blue,note:["code files (raw)  +  office docs","kaifa = code+docs · others = docs"]},
+ {t:"Route by file type",c:COL.green,note:["code → tree-sitter units","binary docs → our extract → .extracted.md"]},
+ {t:"Structured text per unit",c:COL.green,note:["incl.  File:[normalized path]","— the filename lever (our biggest)"]},
+ {t:"LFM2-ColBERT-350M  ·  encode",c:COL.orange,note:["per-token 128-d · [D] marker","L2-norm in-graph · CPU · THE embedding"]},
+ {t:"k-means + PQ(nbits4) + IVF",c:COL.orange,note:["centroids over ALL tokens (code+text)","residuals + centroid→doc-ids postings"]},
+ {t:"PLAID index (mmap)",c:COL.orange,note:["Rust · quantized · memory-mapped","incremental adds — but initial build required"]},
+ {t:"Bake into E2B template",c:COL.teal,note:["off-box artifact prep (like seed-building)","→ the benchmark itself runs IN E2B"]},
+];
+const QFLOW=[
+ {t:"Agent issues  colgrep \"query\"",c:COL.blue,note:["in the E2B cell · per search","corpus already embedded — no re-embed"]},
+ {t:"LFM2  ·  encode query",c:COL.orange,note:["[Q] marker · MASK-expand to 32","→ [32, 128] per-token vectors"]},
+ {t:"Probe + prune centroids",c:COL.green,note:["top-8 centroids / query token","drop centroids with max score < 0.4"]},
+ {t:"Candidate docs (IVF) + approx",c:COL.green,note:["bag-of-centroids cheap score","keep top 4096"]},
+ {t:"Decompress + MaxSim",c:COL.orange,note:["decompress ~1024 residuals","Σq maxd (q·d)  — exact, the score"]},
+ {t:"Top-k → roll up to files",c:COL.purple,note:["top_k=10 units → file-level","for the agent + the rubric judge"]},
+ {t:"Agent reads files → deliverable",c:COL.purple,note:["reads bytes from the FUSE mount","judged on the rubric (acc + tokens)"]},
+];
+function drawFlow(svgId, nodes){
+  const NW=250,NH=46,X=24,LH=15,VW=760;
+  // per-node row height depends on note lines
+  const rowH=nodes.map(n=>Math.max(NH+30, (n.note?n.note.length:1)*LH+30));
+  let ys=[],acc=14; rowH.forEach(h=>{ys.push(acc);acc+=h;});
+  const H=acc+6;
+  const svg=document.getElementById(svgId);
+  svg.setAttribute('height',H); svg.setAttribute('viewBox',`0 0 ${VW} ${H}`);
+  let s=`<defs><marker id="ar-${svgId}" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#8b949e"/></marker></defs>`;
+  nodes.forEach((n,i)=>{
+    const cy=ys[i]+rowH[i]/2, by=cy-NH/2;
+    if(i<nodes.length-1){const ncy=ys[i+1]+rowH[i+1]/2;
+      s+=`<line x1="${X+NW/2}" y1="${by+NH}" x2="${X+NW/2}" y2="${ncy-NH/2}" stroke="#8b949e" stroke-width="1.5" marker-end="url(#ar-${svgId})"/>`;}
+    s+=`<rect x="${X}" y="${by}" width="${NW}" height="${NH}" rx="7" fill="${n.c}"/>`;
+    s+=`<text x="${X+NW/2}" y="${cy+5}" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">${n.t}</text>`;
+    if(n.note&&n.note.length){
+      const NX=X+NW+60, NoteW=VW-NX-16, nh=n.note.length*LH+14, ny=cy-nh/2;
+      s+=`<line x1="${X+NW}" y1="${cy}" x2="${NX}" y2="${cy}" stroke="#586069" stroke-width="1" stroke-dasharray="3 3"/>`;
+      s+=`<rect x="${NX}" y="${ny}" width="${NoteW}" height="${nh}" rx="6" fill="none" stroke="#586069" stroke-dasharray="4 4"/>`;
+      s+=n.note.map((ln,j)=>`<text x="${NX+12}" y="${ny+18+j*LH}" fill="#8b949e" font-size="12">${ln}</text>`).join('');
+    }
+  });
+  svg.innerHTML=s;
+}
+drawFlow('flow-seed',SEED);
+drawFlow('flow-query',QFLOW);
+renderPlan('A');
+</script>
+</body>
+</html>

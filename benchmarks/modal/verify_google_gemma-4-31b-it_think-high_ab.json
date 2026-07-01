@@ -1,0 +1,196 @@
+{
+  "model": "google/gemma-4-31b-it",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression preserves all factual data including dates (Jan 27, 1967; late Jan 1986; Feb 1, 2003), names (Jim Bridenstine, Mike Wallace, Gus Grissom, Ed White, Roger Chaffee, Ronald Reagan, George W. Bush), quantities (3 accidents, 7 astronauts), and specific details (73 seconds, Cape Kennedy, partial government shutdown). The transition from prose to a list is a permitted structural change, and the removal of filler/hedges ('twist of fate', 'today', 'it's an important moment') is lossless."
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression preserves all factual information, including names (Roy Glauber, Prof. Jean Berko Gleason, Miles Smith, Frank Cunningham, Marc Abrahams), organizations (Harvard-Radcliffe Science Fiction Association, etc.), the URL (improbable.com), and the exhaustive list of chemical elements. The change from 'below inwards' to 'billow inwards' is a correction of an OCR/transcription error, which is permitted under the rules."
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content—including the specific reasons for wearing baggy clothes, the user's emotional claims, the AI's identified limitations, the discussion on societal rebellion, and the list of fashion trends—was preserved. The change from dialogue to a structured list is a formatting change and is permitted."
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual data including entity names, roles, loan identifiers, exhibit references, legal citations, and signature details are preserved. The missing first phrase in the compressed version is a sentence fragment at the start of the original (chunk-boundary artifact), which is explicitly ignored per the rules."
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all entities, roles, exhibit numbers, legal citations, and signatures from the original. All formatting changes (e.g., using dashes instead of 'as') and minor wording reductions are stylistic and do not remove or alter facts."
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression is lossless. The initial fragment '_V_I_D_N_M_E_ stand for?' at the start of the text is handled as a chunk-boundary artifact and consolidated with the Project Manager's answer. The statement 'And I'm marketing' is removed as it is a redundant identity confirmation (the speaker is already identified by the label 'Marketing'). All key facts, including roles, specific task assignments (buttons for UI, box for ID), research requirements, and the 'thirty minutes' timeframe, are perfectly preserved. Filler, disfluencies, and transcription noise were removed correctly."
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all factual information, including roles (PM, Marketing, UI, Industrial Designer), technical terms (text screen, bluetooth, one-way vs multi-purpose), specific action items (individual lists, instructions from coach), and the specific timeframe (thirty minutes). Fillers, disfluencies, and backchannels were removed, which is permitted."
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version is a cleaned-up transcription of the original. It removes minor disfluencies and corrects transcription artifacts (e.g., 'this are where' to 'this area where') while preserving all names, dates, numbers, locations, charges, and specific claims."
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression only removes minor filler words and slight phrasing redundancies (e.g., 'provide an explanation of' to 'explain', 'helps to promote' to 'helps promote') without removing or altering any factual information, steps, examples, or constraints."
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All key facts including brands, specific features, price points (under $100, over $1,000), and buying recommendations were preserved. The conversion from a dialogue format to a structured list is a permissible format change."
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information—including entity names, roles, exhibit references, legal citations, signatory details, and dates—has been preserved. The only changes were the removal of legal filler words ('duly', 'thereunto') in the signature block, which does not alter the factual content."
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text is a verbatim copy of the original, with only formatting changes (removal of line breaks and extra indentation). All facts, law citations, numbers, and specific phrasing are identical."
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all numeric values, percentages, dates, monetary figures, entities (Indian tribe members, Alaska Natives, Native Hawaiians), and the specific purposes/findings listed in the original. Wording and structure were tightened, but no facts were lost or altered."
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all facts, including section numbers, timeframes (30 days, 15 days), legal references (chapter 11 of title 40, USC), and the specific conditions and requirements outlined in the original text. Wording changes are purely stylistic or for conciseness."
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text is a cleaned-up version of the original with corrected capitalization, punctuation, and spacing. All medical facts, numeric values, references (Satchi et al., Kakizaki et al.), and figures were preserved exactly, including repetitions found in the original text."
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "the link between N0 status and the Stage IVA percentages"
+      ],
+      "qwen_reason": "The original text contains a fragment 'were n0 .' followed by 'moreover', indicating that the N0 status and the Stage IVA percentages (66.7% and 35.4%) are separate observations. The compressed version uses 'N0:' as a label for the percentages, incorrectly implying that the percentages specifically refer to the N0 group."
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts, including specific lists of self-care activities, citations [4, 52, 53], names (Elwood), and the specific levels of education (undergraduate, prevocational, practitioner), have been preserved. The structural change to a list format and the addition of derivable counts ('3 systems', '2 support frameworks') are permissible."
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Removed filler words ('um', 'uh', 'I mean'), disfluencies ('{disfmarker}', '{vocalsound}'), and stutters (e.g., 's', 'kn'). All speaker attributions, decisions, and factual statements were preserved."
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression only removed filler words and hedges ('Unfortunately', 'really') which are explicitly allowed as lossless according to the rules. All technical details, names, dates, and logic were preserved."
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all technical specifications, numeric values, model numbers, and requirements from the original. The change from a bulleted list to a semicolon-delimited format is a stylistic change and does not result in loss of facts."
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all factual information, including specific pricing (600 Euro per square meter), counts (nearly 50 countries), company names (Riviera Invest), locations (Alanya, Turkey), and all enumerated property types. Only filler words, repetitions, and typos ('andstudios') were removed or corrected."
+    }
+  ]
+}

@@ -1,0 +1,200 @@
+{
+  "model": "qwen/qwen3.7-max",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts, including names, dates, quotes, numbers, and events, are perfectly preserved. Removed narrative fluff and editorializing (e.g., 'twist of fate', 'distinctive voice', 'a new generation was reminded') which do not constitute factual information. Converting number words to digits (e.g., 'Seven' to '7') is an acceptable format change."
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "lanthanum"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The chemical element 'lanthanum' from the explicit list in the original text is missing in the compressed version."
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text reformats the conversational prose into a structured list with clear speaker attributions (User and AI). All factual claims, opinions expressed by the user, and informational points provided by the AI are preserved. Conversational fillers, backchannels ('Yeah, I totally agree!', 'Yes, I understand what you mean'), and rhetorical questions were appropriately removed as they do not constitute factual information under the guidelines."
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The initial fragment ' Association, as Primary Servicer...' is an incomplete sentence at the very start of the text (chunk-boundary artifact) and is correctly ignored. All other facts, including names, roles, loan identifiers, exhibit numbers, and the signature block details, are perfectly preserved. The reformatting of roles and loans into a dash-separated list is a structural change, not a fact change."
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Reformatted text into a cleaner list structure and removed minor filler words ('the requirements of', 'has duly', 'thereunto'). Restored the section number '34.22' to fix a chunk-boundary artifact at the start of the original text, which is permitted. All facts, names, roles, exhibits, and dates are perfectly preserved."
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Marketing's statement 'And I'm marketing.' which confirms their role in the meeting"
+      ],
+      "qwen_added": [
+        "Attributed the unattributed question '_V_I_D_N_M_E_ stand for?' to the Project Manager"
+      ],
+      "qwen_reason": "The compressed text drops a complete statement where Marketing confirms their role ('And I'm marketing.'). Additionally, it invents a speaker attribution by assigning the initially unattributed question '_V_I_D_N_M_E_ stand for?' to the Project Manager."
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All key facts, decisions, and technical terms (bluetooth, text screen, one-way or multi-purpose, thirty minutes, personal coach) are preserved. Disfluencies, filler words, and conversational prompts like 'Why?' were correctly removed without losing factual information. The combination of 'plan/consensus' faithfully reflects the collaborative completion of the Project Manager's thought."
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text removes formatting tags (</s>) and makes very minor wording adjustments (e.g., fixing 'this are' to 'this area', removing filler words like 'pretty' and 'But'). All facts, names, quotes, numbers, and speaker attributions are perfectly preserved."
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression only applies minor grammatical simplifications (e.g., changing 'provide an explanation of' to 'explain', 'one is consciously directing' to 'one consciously directs', and removing the word 'to' after 'help'). These stylistic and structural changes do not alter, add, or remove any facts."
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Reformatted the text into structured lists and bullet points. All facts, including the 7 leading brands, 8 specific features, price points (under $100, over $1,000), and purchasing advice, are perfectly preserved without any additions or omissions."
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Minor legal boilerplate filler words ('duly', 'thereunto') removed from the signature block. All factual information including names, dates, sections, and exhibit references are perfectly preserved."
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text is identical to the original, with the only change being the removal of hard line breaks within paragraphs. All facts, legal citations, and text are perfectly preserved."
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Reformatted text and replaced 'percent' with '%'; all facts, figures, names, and structural elements are perfectly preserved."
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all facts, sections, conditions, timelines, and entities from the original text. It merely tightens the prose, reformats lists inline, and decodes an HTML entity (&lt;plus-minus&gt; to <plus-minus>), which does not alter any factual information."
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all facts, numbers, names, and identifiers from the original. The changes are limited to capitalization, punctuation, spacing corrections, and minor grammatical smoothing (e.g., removing 'which was', 'any', 'the'), which do not alter the factual content."
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Removed the OCR fragment/noise at the start ('were'), corrected minor typos ('commen', 'reccurence'), and removed the exact duplicated paragraph at the end of the original text. All numerical values, percentages, citations, names, and medical findings are perfectly preserved."
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version reformats the original prose into a structured list with bullet points, but all facts, names, numbers, citations, and specific details are perfectly preserved. No information was dropped or added."
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All removed elements are disfluencies, fillers, backchannels, and transcription markers ({disfmarker}, {vocalsound}, 'um', 'uh', 'I mean', 'you know'). No facts, speaker attributions, or meaningful content were altered, added, or dropped."
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Removed filler and hedge words ('Unfortunately', 'really'); all facts, code snippets, dates, and names are perfectly preserved."
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All technical specifications, dimensions, warranties, and compatibility notes are preserved. The compression successfully reformats the list into a more compact structure and removes minor filler words without altering or omitting any factual data."
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information, including locations (Alanya, Turkey), prices (600 Euro per square meters), entity names (Riviera Invest), quantities (nearly 50 countries), and property types, are perfectly preserved. Minor grammatical fixes (e.g., 'andstudios' to 'studios', 'the Turkey' to 'Turkey') and the removal of conversational filler ('Congratulations!', 'Reasonable, skilled and wise investors know that') do not constitute fact loss."
+    }
+  ]
+}

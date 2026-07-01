@@ -1,0 +1,292 @@
+{
+  "model": "gpt-5.4-mini",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content from the original is preserved: NASA Day of Remembrance, memorials at NASA facilities, Jim Bridenstine attribution and quote, delay due to partial government shutdown, the three NASA accidents with dates, named people, event descriptions, casualty counts, and quoted attributions to Mike Wallace, Ronald Reagan, and George W. Bush. Formatting was changed to bullets, but no facts were added or omitted."
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "speaker attribution changes in the opening section: original includes audience/announcer phrasing \"There to receive... Let the emerging and the shaking begin.\" and later plural thank-you phrasing \"And behalf of... please remember this final thought.\"",
+        "the exact phrase \"Half winners, half tackle tough questions\"",
+        "the original says \"shower curtains below inwards\"; compressed changes this to \"billow inwards\"",
+        "the original has \"The awards are given out by...\"; compressed shortens to \"Awards: given by...\" (same fact, but no issue)",
+        "the original includes explicit thanks to \"audio engineers, Miles Smith and Frank Cunningham for their help in recording the show\"; compressed says \"for help recording the show\" (same fact, no issue)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "Most facts are preserved, but the compressed version changes one factual phrase: \"shower curtains below inwards\" becomes \"billow inwards,\" which is not identical and alters the original wording/content of the question. Because this is a fact-bearing quoted line in the source, the compression is not strictly lossless."
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content from the original is preserved in the compressed version, including speaker attributions and the listed clothing trends, preferences, and explanatory claims. The rewrite is heavily condensed and reformatted, but no factual values, names, or decisions were changed or added."
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: the numbered exhibit/service-provider entries, the omitted-note references, the (b) and (c) statements, the registrant/signature block, Leah Nivison as Chief Executive Officer, the depositor name, and the date March 22, 2021. Formatting and punctuation changes are immaterial."
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "34.22 Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)",
+        "35.4 Wells Fargo Bank, National Association, as Primary Servicer of the Walpole Shopping Mall Mortgage Loan (see Exhibit 35.1)",
+        "35.6 Wells Fargo Bank, National Association, as Primary Servicer (with respect to the obligation to make property protection and mortgage payment advances) of the Miracle Mile Shops Mortgage Loan (see Exhibit 35.1)",
+        "The exhibit cross-reference for 35.6 was changed from '(see Exhibit 35.1)' to '(Exhibit 35.1)' only if treated as factual—otherwise preserved; no other dropped facts"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text omits the full first entry 34.22 from the original excerpt and also omits the 'see' wording in several exhibit references/parentheticals. More importantly, it changes the 35.6 servicing role by moving the qualifying phrase 'with respect to the obligation to make property protection and mortgage payment advances' to a trailing parenthetical, which preserves meaning, but the original 34.22 line is missing entirely. Because a factual entry from the original is absent, the compression is not lossless."
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Marketing: And I'm marketing.",
+        "Project Manager: And in marketing",
+        "Industrial Designer: Mm. Har how it works an",
+        "Marketing: {vocalsound}",
+        "Project Manager: {vocalsound}",
+        "User Interface: {vocalsound}",
+        "Industrial Designer: {vocalsound}",
+        "User Interface: {vocalsound}",
+        "Marketing: So {vocalsound}",
+        "Industrial Designer: {disfmarker}"
+      ],
+      "qwen_added": [
+        "Project Manager is attributed as saying '_V_I_D_N_M_E_ stand for?'",
+        "Project Manager says '_V_I_D_N_M_E_ stand for?' as a definite utterance after a fragment in the original",
+        "Industrial Designer is named as the answer to '_V_I_D_N_M_E_ stand for?'"
+      ],
+      "qwen_reason": "The compressed version invents a definite exchange about '_V_I_D_N_M_E_ stand for?' that is not supported by the original fragmentary opening, and it drops several speaker-attribution/backchannel lines present in the original."
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Project Manager attributions in the opening exchange: \"Yeah.\", \"But maybe, because ...\"",
+        "Marketing: \"We can plan further, I think.\"",
+        "User Interface: \"Consensus on the, what we're gonna do.\"",
+        "Project Manager: \"A little plan on what we're going to do.\"",
+        "Project Manager: \"... come up with the user requirements who don't fit the technical functions at all.\"",
+        "Project Manager: \"I think that's well ... yeah. Will come in handy.\"",
+        "Marketing: \"Mm yeah.\"",
+        "Marketing: \"I don't know.\"",
+        "Project Manager vocalized response \"W ... He says ...\"",
+        "the specific option \"a text screen\"",
+        "Project Manager's wording \"one way or multi-purpose, that's a ...\"",
+        "User Interface: \"Okay. Mm-hmm.\"",
+        "Marketing: \"Uh tha that's a same step further.\"",
+        "Project Manager: \"Why?\" (twice)",
+        "Industrial Designer's statement \"Then looking at individual components,\"",
+        "Marketing: \"Like we all have a list of uh things that has to be in it, or how it has to be like.\"",
+        "Marketing: \"And then in the next meeting we decide\"",
+        "Project Manager: \"Yeah.\" after that statement",
+        "Marketing: \"w what it's gonna be.\"",
+        "Project Manager: \"Okay.\"",
+        "Industrial Designer: \"Yeah, I agree uh, we can take it from there.\"",
+        "Marketing: \"A And then you s then you can delete uh\"",
+        "Marketing: \"the o the obsolete uh details.\"",
+        "Project Manager: \"Okay. So uh\"",
+        "Project Manager: \"each individually i individually uh must think on what's uh at uh his point of view is the most important.\"",
+        "Project Manager: \"And uh then we're going to fit uh all the pieces together the next meeting.\"",
+        "Marketing: \"Yeah.\"",
+        "Project Manager: \"I must finish off now,\"",
+        "Project Manager: \"so it's over.\"",
+        "Project Manager: \"You uh will receive specific specific instructions uh by your personal coach.\"",
+        "Project Manager: \"And I see you in uh thirty minutes.\"",
+        "User Interface: \"Okay.\"",
+        "Industrial Designer: \"Okay, cheers.\"",
+        "User Interface: \"Sorry.\"",
+        "Project Manager vocal sound before \"Be careful.\"",
+        "Marketing: \"Damn.\"",
+        "User Interface: \"Yes.\"",
+        "Marketing: \"Success?\"",
+        "User Interface: \"Yeah. No. Come up.\""
+      ],
+      "qwen_added": [
+        "\"Consensus on what we're going to do\" is attributed as a proposal in the compressed version without preserving the original back-and-forth context",
+        "\"user requirements don't fail to fit the technical functions\" slightly changes the original phrasing/scope from \"don't fit the technical functions at all\"",
+        "\"We all have a list of things that have to be in it\" and \"In the next meeting we decide what it's going to be\" are presented as polished quotes rather than the original speech fragments, but no new factual content beyond the preserved plan is clearly added"
+      ],
+      "qwen_reason": "The compression preserves the main meeting topic and a few key points, but it omits many speaker-attributed utterances and several specific lines from the dialogue. Because speaker attributions and quoted content are facts under the rules, dropping many distinct turns makes it lossy."
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: names, number of suspects/arrests, race descriptions, duration, allegations, charges, and speaker attributions remain unchanged. Minor wording and punctuation edits only."
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved. Minor wording edits and contractions removed, but no numbers, names, decisions, steps, or other facts were changed or omitted."
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: the seven brand names, eight feature categories and their descriptions, the price ranges and brand examples, and the affordability advice are all retained. Only formatting and wording changed."
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Pursuant to the requirements of Section 13 or 15(d) of the Securities Exchange Act of 1934, the registrant has duly caused this report to be signed on its behalf by the undersigned, thereunto duly authorized."
+      ],
+      "qwen_added": [
+        "Pursuant to the requirements of Section 13 or 15(d) of the Securities Exchange Act of 1934, the registrant has caused this report to be signed on its behalf by the undersigned, duly authorized."
+      ],
+      "qwen_reason": "The signature clause was changed: 'has duly caused' became 'has caused', 'thereunto' was removed, and the sentence was otherwise altered. This is a textual change to a formal statement, so it is not perfectly lossless."
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all factual content, including section titles, statutory citations, legal amendments, and quoted language. It is identical to the original aside from formatting."
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved. The compression only reformats numbering and slightly rewrites wording without changing any numbers, names, percentages, dates, quantities, or decisions."
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: the section references, 30-day and 15-day periods, listed actions, chapter 11 of title 40, United States Code, and the Secretary waiver conditions remain unchanged. Minor rewording and pronoun substitution do not alter facts."
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved. The compression only normalizes formatting/capitalization and removes no factual details; duplicated sentence fragments are retained in essence and no new facts are introduced."
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "original opening fragment 'were n0 .'",
+        "speaker/attribution marker 'N0:'"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The OCR-like fragment 'were n0 .' is ignorable, but the compressed version introduces 'N0:' as a new speaker/label not supported by the original. All substantive facts otherwise appear preserved."
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved. The compression reformats the passage into bullets and short paragraphs, but retains the same people/groups, systems, recommendations, research limitations, and support strategies, including citation [4, 52, 53]."
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Project Manager: More expensive and yeah.",
+        "Project Manager: 'Kay. Um",
+        "Project Manager: just to finish up, should we s go with this plan, start making some",
+        "Project Manager: Okay. And Project Manager will design a better meeting for next time around, be a little bit more prepared.",
+        "Industrial Designer: {vocalsound}",
+        "Marketing: {vocalsound}",
+        "Marketing: {vocalsound}"
+      ],
+      "qwen_added": [
+        "Project Manager: More expensive.",
+        "Industrial Designer: Of course it'll be evident after a while or if you look at it, it'll be evident which way around to point it, since you have the numbers and the buttons and stuff,",
+        "Industrial Designer: like you just grab it, you don't have to look at it, which way around to point it.",
+        "Industrial Designer: Otherwise the design or the point of putting two sensors on both sides would probably work.",
+        "Project Manager: Okay, just to finish up, should we go with this plan, start making some Are good ideas, what are not.",
+        "Project Manager: And Project Manager will design a better meeting for next time around, be a little bit more prepared."
+      ],
+      "qwen_reason": "The compression removes disfluencies, but it also changes or strips speaker attributions and alters several utterances: 'More expensive and yeah' becomes 'More expensive'; 'the design of' becomes 'the design or'; and some lines are partially dropped or rewritten in ways not fully supported by the original. The compressed text also preserves and reorders content inconsistently across speaker turns."
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all factual content from the original: names, dates, object relationships, sorting behavior, runtime field selection, and quoted dialogue. Minor wording changes like 'my code is smell' to 'this is what I am doing' alter phrasing but not facts."
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "The original line item \"Video Up Scaler (Analog-\" is incomplete and not fully preserved as a fact/feature line in the compressed text.",
+        "The original warranty line contains the exact text \"One Year arts\"; this is preserved, but the original formatting includes \"Extended Service Warranty Available: Click the warranty tab above\" as a separate line item, which is preserved.",
+        "No other factual items appear missing."
+      ],
+      "qwen_added": [
+        "\"upscaled/upconverted image and sound quality vary by source\" changes the original wording \"will vary depending on source\" in a way that is acceptable paraphrase, not an added fact."
+      ],
+      "qwen_reason": "The compression largely preserves the factual content, but the original has an incomplete feature line \"Video Up Scaler (Analog-\" that is not faithfully represented as-is; however, since it is a chunk-boundary artifact, it should be ignored. After ignoring that artifact, the compression is effectively lossless. Yet the compressed wording \"upscaled/upconverted image and sound quality vary by source\" is a paraphrase of \"will vary depending on source\" and does not add a new fact. Overall this should be LOSSLESS."
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: the location, price figure (600 Euro per square meters), country/market descriptions, Alanya’s role, Riviera Invest’s invitation, property types, several-years service, customer portfolio from nearly 50 countries, service scope, and the closing attribution-free statements remain intact. Changes are formatting and minor wording edits only."
+    }
+  ]
+}

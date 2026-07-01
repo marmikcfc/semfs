@@ -1,0 +1,198 @@
+{
+  "model": "google/gemma-4-31b-it",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all names, dates, numbers, attributions, and events. Prose was reformatted into a list for clarity, which is permissible. All specific figures (73 seconds, 7 astronauts, 3 astronauts, etc.) and specific dates are intact."
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all names (Roy Glauber, Jean Berko Gleason, Miles Smith, Frank Cunningham, Marc Abrahams), organizations (The Annals of Improbable Research, Harvard-Radcliffe Science Fiction Association, Harvard-Radcliffe Society of Physics Students, Harvard Computer Society), URLs (improbable.com), and specific lists of elements. Removed filler phrases like 'Half winners, half tackle' and restructured prose into sections, which is permitted."
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all factual claims, attributes, and lists from the original conversation. It accurately maps the user's personal experiences and the AI's responses/informational lists. All specific clothing trends (oversized, athleisure, sustainable, vintage, retro, minimalist, casual) are preserved."
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Association as Primary Servicer of the Related Home Depot Mortgage Loan (Exhibit 34.1)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The first entry of the original text (Association, as Primary Servicer of the Related Home Depot Mortgage Loan) is completely missing from the compressed version."
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression preserves all identifiers (34.22-35.10), entity names, roles, associated loans, exhibit references, regulation citations, signature details, and the date. The removal of repetitive phrases like 'as' and 'of the' is a stylistic change and does not omit any factual data."
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression removes filler words, dysfluencies, and transcription noise (e.g., {disfmarker}, {vocalsound}) while preserving all factual roles, assignments, discussions about responsibilities (buttons for UI, box for Industrial Designer), and the closing logistics (meeting end, 30-minute follow-up). All speaker attributions remain accurate."
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression removes fillers, disfluencies, and redundant backchannels while preserving all factual content, including speaker attributions, technical queries (text screen, bluetooth, one-way vs multi-purpose), decisions regarding the next meeting, and specific instructions (personal coach, thirty minutes)."
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text removes minimal filler words and minor phrasing redundancies without omitting any facts, names, numbers, roles, or specific details from the original transcript."
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text removes minor filler words and makes slight grammatical streamlines (e.g., 'provide an explanation of' to 'explain'), but all factual content, steps, examples, and attributions remain identical to the original."
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all factual information from the original, including all brand names, the complete list of 8 features with their specific details, price points (under $100 and over $1,000), and the advice regarding budget options. All entities and numeric values are identical."
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression only removed filler adjectives ('duly') and slight phrasing changes in the signature block, which does not alter any factual information, names, dates, or identifiers."
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text is a verbatim copy of the original text, with only minor white-space/indentation adjustments. All facts, section numbers, citations, and legal language are perfectly preserved."
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression preserves all numbers, percentages, monetary values, dates, industry specificities, and purpose items. All key entities (Indian tribe members, Alaska Natives, Native Hawaiians, Small Business Development Center program, Small Business Administration) are maintained. Changes are limited to minor reformatting (e.g., '60 percent' to '60%') and slight prose streamlining, which are permitted."
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression preserves all facts, including section references (4, 5), timeframes (30 days, 15 days), legal citations (chapter 11 of title 40, US Code), and the specific conditions/requirements for each section. The changes are limited to prose streamlining and reformatting."
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text is nearly identical to the original, preserving all numbers, names, medical details, citations, and figure references. It only corrected minor capitalization, punctuation, and spacing (e.g., 'spc' to 'SPC', 'satchi et al.' to 'Satchi et al.'). All repetitions from the original were maintained."
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "N0: "
+      ],
+      "qwen_reason": "The compressed text turns the OCR fragment 'were n0 .' into a prefix 'N0: ', which creates a false association/label for the following fact (the percentages of stage IVA patients), essentially inventing a label that didn't exist in the original."
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all facts, including the three systems of stress, the two support frameworks, specific healthcare requirements, work-related management strategies, a comprehensive list of self-care activities, citations [4, 52, 53], the specific warnings and recommendations from Elwood and colleagues, and the three educational levels (undergraduate, prevocational, practitioner). Prose was reformatted into lists and summaries without losing any specific details or changing the meaning."
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression primarily removed disfluencies ({disfmarker}, {vocalsound}), fillers ('um', 'uh', 'I mean'), and repetitions ('the the'), all of which are explicitly defined as lossless removals. All speakers, their attributions, the specific technical suggestions (numbers, buttons, two sensors, non-rectangle design), and the concluding action items (marketing researching user wants, PM preparing the next meeting) were preserved exactly."
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression only removed minor hedges ('Unfortunately', 'really', 'quite') and filler words. All facts, including technical details, field names, dates, method names, and the structure of the conversation, were perfectly preserved."
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression removed bullet points and some repeated words ('will vary depending on' to 'vary by'), but all technical specifications, numeric values, model numbers, and requirements were perfectly preserved."
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all key facts, including the specific price point (600 Euro per square meters), the company name (Riviera Invest), the customer base (nearly 50 countries), and the exhaustive list of property types. It removes filler, redundant phrases, and emotive repetitions ('Congratulations!') while maintaining the original meaning and factual content."
+    }
+  ]
+}

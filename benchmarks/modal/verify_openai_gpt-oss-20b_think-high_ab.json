@@ -1,0 +1,319 @@
+{
+  "model": "openai/gpt-oss-20b",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "NASA administrator Jim Bridenstine says it's an important moment."
+      ],
+      "qwen_added": [
+        "CBS News Special Report"
+      ],
+      "qwen_reason": "The compression omitted Bridenstine’s statement that it was an important moment, and it added the label ‘CBS News Special Report’—a fact that does not appear in the original passage.",
+      "usage": {
+        "in": 1901,
+        "out": 11014,
+        "reasoning": 12946
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "And why do shower curtains below inwards?"
+      ],
+      "qwen_added": [
+        "Why do shower curtains billow inwards?"
+      ],
+      "qwen_reason": "The compressed version removed the original question phrase “And why do shower curtains below inwards?” and added a new, unsupported question “Why do shower curtains billow inwards?”, which changes the factual content. All other facts remain unchanged.",
+      "usage": {
+        "in": 2043,
+        "out": 12479,
+        "reasoning": 13851
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original passage—baggy clothes as a form of self‑expression, the reasons for wearing them, their comfort and freedom effects, their role as rebellion against societal norms, their trendiness, the personal confidence they convey, the fact that they are versatile and can be worn up or down, and the list of contemporary clothing trends—are preserved in the compressed version. No facts were omitted, altered, or added, and all non‑fact content was removed only as permitted. Therefore the compression is lossless.",
+      "usage": {
+        "in": 2181,
+        "out": 5725,
+        "reasoning": 7075
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The original included a line declaring 'Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)' which is missing from the compressed version. All other facts and identifiers are preserved unchanged.",
+      "usage": {
+        "in": 2278,
+        "out": 8806,
+        "reasoning": 9687
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details—including names, roles, loan titles, exhibit references, dates, signatures, and authority statements—are preserved verbatim or by equivalent phrasing. Only formatting, filler, and redundancies were removed; no facts are missing or added.",
+      "usage": {
+        "in": 2305,
+        "out": 10946,
+        "reasoning": 12077
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "And I'm marketing"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressor omitted the Marketing speaker’s self‑identification ‘And I’m marketing’, which is a fact present in the original. All other factual content (roles, responsibilities, decisions, actions, and scheduling) is preserved, and no new facts were added.",
+      "usage": {
+        "in": 1813,
+        "out": 13459,
+        "reasoning": 15777
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "User Interface: Consensus on the, what we're gonna do"
+      ],
+      "qwen_added": [
+        "Project Manager: consensus on what we're going to do"
+      ],
+      "qwen_reason": "The original transcript contains the User Interface’s statement that consensus was already reached on the plan; the compressed version omits this line and instead attributes a consensus claim to the Project Manager, adding a fact not supported by the original and dropping a valid statement.",
+      "usage": {
+        "in": 1994,
+        "out": 15559,
+        "reasoning": 26222
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information present in the original passage is retained verbatim or with only harmless stylistic changes in the compressed version. No facts have been omitted, and no new facts were introduced.",
+      "usage": {
+        "in": 2197,
+        "out": 7008,
+        "reasoning": 8438
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "PARSE_ERROR",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "",
+      "usage": {
+        "in": 2345,
+        "out": 16000,
+        "reasoning": 21187
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "PARSE_ERROR",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "",
+      "usage": {
+        "in": 1909,
+        "out": 16000,
+        "reasoning": 18949
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual data—names, roles, numerical identifiers, exhibit references, dates, and signature details—present in the original are retained verbatim in the compressed version. Only stylistic wording was altered (e.g., removal of “thereunto” and “duly” in the authorizing clause); these do not add or omit factual content. No fact from the original is missing, and none is added.",
+      "usage": {
+        "in": 2326,
+        "out": 1987,
+        "reasoning": 2057
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts (numbers, dates, names, citations, and content items) appear in the same wording in the compressed version. The compression removed only formatting differences, line breaks, and whitespace, without omitting or adding any factual data. No fact is missing, added, or altered in value, scope, or specificity.",
+      "usage": {
+        "in": 2233,
+        "out": 6268,
+        "reasoning": 7223
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numeric values, percentages, dates, names, and descriptive facts from the ORIGINAL are present and unchanged in the COMPRESSED version; only wording and formatting were modified.",
+      "usage": {
+        "in": 2234,
+        "out": 5131,
+        "reasoning": 5913
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "agency conducted the cost-benefit analysis under section 4",
+        "agency prepared the accompanying materials under section 5",
+        "agency employees submitted a competitive bid to the agency"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omits several factual details present in the original: the agency’s actions of conducting the cost‑benefit analysis and preparing the accompanying materials, and it removes the explicit fact that agency employees submit competitive bids to the agency. These missing facts make the compression lossy.",
+      "usage": {
+        "in": 1802,
+        "out": 10296,
+        "reasoning": 13258
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numeric values, dates, percentages, durations, identifiers, names, and facts present in the original are preserved verbatim in the compressed version. No facts were omitted or newly introduced.",
+      "usage": {
+        "in": 2369,
+        "out": 4890,
+        "reasoning": 5153
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements—percentages, reference numbers, survival and recurrence data, HPV status relations, and conclusions about clinical findings—are retained in the compressed passage; no new facts were added and none omitted.",
+      "usage": {
+        "in": 2138,
+        "out": 11622,
+        "reasoning": 13080
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "PARSE_ERROR",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "",
+      "usage": {
+        "in": 2109,
+        "out": 16000,
+        "reasoning": 21139
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details—including speaker attributions, the reference to two sensors, the mention that the design can be a non‑rectangular shape, the plans to finish the meeting, and the decision to design a better next meeting—are preserved. All removed content consists of filler, filler markers, and formatting variations that do not constitute facts.",
+      "usage": {
+        "in": 1917,
+        "out": 5569,
+        "reasoning": 5645
+      }
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed passage retains all facts present in the original (names, dates, code snippets, design details, and operational constraints) and only removes non‑factual filler words such as \"Unfortunately\" and \"really\". No facts were omitted or added, so the compression is lossless.",
+      "usage": {
+        "in": 2418,
+        "out": 6660,
+        "reasoning": 7823
+      }
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all factual information present in the original: every numeric value, product feature, specification, unit, warranty statement, and capability is retained exactly (with only minor formatting or wording variations that do not alter the facts). No facts are omitted or newly introduced, and no values are altered. Therefore the compression is lossless.",
+      "usage": {
+        "in": 2288,
+        "out": 11037,
+        "reasoning": 11201
+      }
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details present in compressed text match those in original; no facts omitted or added, only formatting and wording changes.",
+      "usage": {
+        "in": 1963,
+        "out": 8460,
+        "reasoning": 10300
+      }
+    }
+  ]
+}

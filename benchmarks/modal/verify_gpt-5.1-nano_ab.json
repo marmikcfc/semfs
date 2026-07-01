@@ -1,0 +1,194 @@
+{
+  "model": "gpt-5.1-nano",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:NotFoundError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 404 - {'error': {'message': 'The model `gpt-5.1-nano` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'param': No"
+    }
+  ]
+}

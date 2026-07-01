@@ -1,0 +1,317 @@
+{
+  "model": "gpt-5.4-nano",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "NASA administrator Jim Bridenstine says it’s an important moment."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All named events, dates, quotes, and counts match, except the compressed version omits the explicit fact that NASA administrator Jim Bridenstine says the Day of Remembrance is “an important moment.”",
+      "usage": {
+        "in": 2015,
+        "out": 1672,
+        "reasoning": 1591
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "“Half winners, half tackle tough questions …” (the specific “half winners, half” statement is missing)",
+        "“please remember this final thought.”",
+        "“shower curtains below inwards” (the exact wording is changed)"
+      ],
+      "qwen_added": [
+        "“shower curtains billow inwards” (changed wording of the question)"
+      ],
+      "qwen_reason": "The compressed version omits the quantitative statement “Half winners, half tackle tough questions …” from the original. It also drops the directive “please remember this final thought.” Additionally, the shower-curtain question’s wording changes from “below inwards” to “billow inwards,” which alters the stated content of that question.",
+      "usage": {
+        "in": 2156,
+        "out": 5424,
+        "reasoning": 5248
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "User asks: \"Do you have any favorite clothing styles or trends, AI?\""
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All provided content is largely preserved, but the compressed version omits the user’s explicit question to the AI about favorite clothing styles/trends.",
+      "usage": {
+        "in": 2294,
+        "out": 1694,
+        "reasoning": 1608
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All explicit enumerated facts shown in the ORIGINAL (34.23–34.28 and 35.1–35.10, plus the Item 601 (b)/(c) text and the GS Mortgage Securities Corporation II signature block with Leah Nivison and the date March 22, 2021) are preserved in the COMPRESSED version with the same entity names, roles, loan descriptions, and exhibit references. The only extra leading fragment in the ORIGINAL appears to be a start-of-chunk incomplete line (“Association, as Primary Servicer…”) and is therefore ignored per the verifier rules.",
+      "usage": {
+        "in": 2396,
+        "out": 1017,
+        "reasoning": 860
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All named entities, roles (Primary/ Special/ Trustee/ Custodian/ etc.), loan names, and cited exhibits/explanatory-note references match the ORIGINAL. The numbering “34.22” in the compressed text corresponds to the ORIGINAL’s starting line, which begins at the start of the passage without showing that number (consistent with a chunk-boundary artifact), so it is not treated as a factual addition.",
+      "usage": {
+        "in": 2418,
+        "out": 1089,
+        "reasoning": 971
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Marketing: And I'm marketing."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omits the original statement \"Marketing: And I'm marketing.\" All other preserved lines match the original’s conveyed requirements/roles and instructions.",
+      "usage": {
+        "in": 1927,
+        "out": 1987,
+        "reasoning": 1911
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Industrial Designer: Or edit."
+      ],
+      "qwen_added": [
+        "The 'edit' option for the obsolete details is attributed to Marketing (compressed: “Then you can delete—or edit—the obsolete details”), but in the original “Or edit” was said by the Industrial Designer."
+      ],
+      "qwen_reason": "All major content is largely preserved, but the speaker attribution for “Or edit” is changed: the original assigns “Or edit” to the Industrial Designer, while the compressed version folds it into Marketing’s line. Speaker attributions are facts, so this makes the compression lossy.",
+      "usage": {
+        "in": 2108,
+        "out": 4526,
+        "reasoning": 4378
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All explicit facts (people/names, age, alleged actions, number and description of suspects, race detail, Sheriff identity and charges/arrest counts/categories, released victim name and mother’s quote, questions/answers about prior cases, law-enforcement experience, witnesses, community racial relations, motive status, and FBI person-of-interest in another county, plus the closing attributions) are preserved. Only filler/wording/disfluency and minor phrasing changes were removed.",
+      "usage": {
+        "in": 2311,
+        "out": 918,
+        "reasoning": 798
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all explicit facts, instructions, and assertions from the original. Differences are limited to minor wording/formatting changes (e.g., “provide an explanation” vs “explain”) without changing the meaning or adding/removing any factual content.",
+      "usage": {
+        "in": 2459,
+        "out": 247,
+        "reasoning": 169
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All explicit facts from the original are preserved in the compressed version: the same list of leading smartwatch brands; the same 8 feature categories with the same key details (fitness tracking items, notifications, GPS tracking, music storage/speakers, voice assistants Alexa/Google Assistant, NFC payments, sleep tracking including REM/deep sleep/overall quality, water resistance for swimming/showering/rain); the same price ranges ($100 under for basic/entry-level; $1,000 over for premium Apple and Samsung); and the same affordability advice (older models or less-known brands may offer similar features at lower price but potentially lower quality/longevity, plus read reviews and compare prices). Only formatting/structure changed.",
+      "usage": {
+        "in": 2022,
+        "out": 477,
+        "reasoning": 309
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content appears identical between ORIGINAL and COMPRESSED, including all named servicers/roles (Association, Rialto Capital Advisors, U.S. Bank National Association, Wells Fargo Bank, National Association, Trimont Real Estate Advisors, CoreLogic Commercial Real Estate Services, National Tax Search, Midland Loan Services, LNR Partners), the referenced exhibits (34.1, 34.2, 34.18, 34.26, 34.5, 34.6, 35.1, 35.2, 35.5), the included compliance section items (35.1–35.10), and the signature/date facts (GS Mortgage Securities Corporation II; Leah Nivison; Chief Executive Officer; Date: March 22, 2021). No facts are missing or newly introduced.",
+      "usage": {
+        "in": 2444,
+        "out": 255,
+        "reasoning": 53
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numbered sections, purposes, construction clauses, and the amended text in SEC. 4(a)–(c) match the ORIGINAL exactly. No facts (names, statutes/citations, wording of amendments, conditions, or enumerated items) were added or omitted; only formatting/line wrapping is preserved.",
+      "usage": {
+        "in": 2347,
+        "out": 252,
+        "reasoning": 164
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numeric and factual content in Section 1(a) Findings (1–7) and 1(b) Purposes (1–6)—including percentages, dollar amounts, business/receipt figures, dates/period (1992–1997, 1998), and the exact entities referenced—are preserved in the compressed version. Only formatting/rewriting into concise list form and punctuation changes occurred.",
+      "usage": {
+        "in": 2352,
+        "out": 486,
+        "reasoning": 379
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Section 7(2): the requirement that agency employees may submit the competitive bid \"to the agency\" (recipient omitted in the compressed version)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All substantive requirements and timeframes appear preserved, but in SEC. 7(2) the ORIGINAL specifies that the competitive bid is submitted \"to the agency,\" while the COMPRESSED version omits the recipient (it just says employees may submit a competitive bid). This is a factual detail about where/how the bid is submitted, so the compression is not fully lossless.",
+      "usage": {
+        "in": 1920,
+        "out": 924,
+        "reasoning": 781
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content (names, condition descriptions, left/right location, durations, measurements, drug/dose/frequency/duration, percentages, patient count, figure references, and specific biological model statements such as Duverney-Horner and the 4 months of gestation canalization) is preserved. Only formatting/capitalization and minor punctuation/wording changes occur.",
+      "usage": {
+        "in": 2498,
+        "out": 1488,
+        "reasoning": 1389
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All quantitative findings and named claims in the ORIGINAL are preserved in the COMPRESSED text (66.7% vs 35.4% stage IVA; local recurrence most common with no significant HPV-status difference; recurrence rates; Weinberger et al. statement; 34.4% vs 73.3% disease-related deaths; association with death; OS/DFS survival direction; improved vs no-difference oropharyngeal study conclusions; lower tobacco/alcohol intake; low HPV DNA prevalence and absence of high-risk subtypes in OCSCC; detection of HPV 6/11; cannot be ignored; further higher-sample investigations). The ORIGINAL’s repeated paragraph is not lost in substance since all contained facts appear in the COMPRESSED at least once.",
+      "usage": {
+        "in": 2256,
+        "out": 2090,
+        "reasoning": 1902
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content from the ORIGINAL is preserved in the COMPRESSED version, including: the claim that some PCPs become stressed and stress relates to healthcare/occupational/personal systems; the two support frameworks (work-related management and personal strategies); the listed healthcare-system policy/service and education points; the work-related management strategies; the full self-care strategy list with the same [4, 52, 53] citation; Elwood and colleagues’ caution/evidence-and-resources requirement; the critique of high-income-only research with unclear definitions/weak methodologies; the recommendation for more methodologically sound analytical research; the need to address issues at undergraduate/prevocational/practitioner levels; and the concluding requirements for education/healthcare system/workplace/personal support and PCP awareness. No additional unsupported facts or fact-value changes are introduced.",
+      "usage": {
+        "in": 2223,
+        "out": 1520,
+        "reasoning": 1327
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "No named speakers, decisions, or substantive content-bearing statements were removed or changed. The compression only deletes disfluency/OCR markers (e.g., {disfmarker}, {vocalsound}) and filler/repetition (e.g., 'um', extra 'and', pauses) while preserving all factual/semantic utterances such as attributions, questions ('Are we out of time?'), and action statements ('marketing will look and see what people want', 'Project Manager will design a better meeting for next time around').",
+      "usage": {
+        "in": 2033,
+        "out": 1291,
+        "reasoning": 1160
+      }
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All named entities, dates (“Joined: Aug 10, 2001”, “Joined: Apr 20, 2001”), and described logic/sorting behavior are preserved. The only differences are non-factual wording/interjections (e.g., removing “Unfortunately”), which do not change any facts.",
+      "usage": {
+        "in": 2531,
+        "out": 432,
+        "reasoning": 345
+      }
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All explicit facts from the ORIGINAL are present in the COMPRESSED version (technical spec fields, dimensions/weights, warranty text, and all 3D/A/V/HDMI/BRAVIA Sync/iPod compatibility requirements with the same model lists and numeric values). No unsupported or changed fact values were introduced.",
+      "usage": {
+        "in": 2406,
+        "out": 1201,
+        "reasoning": 1103
+      }
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All explicit factual details from the ORIGINAL are preserved in the COMPRESSED text, including locations (Alanya, Turkey), the 600 Euro per square meter figure, Riviera Invest as the inviter/provider, the list of property types offered, the “several years” services duration, “nearly 50 countries,” and the final repeated title phrases. Removed content is limited to non-factual opinions/exclamations (e.g., “Cheap and good?”, “Congratulations!”), which do not affect factual integrity.",
+      "usage": {
+        "in": 2076,
+        "out": 1772,
+        "reasoning": 1645
+      }
+    }
+  ]
+}

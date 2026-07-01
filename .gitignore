@@ -78,3 +78,10 @@ tickets/wblite-ppr-ab/artifacts/
 .video-gen/
 *.pyc
 /2026-*-can-yiu-*.txt
+tickets/next-plaid-late-interaction/artifacts/
+tickets/*/artifacts/
+benchmarks/modal/_mined.json
+benchmarks/modal/_mined_candidates.json
+benchmarks/modal/_inspect.json
+benchmarks/modal/_reverify_diag.json
+benchmarks/modal/_reverify_sample.json

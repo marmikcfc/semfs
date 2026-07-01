@@ -1,0 +1,289 @@
+{
+  "model": "gpt-5.4-nano",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "NASA administrator Jim Bridenstine says it's an important moment"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All key dates/names/figures/events are preserved, but the compressed version omits the specific fact that Jim Bridenstine says the day is “an important moment.”",
+      "usage": {
+        "in": 1838,
+        "out": 2113,
+        "reasoning": 2023
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Half winners, half tackle tough questions like"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version removes the explicit statement that 'Half winners, half' will tackle the tough questions. This is a quantitative factual claim that is not present in the compressed text.",
+      "usage": {
+        "in": 1979,
+        "out": 2002,
+        "reasoning": 1918
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "User asks AI: \"Do you have any favorite clothing styles or trends, AI?\""
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All substantive claims/facts about baggy clothes and the AI/user statements are preserved, but the compressed version drops the user’s explicit question to the AI about the AI’s favorite clothing styles/trends.",
+      "usage": {
+        "in": 2117,
+        "out": 1195,
+        "reasoning": 1096
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all explicit factual entries for items 34.23–34.28 and 35.1–35.10 (names, roles, loan types, exhibit references, and omitted/explanatory-notes statements), as well as the (b)/(c) sentences and the signature details (GS Mortgage Securities Corporation II (Depositor), /s/ Leah Nivison, Chief Executive Officer, Date: March 22, 2021). Styling/formatting changes only; no fact additions or removals.",
+      "usage": {
+        "in": 2219,
+        "out": 1499,
+        "reasoning": 1356
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All named parties, loan descriptions, roles (Primary Servicer/Special Servicer/Trustee/Custodian/Trust Advisor/Servicing Function Participant/Master Servicer/Certificate Administrator), exhibit references/omissions, and signature/date details match. The only structural difference is formatting (dashes/line breaks). The initial line’s number (“34.22”) appears in the compressed text, but the ORIGINAL begins at the start of that item with “Association—Primary Servicer…” and likely omits the leading item number due to chunk boundary; no fact content changes.",
+      "usage": {
+        "in": 2241,
+        "out": 1139,
+        "reasoning": 988
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "Attribution change: the utterance \"_V_I_D_N_M_E_ stand for?\" is labeled as spoken by the Project Manager in the compressed text, but the ORIGINAL does not attribute that question to any specific speaker."
+      ],
+      "qwen_reason": "All substantive content is largely preserved, but the COMPRESSED version assigns a speaker attribution to the initial question \"_V_I_D_N_M_E_ stand for?\". In the ORIGINAL, that question appears without a speaker label, with the next labeled line being the Project Manager’s response. Adding this attribution is a fact change.",
+      "usage": {
+        "in": 1750,
+        "out": 2377,
+        "reasoning": 2225
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "User Interface: \"Consensus on the, what we're gonna do.\" (speaker attribution)",
+        "Industrial Designer: \"Or edit.\" (speaker attribution)"
+      ],
+      "qwen_added": [
+        "Project Manager: a combined statement including \"plan/consensus on what we're going to do\" (moves 'consensus' attribution from User Interface to Project Manager)",
+        "Marketing: \"delete—or edit—the obsolete details\" (moves 'Or edit' attribution from Industrial Designer to Marketing)"
+      ],
+      "qwen_reason": "The compression changes speaker attributions for specific utterances containing factual content: in the ORIGINAL the User Interface says \"Consensus on the, what we're gonna do\" and the Industrial Designer says \"Or edit\", but in the COMPRESSED version those same contents are attributed to the Project Manager and Marketing respectively. Speaker attributions are treated as facts, so this is not lossless.",
+      "usage": {
+        "in": 1931,
+        "out": 3313,
+        "reasoning": 3107
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All stated facts and identifiers (NPR/N&N and host name, location and investigation premise, Megan Williams details and alleged duration/actions, number and race of suspects, arrests and charge categories, released names including Megan Williams and Carmen Williams’ quote, Logan County background and lack of known racial tension, FBI person-of-interest note, and the closing attribution to Sheriff W.E. Hunter) are preserved. Only minor filler/wording differences (e.g., “quite”/“real,” “pretty common knowledge,” sentence connectors) were removed without changing any fact value or scope.",
+      "usage": {
+        "in": 2134,
+        "out": 1096,
+        "reasoning": 944
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all substantive facts and instructions from the original (questions, AI disclaimer, explanations of intention in visualization, the 5-step process to set a clear intention, and the discussion on visualization for wealth/possessions). Only minor wording/formatting changes occur (e.g., small phrasing differences like “provide an explanation” vs “explain,” or “information on the topic of” vs “information on”), without changing any factual content.",
+      "usage": {
+        "in": 2282,
+        "out": 253,
+        "reasoning": 135
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: leading brands (Apple, Samsung, Fitbit, Garmin, Fossil, Huawei, Xiaomi); the 8 popular features with the same key details (fitness metrics, notifications on-wrist, GPS location/distance/speed, music storage + speakers, voice assistants Amazon Alexa/Google Assistant, NFC payments, sleep tracking including REM/deep stages/overall quality, water resistance for swimming/showering/rain); and the pricing ranges ($100 threshold for basic/entry-level, $1,000+ for Apple/Samsung premium), plus the advice about finding affordable models (older models/lesser-known brands), potential tradeoffs (quality/longevity), and reading reviews comparing prices.",
+      "usage": {
+        "in": 1845,
+        "out": 325,
+        "reasoning": 158
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All named entities/roles (e.g., Association, Rialto Capital Advisors, U.S. Bank National Association, Wells Fargo Bank, Trimont Real Estate Advisors, CoreLogic Commercial Real Estate Services, National Tax Search, Midland Loan Services, LNR Partners), exhibit references, the section headings, signature block details (GS Mortgage Securities Corporation II; /s/ Leah Nivison; Leah Nivison, Chief Executive Officer), and the date (March 22, 2021) are preserved exactly. No facts from the original are missing or changed.",
+      "usage": {
+        "in": 2267,
+        "out": 270,
+        "reasoning": 122
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:RateLimitError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, read t",
+      "usage": {}
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:RateLimitError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, read t",
+      "usage": {}
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:RateLimitError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, read t",
+      "usage": {}
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:RateLimitError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, read t",
+      "usage": {}
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:RateLimitError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, read t",
+      "usage": {}
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:RateLimitError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, read t",
+      "usage": {}
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all substantive dialogue content and any concrete/decision/action statements (e.g., “two sensors on both sides”, “isn’t a rectangle”, “next meeting/time around”, “marketing will look and see what people want”, “design a better meeting for next time around”, “warning to finish”, “out of time”). It only removes disfluency markers/backchannels and filler tokens (e.g., {disfmarker}, {vocalsound}, “um/uh”, and “yeah”), which are not factual changes.",
+      "usage": {
+        "in": 1856,
+        "out": 1289,
+        "reasoning": 1153
+      }
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content (participants/roles and message attributions, described data fields, sorting logic, and runtime-sort requirements) is preserved. The only change is minor filler removal (e.g., 'Unfortunately,'), which is not a factual difference.",
+      "usage": {
+        "in": 2354,
+        "out": 467,
+        "reasoning": 382
+      }
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All explicit factual fields from the ORIGINAL are present in the COMPRESSED version with the same values (e.g., FM/AM Yes/Yes; TTL60 (-/-/30/30); Station Name Yes; HDMI Pass Through Yes; Theater Mode Selector Yes; A/V Sync Yes(Fixed), 48kHz, 60msec, auto mode No; Band 6; D.C.A.C. D.C.A.C.; Grade Silver; Mic MONO; assignable inputs; Auto Standby Yes; GUI Yes(Simple); blending input/output values; GUI Language English; Pin Jack Nickel; 120V 60Hz; Remote RM-AAU106; Sleep Timer Yes; iPod browsing VIDEO/MUSIC; dimensions/weights; warranty text; and all 3D/Dolby/iPod/HDMI compatibility requirements including the listed BRAVIA model series). The compression only changes formatting/re-states the same facts, with no missing or newly introduced factual content.",
+      "usage": {
+        "in": 2229,
+        "out": 805,
+        "reasoning": 583
+      }
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All explicit facts from the original are preserved in the compressed version: the 600 Euro per square meter figure, the claims about Turkey’s and Alanya’s market/tourism status, Riviera Invest’s offerings and service duration, the nearly 50 countries customer portfolio, and the listed property types. Only stylistic/opinion phrasing and formatting/wording changes occur (e.g., punctuation, removed emphasis/filler, exclamation marks, and rephrased sentences) without changing any fact values or scope.",
+      "usage": {
+        "in": 1899,
+        "out": 1152,
+        "reasoning": 1014
+      }
+    }
+  ]
+}

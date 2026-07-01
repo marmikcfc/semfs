@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>semfs graph priors — ppr_off vs ppr_on vs ppr_map</title>
+<style>
+:root{
+  --bg:#0d1117;--card:#161b22;--bd:#30363d;--tx:#c9d1d9;--mut:#8b949e;
+  --off:#3fb950;--on:#58a6ff;--map:#d29922;--bad:#f85149;--seed:#bc8cff;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--tx);font:15px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:0}
+.wrap{max-width:1080px;margin:0 auto;padding:28px 22px 80px}
+h1{font-size:26px;margin:0 0 6px}
+h2{font-size:20px;margin:38px 0 10px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+h3{font-size:16px;margin:20px 0 6px}
+p{margin:8px 0}
+.lede{color:var(--mut);font-size:15px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px 20px;margin:14px 0}
+code{background:#1c2230;padding:1px 6px;border-radius:5px;font-size:13px}
+.pill{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid}
+.p-off{color:var(--off);border-color:var(--off)} .p-on{color:var(--on);border-color:var(--on)} .p-map{color:var(--map);border-color:var(--map)}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--bd);background:#21262d;color:var(--tx);padding:8px 14px}
+button:hover{border-color:var(--mut)}
+button.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.muted{color:var(--mut)}
+table{border-collapse:collapse;width:100%;margin:10px 0;font-variant-numeric:tabular-nums}
+th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left}
+th{background:#1c2230;color:var(--mut)}
+.hi{color:var(--off);font-weight:700}.lo{color:var(--bad)}.mid{color:var(--map)}
+.legend{font-size:12px;color:var(--mut);margin:6px 0}
+svg{display:block;margin:0 auto}
+.note{font-size:13px;color:var(--mut);border-left:3px solid var(--bd);padding-left:12px;margin:10px 0}
+.lvlbtns button{font-size:13px;padding:6px 11px}
+.flowstage{transition:all .4s}
+.boost-bar{height:10px;border-radius:5px;background:#21262d;overflow:hidden;display:inline-block;width:120px;vertical-align:middle}
+.boost-fill{height:100%;transition:width .6s}
+kbd{background:#21262d;border:1px solid var(--bd);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>How semfs ranks — and what <span class="p-off">ppr_off</span> · <span class="p-on">ppr_on</span> · <span class="p-map">ppr_map</span> actually do</h1>
+<p class="lede">An interactive walkthrough of the query flow and the three graph-prior settings. Start simple (ELI5), climb to expert. Every number is from the WB-Lite GLM runs.</p>
+
+<!-- ============ ELI5 → EXPERT ============ -->
+<h2>① The idea, in 5 zoom levels</h2>
+<div class="row lvlbtns" id="lvlbtns">
+  <button data-l="0" class="active">🧒 ELI5</button>
+  <button data-l="1">🎓 Beginner</button>
+  <button data-l="2">🛠️ Practitioner</button>
+  <button data-l="3">🔬 Engineer</button>
+  <button data-l="4">🧠 Expert</button>
+</div>
+<div class="card" id="lvlbox" style="min-height:150px"></div>
+
+<!-- ============ QUERY FLOW ============ -->
+<h2>② The query flow (the part that's the SAME for all three)</h2>
+<p>Press <b>Run query</b> and watch a question travel through semfs. The three settings only change <b>ONE box</b> — the <span class="p-off">graph prior</span>.</p>
+<div class="row"><button id="runflow">▶ Run query</button><span class="muted" id="flowcap">idle</span></div>
+<svg id="flow" width="1000" height="200" viewBox="0 0 1000 200"></svg>
+<p class="note">Key fact: the prior is <b>bounded</b> (it can add at most ~0.15 to a file's score) and it only <b>re-orders files already found by search</b>. It never adds a new file. So it can only help by pushing an already-retrieved good file higher.</p>
+
+<!-- ============ THE GRAPH ============ -->
+<h2>③ Where the 3 settings differ — the knowledge graph</h2>
+<p>semfs keeps a hidden graph linking <b>files</b> ▢ to the <b>entities</b> ◯ they mention. Your query matches some entities (the <span style="color:var(--seed)">purple seeds</span>). The question: <i>which files deserve a boost?</i> Click a setting:</p>
+<div class="row">
+  <button class="armbtn active" data-arm="off">ppr_off · 1-hop</button>
+  <button class="armbtn" data-arm="on">ppr_on · PageRank diffusion</button>
+  <button class="armbtn" data-arm="map">ppr_map · 1-hop + injected map</button>
+  <button id="replay">↻ replay</button>
+</div>
+<svg id="graph" width="1000" height="420" viewBox="0 0 1000 420"></svg>
+<div class="card" id="armexplain"></div>
+
+<!-- ============ WORKED EXAMPLE ============ -->
+<h2>④ A worked example (houqin case 267)</h2>
+<p class="muted">Query: <i>"Shengye Electric employees education qualifications"</i> — the answer lives in <code>shengye_electric_2024_annual_report.docx</code>.</p>
+<table>
+<tr><th>setting</th><th>what it boosts</th><th>does it find the answer?</th><th>cost</th></tr>
+<tr><td><span class="pill p-off">ppr_off</span></td><td>annual_report (direct entity), hr_records (1-hop)</td><td class="hi">✓ answer is direct — boosted to top</td><td>2 SQL joins</td></tr>
+<tr><td><span class="pill p-on">ppr_on</span></td><td>same + org_chart, training_log, payroll (2–3 hops, faded)</td><td class="mid">✓ same answer — extra files add noise, not signal</td><td>30 PageRank iterations / query</td></tr>
+<tr><td><span class="pill p-map">ppr_map</span></td><td>same as ppr_off + a 5,415-token map prepended every turn</td><td class="mid">✓ same answer — map cuts turns −20% but is re-billed each turn</td><td>1-hop + map re-sent ×48 turns</td></tr>
+</table>
+<p class="note">The answer was <b>1 hop away</b>, so PageRank's multi-hop reach found nothing new — it only diffused mass to unrelated files. This is why the theory ("multi-hop is richer") doesn't win in practice on these corpora.</p>
+
+<!-- ============ ppr_map cache ============ -->
+<h2>⑤ Why <span class="p-map">ppr_map</span> loses despite using fewer turns</h2>
+<p>The map <b>does</b> help navigation (−20% turns). It loses for one reason: the model has no memory of it (<code>cache_read=0</code>), so the 5,415-token map is <b>re-sent and re-billed on every single turn.</b> Press play:</p>
+<div class="row"><button id="runmap">▶ animate billing</button><span class="muted" id="mapcap"></span></div>
+<svg id="mapsvg" width="1000" height="160" viewBox="0 0 1000 160"></svg>
+
+<!-- ============ VERDICT ============ -->
+<h2>⑥ The verdict — why ppr_off is the pick</h2>
+<table>
+<tr><th>setting</th><th>accuracy (pooled)</th><th>tokens</th><th>latency (mean)</th><th>moving parts</th><th>verdict</th></tr>
+<tr><td><span class="pill p-off">ppr_off</span></td><td class="hi">26.1%</td><td>527k</td><td class="hi">394s</td><td>1-hop joins</td><td class="hi">✓ recommended</td></tr>
+<tr><td><span class="pill p-on">ppr_on</span></td><td>26.0%</td><td>509k</td><td class="lo">445s (+13%)</td><td>PageRank: restart, iters, 400k-edge fallback</td><td>tie outcome, costs more</td></tr>
+<tr><td><span class="pill p-map">ppr_map</span></td><td>~26%</td><td class="lo">+map re-send</td><td>—</td><td>1-hop + map generator</td><td class="lo">reject (billing artifact)</td></tr>
+</table>
+<div class="card">
+<b>Same result, less machinery.</b> ppr_on and ppr_off land on the same answers (the prior is bounded + only re-orders the pool), so accuracy (26.1 vs 26.0) and tokens tie. But ppr_on pays for it: +13% latency, three tuning knobs, and it slightly <i>dilutes</i> on big corpora (ppr_off ≥ ppr_on on 3 of 4 personas; per-case off 28 / tie 27 / on 27). PageRank's multi-hop advantage never materializes because answers sit within 1 hop. <b>→ Choose ppr_off. Drop the map until <code>cache_read</code> is surfaced.</b>
+<div class="legend">Not universal: houqin prefers ppr_on (+4.3) and even plain; kaifa (code) costs more tokens than plain. GLM, n=2–3, noisy judge — a direction, not a final verdict.</div>
+</div>
+
+</div>
+
+<script>
+/* ---------- ELI5 levels ---------- */
+const LV=[
+ `<b>🧒 Imagine a giant library.</b> You ask "where are the notes about Shengye's staff?" A normal helper reads every book. semfs is smarter: it keeps a <b>map of which books mention what</b>, so it jumps near the right shelf first. <span class="p-off">ppr_off</span>, <span class="p-on">ppr_on</span>, and <span class="p-map">ppr_map</span> are three styles of using that map. The surprise: the fanciest one isn't the best.`,
+ `<b>🎓 Search finds candidate files; the "graph prior" nudges the good ones up.</b> semfs links files to the <i>things</i> they talk about (people, products, topics). Your question lights up some of those things. Files connected to them get a small score bump so they rank higher. The three settings differ in <b>how far through the connections</b> they let that bump travel.`,
+ `<b>🛠️ Three ways to spread the bump.</b> <span class="p-off">ppr_off</span> = boost files that share a matched entity <i>directly</i> or are <b>one hop</b> away. <span class="p-on">ppr_on</span> = let a <b>PageRank</b> wave ripple <i>multiple hops</i> through the graph (a file linked to a file linked to your topic still gets a faded bump). <span class="p-map">ppr_map</span> = ppr_off, plus a printed <b>map of the whole workspace</b> pasted into the prompt so the agent can navigate by hand.`,
+ `<b>🔬 It's a bounded re-rank.</b> The prior is capped at ≤0.15 and only reorders the existing candidate pool — it never introduces a new file. <span class="p-off">ppr_off</span>: direct-entity (≤0.08) + community (≤0.05) + 1-hop neighbor (≤0.04), all via SQL joins. <span class="p-on">ppr_on</span>: swaps the 1-hop term for Personalized PageRank — 30 power iterations over the bipartite file↔entity graph (restart 0.5), capped at 0.12, with a 400k-edge fallback to 1-hop. <span class="p-map">ppr_map</span>: ppr_on/off retrieval + a ~5,415-token workspace map as a prompt prefix.`,
+ `<b>🧠 Why the fancy ones don't win.</b> PPR can only beat 1-hop when the answer file is in the pool but ≥2 hops from the query's seed entities — empirically rare, since answers are direct/1-hop, and the ≤0.12 cap squashes the richer signal anyway. On large graphs diffusion spreads mass to loosely-related files → mild dilution (ppr_off ≥ ppr_on on 3/4 personas). The map genuinely cuts turns −20%, but <code>cache_read=0</code> re-bills its 5,415 tokens every turn, so its work-savings (−5%) are erased by re-transmission. Net: bounded prior ⇒ same answers ⇒ pick the cheapest, simplest, least-noisy variant = ppr_off.`
+];
+const lvbox=document.getElementById('lvlbox');
+document.querySelectorAll('#lvlbtns button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#lvlbtns button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); lvbox.innerHTML=LV[+b.dataset.l];
+});
+lvbox.innerHTML=LV[0];
+
+/* ---------- query flow ---------- */
+const SVGNS="http://www.w3.org/2000/svg";
+function el(n,a){const e=document.createElementNS(SVGNS,n);for(const k in a)e.setAttribute(k,a[k]);return e;}
+const flow=document.getElementById('flow');
+const stages=[["Question","“Shengye staff education?”"],["Search","vector + keyword"],["Candidate pool","top files found"],["Graph prior","◀ the only difference","prior"],["Re-rank","reorder by score"],["Answer","top files → agent"]];
+function drawFlow(){
+  flow.innerHTML="";
+  const w=156, gap=10, y=70, h=56;
+  stages.forEach((s,i)=>{
+    const x=10+i*(w+gap);
+    const g=el("g",{class:"flowstage",id:"st"+i,opacity:.35});
+    g.appendChild(el("rect",{x,y,width:w,height:h,rx:9,fill:s[2]==="prior"?"#3a2f10":"#1c2230",stroke:s[2]==="prior"?"#d29922":"#30363d","stroke-width":s[2]==="prior"?2:1}));
+    const t=el("text",{x:x+w/2,y:y+23,"text-anchor":"middle",fill:"#fff","font-size":13,"font-weight":700});t.textContent=s[0];g.appendChild(t);
+    const t2=el("text",{x:x+w/2,y:y+41,"text-anchor":"middle",fill:"#8b949e","font-size":11});t2.textContent=s[1];g.appendChild(t2);
+    flow.appendChild(g);
+    if(i<stages.length-1){const ax=x+w;flow.appendChild(el("line",{x1:ax,y1:y+h/2,x2:ax+gap,y2:y+h/2,stroke:"#484f58","stroke-width":2}));}
+  });
+}
+drawFlow();
+document.getElementById('runflow').onclick=async()=>{
+  drawFlow();const cap=document.getElementById('flowcap');
+  for(let i=0;i<stages.length;i++){
+    document.getElementById('st'+i).setAttribute('opacity',1);
+    cap.textContent=stages[i][0]+(stages[i][2]==="prior"?"  ← ppr_off / ppr_on / ppr_map act HERE":"");
+    await new Promise(r=>setTimeout(r,650));
+  }
+  cap.textContent="done — only the amber box changes between settings.";
+};
+
+/* ---------- bipartite graph ---------- */
+/* entities (circles), files (squares). seeds = matched by query. */
+const G=document.getElementById('graph');
+const ents={
+  E1:{x:200,y:70,n:"Shengye Electric",seed:1},
+  E2:{x:200,y:200,n:"employees",seed:1},
+  E3:{x:200,y:330,n:"education",seed:1},
+  E4:{x:520,y:140,n:"payroll"},
+  E5:{x:520,y:300,n:"org structure"},
+};
+const files={
+  F1:{x:760,y:50,n:"annual_report.docx ★",hop:0},   // direct (answer)
+  F2:{x:760,y:140,n:"hr_records.xlsx",hop:1},
+  F3:{x:760,y:225,n:"training_log.csv",hop:1},
+  F4:{x:760,y:312,n:"payroll_2019.xlsx",hop:2},
+  F5:{x:760,y:392,n:"org_chart.pptx",hop:2},
+};
+/* edges file<->entity */
+const edges=[["F1","E1"],["F1","E2"],["F1","E3"],["F2","E2"],["F3","E3"],["F4","E2"],["F4","E4"],["F5","E5"],["E4","F1"],["E5","F2"]];
+/* boost profiles per arm: file -> boost 0..1 */
+const PROF={
+  off:{F1:1,F2:.55,F3:.5,F4:0,F5:0},
+  on:{F1:1,F2:.6,F3:.55,F4:.32,F5:.22},
+  map:{F1:1,F2:.55,F3:.5,F4:0,F5:0},
+};
+const ARMTXT={
+ off:`<b><span class="p-off">ppr_off · 1-hop.</span></b> Boost files that <b>directly</b> share a matched entity (annual_report — it touches all three seeds) plus files <b>one hop</b> away (hr_records, training_log). <code>payroll</code> and <code>org_chart</code> (2 hops) get <b>nothing</b>. Cheap: a couple of SQL joins. The answer (★) is direct → ranked #1. <b>This is enough here.</b>`,
+ on:`<b><span class="p-on">ppr_on · PageRank diffusion.</span></b> A wave starts at the seeds and ripples outward, fading each hop (restart 0.5, 30 iterations). Now <code>payroll</code> and <code>org_chart</code> light up faintly too — 2 hops away. Problem: the answer was already #1 from 1-hop, so these extra boosts are <b>noise, not signal</b>, and on big graphs they can nudge a wrong file up. Cost: 30 iterations over up to 400k edges, <b>every query</b>.`,
+ map:`<b><span class="p-map">ppr_map · 1-hop + injected map.</span></b> Same boosts as ppr_off, PLUS a ~5,415-token text map of the whole workspace pasted into the prompt. It helps the agent navigate (fewer turns), but see §⑤ — it's re-billed every turn.`,
+};
+function drawGraph(arm){
+  G.innerHTML="";
+  // edges
+  edges.forEach(([a,b])=>{
+    const A=ents[a]||files[a], B=ents[b]||files[b];
+    G.appendChild(el("line",{x1:A.x,y1:A.y,x2:B.x,y2:B.y,stroke:"#30363d","stroke-width":1.4}));
+  });
+  // entities
+  for(const k in ents){const e=ents[k];
+    G.appendChild(el("circle",{cx:e.x,cy:e.y,r:13,fill:e.seed?"#3a2d5c":"#1c2230",stroke:e.seed?"#bc8cff":"#484f58","stroke-width":e.seed?2.5:1.4}));
+    const t=el("text",{x:e.x-20,y:e.y+4,"text-anchor":"end",fill:e.seed?"#d2b3ff":"#8b949e","font-size":12});t.textContent=e.n;G.appendChild(t);
+  }
+  // files w/ boost
+  const col=arm==="on"?"#58a6ff":(arm==="map"?"#d29922":"#3fb950");
+  for(const k in files){const f=files[k];const b=PROF[arm][k]||0;
+    const g=el("g",{});
+    g.appendChild(el("rect",{x:f.x,y:f.y-15,width:30,height:30,rx:6,fill:b>0?col:"#1c2230","fill-opacity":b>0?(0.25+0.6*b):1,stroke:b>0?col:"#484f58","stroke-width":b>0?2:1.4}));
+    const t=el("text",{x:f.x+40,y:f.y-2,fill:"#c9d1d9","font-size":12});t.textContent=f.n;g.appendChild(t);
+    // boost bar
+    const lab=el("text",{x:f.x+40,y:f.y+13,fill:"#8b949e","font-size":11});
+    lab.textContent="hop "+f.hop+(b>0?("  · boost "+(b*0.12).toFixed(2)):"  · no boost");g.appendChild(lab);
+    G.appendChild(g);
+  }
+  // legend
+  const lg=el("text",{x:200,y:405,"text-anchor":"middle",fill:"#8b949e","font-size":12});lg.textContent="◯ entity   ◯ purple = matched by query";G.appendChild(lg);
+  const lg2=el("text",{x:790,y:18,"text-anchor":"middle",fill:"#8b949e","font-size":12});lg2.textContent="▢ file (brighter = bigger boost)   ★ = the answer";G.appendChild(lg2);
+}
+let curArm="off";
+function setArm(a){curArm=a;document.querySelectorAll('.armbtn').forEach(x=>x.classList.toggle('active',x.dataset.arm===a));drawGraph(a);document.getElementById('armexplain').innerHTML=ARMTXT[a];}
+document.querySelectorAll('.armbtn').forEach(b=>b.onclick=()=>setArm(b.dataset.arm));
+document.getElementById('replay').onclick=()=>setArm(curArm);
+setArm("off");
+
+/* ---------- map billing animation ---------- */
+const ms=document.getElementById('mapsvg');
+document.getElementById('runmap').onclick=async()=>{
+  ms.innerHTML="";const cap=document.getElementById('mapcap');
+  const turns=12, w=70, gap=6, y=40;let total=0;
+  for(let i=0;i<turns;i++){
+    const x=10+i*(w+gap);
+    ms.appendChild(el("rect",{x,y,width:w,height:46,rx:6,fill:"#3a2f10",stroke:"#d29922"}));
+    const t=el("text",{x:x+w/2,y:y+20,"text-anchor":"middle",fill:"#f0c674","font-size":11,"font-weight":700});t.textContent="turn "+(i+1);ms.appendChild(t);
+    const t2=el("text",{x:x+w/2,y:y+37,"text-anchor":"middle",fill:"#d29922","font-size":10});t2.textContent="+5,415";ms.appendChild(t2);
+    total+=5415;cap.textContent=`map re-sent ${i+1}× = ${total.toLocaleString()} tokens billed (cache_read=0 → never remembered)`;
+    await new Promise(r=>setTimeout(r,260));
+  }
+  cap.innerHTML=`<b style="color:#f0c674">~65k tokens just re-sending the SAME map</b> — that, not behavior, is why ppr_map costs more.`;
+};
+</script>
+</body>
+</html>

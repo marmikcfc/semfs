@@ -1,0 +1,320 @@
+{
+  "model": "openai/gpt-oss-120b",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All dates, names, numbers, events, and speaker attributions from the original (Jan 27 1967 fire, Gus Grissom/Ed White/Roger Chaffee, Ronald Reagan, Challenger 73‑second explosion, 7 astronauts killed, Feb 1 2003 Columbia disintegration, 7 astronauts died, George W. Bush) are present in the compressed version. Non‑factual opinion language (e.g., \"it's an important moment\", \"twist of fate\") and filler wording were removed, which is permissible. Reformatting into bullet list and concise prose does not alter any facts.",
+      "usage": {
+        "in": 2076,
+        "out": 6759,
+        "reasoning": 7780
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "Why do shower curtains billow inwards?"
+      ],
+      "qwen_reason": "The compressed version changes the premise of the question about shower curtains from the original wording ('why do shower curtains below inwards?') to 'why do shower curtains billow inwards?'. This introduces the claim that shower curtains billow inwards, which is not present in the original. All other facts (names, affiliations, website, element list, acknowledgments, etc.) are preserved.",
+      "usage": {
+        "in": 2215,
+        "out": 7954,
+        "reasoning": 9270
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original—including baggy clothes as self‑expression, reflections of identity, comfort, cultural/religious identity, user feelings about comfort, confidence, rebellion, empowerment, versatility, and the AI's notes on lack of emotions, the fashion trend status, popular style lists, and the influence of personal background—are retained in the compressed version. No facts were omitted or invented.",
+      "usage": {
+        "in": 2357,
+        "out": 6228,
+        "reasoning": 7874
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All entity-role-exhibit facts, dates, signatures, and headings are preserved. The only omitted line is the leading fragment \"Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)\" which is an incomplete start-of-chunk artifact and not a factual statement. No new facts were introduced.",
+      "usage": {
+        "in": 2457,
+        "out": 3889,
+        "reasoning": 3784
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "34.22 Association—Primary Servicer, Related Home Depot Mortgage Loan (Exhibit 34.1)"
+      ],
+      "qwen_reason": "The compressed version adds an item number (34.22) for the Association that is not present in the original text; all other facts are preserved.",
+      "usage": {
+        "in": 2479,
+        "out": 4097,
+        "reasoning": 4004
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements (questions about _V_I_D_N_M_E_, role identifications, requirement specification mentions, discussion of overlap, remote research tasks, the 30‑minute follow‑up, and the final question about taking items off) are retained. Only filler words, disfluencies, and redundant acknowledgments were removed or rephrased, which is allowed. No new facts were introduced.",
+      "usage": {
+        "in": 1990,
+        "out": 4005,
+        "reasoning": 4648
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Marketing: We can plan further, I think.",
+        "User Interface: Consensus on the, what we're gonna do.",
+        "Industrial Designer: Or edit."
+      ],
+      "qwen_added": [
+        "Project Manager: mentions consensus in plan statement (adds 'consensus' not present in original)",
+        "Marketing: includes 'edit' in delete-or-edit instruction (originally spoken by Industrial Designer)"
+      ],
+      "qwen_reason": "Compressed text omitted Marketing's suggestion to plan further, UI's consensus remark, and Industrial Designer's 'Or edit' comment, thereby dropping original facts. It also added new facts: Project Manager's line inserts the concept of 'consensus' which was not said by him, and Marketing is incorrectly credited with the 'edit' remark that originally belonged to Industrial Designer. These omissions and misattributions make the compression lossy.",
+      "usage": {
+        "in": 2167,
+        "out": 9134,
+        "reasoning": 10406
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information from the original (names, ages, race, victim details, incident description, number and description of suspects, charges, sheriff name, mother’s name and quote, officer’s experience, FBI activity, community details) is preserved in the compressed version. No facts were omitted or fabricated; only filler and redundant phrasing were removed.",
+      "usage": {
+        "in": 2374,
+        "out": 2838,
+        "reasoning": 3345
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Visualization can be effective because it helps create a positive attitude towards wealth and possessions",
+        "Visualization helps you focus on the positive aspects of material things, such as the security, comfort, and enjoyment they can bring to your life",
+        "Visualization alone is not enough to achieve materialistic goals",
+        "You need to take action towards achieving your goals, such as developing skills, taking opportunities, or investing in resources that will help you attain wealth and possessions",
+        "Visualization is simply a tool that you can use to help you stay focused and motivated on the path towards achieving your desired outcomes"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omits several factual statements from the original third section: the claim that visualization creates a positive attitude toward wealth and possessions, the description of focusing on security/comfort/enjoyment, the warning that visualization alone is insufficient, the recommended actions (developing skills, taking opportunities, investing in resources), and the statement that visualization is a tool to keep you focused and motivated. No new facts were introduced.",
+      "usage": {
+        "in": 2522,
+        "out": 7472,
+        "reasoning": 9875
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information from the original (leading brands, eight feature details, price ranges, and advice on affordable options) is present in the compressed version. No facts are omitted or invented; only wording and formatting have changed.",
+      "usage": {
+        "in": 2083,
+        "out": 795,
+        "reasoning": 891
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All entity names, roles, exhibit references, dates, signatures, and other factual details from the original are present. The compression removes only non‑fact language (the adverb “duly” after “has” and the word “thereunto”), which does not constitute a factual loss.",
+      "usage": {
+        "in": 2505,
+        "out": 3301,
+        "reasoning": 3206
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All headings, legal citations (Public Law 101-650, 104 Stat. 5127, 47 U.S.C. 303c), amendment details, and substantive language in Sections 3 and 4 are present unchanged; only formatting (line breaks, spacing) differs, so no factual content was lost or added.",
+      "usage": {
+        "in": 2410,
+        "out": 2519,
+        "reasoning": 2835
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numbers, percentages, dates, monetary values, entity names, and factual statements from the original are present unchanged in the compressed version; only formatting and wording were altered, with no facts omitted or invented.",
+      "usage": {
+        "in": 2416,
+        "out": 2259,
+        "reasoning": 2192
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements (sections, timelines, obligations, agencies, conditions, and specific language about waivers) are preserved; wording and style are changed but no facts are added or omitted.",
+      "usage": {
+        "in": 1981,
+        "out": 903,
+        "reasoning": 1104
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information (patient age, symptom duration, measurements, treatment regimen, percentages, study reference, anatomical and developmental details, model citation, figure references) from the original text is preserved in the compressed version; only wording and formatting were altered.",
+      "usage": {
+        "in": 2557,
+        "out": 2802,
+        "reasoning": 2907
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numerical percentages, study findings, patient outcome statistics, citations, and statements about HPV status, recurrence, survival, tobacco/alcohol use, prevalence, subtypes, and need for further research are present in the compressed version. No factual information from the original was omitted, and no new facts were introduced; only wording and formatting were changed.",
+      "usage": {
+        "in": 2317,
+        "out": 4357,
+        "reasoning": 4850
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original (stress of PCPs, three stress systems, two support frameworks, policy and counseling needs, education requirements, work‑related management details, self‑care categories, exhaustive activity list, Elwood et al. caution, evidence‑based policy requirement, research limitations, recommendation for better research, need for attention at undergraduate/prevocational/practitioner levels, need for education/system/support for PCPs, and awareness of support needs) are preserved in the compressed version. The changes are only reformatting, paraphrasing, and omission of non‑fact filler.",
+      "usage": {
+        "in": 2282,
+        "out": 4577,
+        "reasoning": 6177
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements, speaker attributions, and content (e.g., cost comment, design details about sensors, plan to go with the plan, next meeting action, future design of a better meeting) are retained. Only filler, disfluencies, and noise markers were removed, which are not facts.",
+      "usage": {
+        "in": 2092,
+        "out": 3933,
+        "reasoning": 4527
+      }
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Joined: Aug 10, 2001"
+      ],
+      "qwen_added": [
+        "Joined: Aug 2001"
+      ],
+      "qwen_reason": "The original specifies the join date as Aug 10, 2001, but the compressed version only states Aug 2001, omitting the specific day. This alteration of a numeric date fact makes the compression lossy.",
+      "usage": {
+        "in": 2582,
+        "out": 4469,
+        "reasoning": 4885
+      }
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details from the original (specifications, dimensions, warranty info, 3D requirements, Dolby/DTS requirements, HDMI requirements, iPod/iPhone support list, compatibility notes, etc.) are present in the compressed version; only formatting and wording were changed.",
+      "usage": {
+        "in": 2465,
+        "out": 4880,
+        "reasoning": 5032
+      }
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements (e.g., 600 Euro per m², investors from nearly 50 countries, Riviera Invest service duration, investment claims, property types, tourism and population trends, etc.) are present in the compressed text. No facts were omitted or invented; only wording and formatting were changed.",
+      "usage": {
+        "in": 2127,
+        "out": 4478,
+        "reasoning": 5542
+      }
+    }
+  ]
+}

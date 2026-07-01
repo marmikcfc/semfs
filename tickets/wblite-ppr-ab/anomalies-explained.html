@@ -1,0 +1,72 @@
+<!doctype html><html><head><meta charset="utf-8"><title>WB-Lite — Two Anomalies Explained</title>
+<style>
+body{background:#0b0f14;color:#cdd6e0;font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;max-width:980px;margin:0 auto;padding:28px}
+h1{font-size:24px;margin:0 0 4px} h2{font-size:18px;margin:30px 0 8px;color:#e8eef5;border-bottom:1px solid #1f2a36;padding-bottom:4px}
+.sub{color:#8294a8;margin:0 0 18px}
+table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13.5px}
+th,td{border:1px solid #1f2a36;padding:6px 9px;text-align:center} th{background:#121a24;color:#9fb3c8}
+td.l,th.l{text-align:left}
+.lo{color:#ff7b7b;font-weight:600}.hi{color:#7ee2a8;font-weight:600}.flag{color:#ffd166;font-weight:600}
+.box{background:#0d1822;border:1px solid #1f3a4f;border-radius:8px;padding:12px 16px;margin:14px 0}
+.win{background:#0d2818;border-color:#1f6f3f}
+.warn{background:#241a0d;border-color:#6f4f1f}
+code{background:#121a24;padding:1px 5px;border-radius:4px;color:#9fd0ff}
+.zone{color:#8294a8;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+small{color:#8294a8}
+</style></head><body>
+
+<h1>Two anomalies — why tokens rise <em>only</em> in kaifa &amp; accuracy drops <em>only</em> in houqin</h1>
+<p class="sub">PPR (semfs retrieval) vs <b>plain</b> (no-semfs crawl) · converged judge · GLM-5.1 · n=2–3.
+Analysis via <code>thinking-model-combination</code> → <code>creativity-sampler</code> → <code>forming-opinions</code>.</p>
+
+<h2>① The two anomalies (PPR-on minus plain, per persona)</h2>
+<table>
+<tr><th class="l">persona</th><th>plain acc</th><th>ppr_on acc</th><th>Δacc</th><th>plain tok</th><th>ppr_on tok</th><th>Δtok</th></tr>
+<tr><td class="l">chanpin</td><td>9.8%</td><td>18.1%</td><td class="hi">+8.3</td><td>472K</td><td>434K</td><td class="hi">−38K</td></tr>
+<tr><td class="l">kaifa</td><td>17.5%</td><td>33.5%</td><td class="hi">+16.0</td><td><b>382K</b></td><td>619K</td><td class="flag">+237K ⚠ TOK UP</td></tr>
+<tr><td class="l">houqin</td><td><b>27.9%</b></td><td>21.8%</td><td class="flag">−6.1 ⚠ ACC DROP</td><td>619K</td><td>461K</td><td class="hi">−158K</td></tr>
+<tr><td class="l">yunying</td><td>19.7%</td><td>30.5%</td><td class="hi">+10.8</td><td>723K</td><td>549K</td><td class="hi">−174K</td></tr>
+</table>
+<p><b>PPR helps accuracy &amp; saves tokens everywhere — except two cells:</b> it <span class="flag">costs tokens in kaifa</span> and <span class="flag">loses accuracy in houqin</span>. Different personas, different axes.</p>
+
+<h2>② The unifying answer: plain is <em>already maxed</em> exactly there</h2>
+<div class="box win"><b>One cause, not two.</b> PPR/retrieval can only beat plain on the axis where plain leaves room. In these two personas, plain is the best it ever is — so retrieval shows up as a <em>relative</em> regression.</div>
+<table>
+<tr><th class="l">across personas…</th><th>chanpin</th><th>kaifa</th><th>houqin</th><th>yunying</th></tr>
+<tr><td class="l">plain accuracy</td><td>9.8%</td><td>17.5%</td><td class="hi">27.9% ← highest</td><td>19.7%</td></tr>
+<tr><td class="l">plain tokens</td><td>472K</td><td class="hi">382K ← lowest</td><td>619K</td><td>723K</td></tr>
+</table>
+<ul>
+<li><b>kaifa has the cheapest plain (382K)</b> of any persona → PPR's extra reads look expensive <em>by comparison</em> → the only place tokens rise.</li>
+<li><b>houqin has the most-accurate plain (27.9%)</b> of any persona → PPR's retrieval can't beat a crawl that already finds the answer → the only place accuracy drops.</li>
+</ul>
+
+<h2>③ Candidate hypotheses (creativity-sampler) → which survives</h2>
+<p class="zone">kaifa token rise</p>
+<table>
+<tr><th class="l">hypothesis</th><th>zone</th><th>verdict</th></tr>
+<tr><td class="l">Code files are bigger → reads cost more</td><td>Conventional</td><td>partial (median calls 44 vs houqin 38 — modest)</td></tr>
+<tr><td class="l">Code KG over-connected → PageRank spreads to many hub files</td><td>Uncommon</td><td>plausible amplifier</td></tr>
+<tr><td class="l"><b>Plain is unusually CHEAP in kaifa</b> (structured code dirs → direct navigation)</td><td>Unconventional</td><td class="hi">✓ confirmed — kaifa = lowest plain tok</td></tr>
+</table>
+<p class="zone">houqin accuracy drop</p>
+<table>
+<tr><th class="l">hypothesis</th><th>zone</th><th>verdict</th></tr>
+<tr><td class="l">houqin embedding/index misranks (Chinese logistics docs)</td><td>Mainstream</td><td>plausible amplifier</td></tr>
+<tr><td class="l">Largest corpus → most distractors → retrieval misranks</td><td>Uncommon</td><td>consistent (houqin = 30 cases, biggest)</td></tr>
+<tr><td class="l"><b>Plain is unusually ACCURATE in houqin</b> (browsable docs → crawl finds it)</td><td>Unconventional</td><td class="hi">✓ confirmed — houqin = highest plain acc</td></tr>
+</table>
+
+<h2>④ Verdict (forming-opinions)</h2>
+<div class="box">
+<b>Opinion:</b> the two anomalies are one phenomenon — <b>plain is exceptionally strong in kaifa (cheapest) and houqin (most accurate), and retrieval can't improve on a maxed baseline</b> — <b>~70%</b>.<br>
+<b>Load-bearing (confirmed):</b> kaifa = lowest plain tokens; houqin = highest plain accuracy, across all 4 personas. The anomaly lands exactly where plain peaks on that axis.<br>
+<b>Mechanism (hypothesis, not yet measured):</b> kaifa's code dirs reward <em>structure-navigation</em> (cheap); houqin's docs reward <em>breadth-browsing</em> (accurate). Retrieval adds reads where navigation was already cheap, and misranks where the crawl already found the answer.<br>
+<b>Strongest case against:</b> the KG/index quality could be the real driver (over-connected code KG inflating kaifa reads; weak houqin embeddings misranking) — plain's strength would then be a coincidence, not the cause.<br>
+<b>I'd change my mind if:</b> per-cell <em>plain</em> traces show kaifa plain does <em>not</em> navigate by structure (reads just as much), or houqin plain does <em>not</em> browse-find — or if a 5th persona with cheap plain shows <em>no</em> PPR token rise.
+</div>
+
+<h2>⑤ So what</h2>
+<div class="box warn">The anomalies are <b>not bugs in PPR</b> — they're <b>plain being a very strong baseline</b> on structured (kaifa) and browsable (houqin) workspaces. Retrieval pays off when the workspace is too big/unstructured to navigate (chanpin, yunying); it can't beat a good crawl when navigation already works. <b>Lever:</b> route by workspace shape — use retrieval where plain navigation fails, not as a blanket replacement.</div>
+<p><small>Caveats: plain tokens/accuracy are dashboard means (tail-inflated); per-cell plain for kaifa/houqin not yet in repo, so the mechanism is reasoned from aggregates. plaid (next_plaid) excluded pending converged re-judge. ← <a href="dashboard_fresh.html" style="color:#9fd0ff">back to dashboard</a></small></p>
+</body></html>

@@ -1,0 +1,270 @@
+{
+  "model": "gpt-5.4",
+  "n_pass": 14,
+  "n_total": 21,
+  "results": [
+    {
+      "domain": "calls",
+      "label": "light",
+      "tier": 1,
+      "achieved_ratio": 0.911,
+      "category": "light",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "All factual content is preserved: names, ages, race, duration, number of suspects/arrests, relationships among suspects, charge types, quote attributions, sheriff's tenure ('over 30 years'), statements about community cooperation, lack of known racial tension, unknown motive, and FBI/person-of-interest follow-up. The compressed version only makes minor wording/grammar cleanups and removes disfluencies without changing facts."
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "tier": 1,
+      "achieved_ratio": 0.979,
+      "category": "floor",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "The compressed text preserves all factual content and examples from the original. Changes are limited to minor wording/grammar condensation (e.g., 'provide an explanation' -> 'explain', 'helps to promote' -> 'helps promote'), which do not alter facts, scope, examples, or meaning."
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "tier": 2,
+      "achieved_ratio": 0.582,
+      "category": "heavy",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "The compressed version preserves all factual content from the original: the seven listed brands, the eight feature categories and their described details, the price ranges (under $100 and over $1,000), the cited premium brands (Apple and Samsung), and the purchasing advice about older/less-known brands, possible tradeoffs in quality/longevity, and reading reviews/comparing prices. It only removes conversational filler and rewrites the content into a concise structured format."
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "tier": 1,
+      "achieved_ratio": 0.995,
+      "category": "floor",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "All factual content is preserved, including exhibit numbers, entity names, roles, omissions, references, registrant name, signer, title, and date. The only changes are removal of non-factual legal/formulaic wording ('duly', 'thereunto', and one instance of 'duly') in the signature authorization sentence, which does not alter any factual content."
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "tier": 1,
+      "achieved_ratio": 0.908,
+      "category": "light",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "The compressed text is identical in substance to the original, preserving all sections, subsection labels, statutory citations, quoted amendment language, enumerated items, and legal limitations without omission or addition."
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "tier": 2,
+      "achieved_ratio": 0.798,
+      "category": "heavy",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "The compressed text preserves all factual content from the original: section titles, findings and purposes structure, all percentages, counts, dollar amounts, dates, comparisons, named groups, program names, and the SEC. 2 heading. Changes are limited to formatting, punctuation, and minor wording/paraphrase without altering any fact."
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "tier": 2,
+      "achieved_ratio": 0.78,
+      "category": "heavy",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "All material facts are preserved: section references (4, 5, 7, 8, 9), time periods (30 days, 15-day period), required actions, eligible commenters/bidders, procurement subject matter, legal citation (chapter 11 of title 40, United States Code), and waiver conditions including emergency/specialty/intermittent nature and underutilization language. Changes are faithful paraphrases and formatting only."
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "tier": 1,
+      "achieved_ratio": 0.958,
+      "category": "floor",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "The compressed passage preserves all factual content from the original, including age, symptoms, duration, measurements, percentages, counts, drug/dose/frequency/duration, figure references, names/citations, and the developmental explanation. Changes are limited to capitalization, punctuation, and minor grammatical cleanup (e.g., 'whereas the inner punctum was in the caruncle'), which do not alter facts."
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "tier": 2,
+      "achieved_ratio": 0.662,
+      "category": "heavy",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "All factual content from the original is preserved in the compressed version: the percentages (66.7%, 35.4%, 34.4%, 73.3%), stage IVA, recurrence findings, prognostic statements, survival findings (OS, DFS), cited references, tobacco/alcohol intake observation, low HPV DNA prevalence in OCSCCs, absence of high-risk subtypes, presence of HPV 6 and 11, and the need for further investigations. The dropped opening fragment 'were n0 .' is an OCR/chunk artifact and not a fact. Minor wording normalization and deduplication of repeated sentences are lossless."
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "tier": 2,
+      "achieved_ratio": 0.811,
+      "category": "heavy",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "The compressed version preserves the factual content of the original: the 3 stress-related systems, the 2 support frameworks, the healthcare/work-related/personal support details, the specific self-care examples with citation [4, 52, 53], Elwood and colleagues' caution and research critique/recommendation, the undergraduate/prevocational/practitioner levels, and the concluding points about needed supports and PCP self-awareness. Wording and structure were condensed, but no facts were omitted or added."
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "tier": 1,
+      "achieved_ratio": 0.75,
+      "category": "light",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "The compressed version preserves the factual content, speaker attributions, decisions/action items, and wording of substantive statements. It removes only disfluency/transcription markers ({disfmarker}, {vocalsound}), fillers ('um', 'uh', 'you know'), and minor false starts/stutters, which are non-factual under the rules. No supported facts were omitted, and no new facts were introduced."
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "tier": 1,
+      "achieved_ratio": 0.994,
+      "category": "floor",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "All factual content is preserved: the data structure (nested vectors/arraylists), sorting approach using Comparator and Collections.sort(List, Comparator), pseudo-code steps, the question about sorting individuals/addresses/both, dates joined (Aug 10, 2001 and Apr 20, 2001), object fields, runtime-specified sort columns/order, example sort fields, compareTo behavior, and the suggested comparator strategies. Minor wording changes like removing 'Unfortunately' and 'really' do not remove facts."
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "tier": 2,
+      "achieved_ratio": 0.84,
+      "category": "heavy",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "All factual content from the original is preserved in the compressed version. Wording and formatting were condensed, but the same product features, values, dimensions, warranty text, compatibility lists, model names, and HDMI/3D/iPod requirements remain. The truncated fragment 'Video Up Scaler (Analog-' is preserved as the same incomplete artifact rather than completed into a new fact."
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "tier": 2,
+      "achieved_ratio": 0.807,
+      "category": "heavy",
+      "verdict": "LOSSLESS",
+      "dropped": [],
+      "added": [],
+      "reason": "All factual content from the original is preserved in the compressed version, including names (Alanya, Turkey, Riviera Invest), figures (600 Euro per square meters, nearly 50 countries), property types, and service claims. Changes are limited to wording, punctuation, grammar, and removal of non-factual promotional filler such as congratulations and rhetorical phrasing."
+    },
+    {
+      "domain": "calls",
+      "label": "floor",
+      "tier": 2,
+      "achieved_ratio": 0.831,
+      "category": "heavy",
+      "verdict": "LOSSY",
+      "dropped": [
+        "NASA is identified as 'the space agency'",
+        "Jim Bridenstine says it is 'an important moment'"
+      ],
+      "added": [],
+      "reason": "Most facts are preserved, including dates, names, quotes, causes, and casualty counts. However, the original explicitly states that NASA is 'the space agency' and that Jim Bridenstine says 'it's an important moment'; both facts are omitted from the compressed version."
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "tier": 2,
+      "achieved_ratio": 0.886,
+      "category": "heavy",
+      "verdict": "LOSSY",
+      "dropped": [],
+      "added": [
+        "changes 'Half winners, half tackle tough questions' to an unattributed heading 'Tough questions'",
+        "changes 'shower curtains below inwards' to 'shower curtains billow inwards'"
+      ],
+      "reason": "Most facts are preserved, including names, organizations, URL, and closing thanks. However, the compressed text alters original wording in a way that changes facts or introduces unsupported content: it omits the original 'Half winners, half' phrasing and replaces it with a new heading, and it changes 'below inwards' to 'billow inwards,' which is not supported by the original text."
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "tier": 2,
+      "achieved_ratio": 0.741,
+      "category": "heavy",
+      "verdict": "LOSSY",
+      "dropped": [
+        "AI statement: 'Therefore, in many ways, baggy clothes can be a form of self-expression.'",
+        "AI statement: 'Ultimately, whether you choose to wear baggy clothes to express your personal style or for comfort, it is a form of self-expression.'",
+        "AI statement: 'By wearing baggy clothes, you are expressing that you choose to dress in a way that feels comfortable and authentic to you' (the compressed version generalizes this to 'wearing them can express choosing comfort and authenticity' and omits the direct 'you choose to dress' formulation)",
+        "AI statement: 'Do you have any favorite clothing styles or trends, AI?'"
+      ],
+      "added": [],
+      "reason": "Most facts are preserved, including the user's views and the AI's points about self-expression, rebellion, confidence, and clothing trends. However, the compressed version omits some explicit original statements, including the user's final question to the AI and a couple of repeated but still factual summary statements about baggy clothes being a form of self-expression."
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "tier": 2,
+      "achieved_ratio": 0.921,
+      "category": "floor",
+      "verdict": "LOSSY",
+      "dropped": [
+        "34.22 Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)",
+        "In signature paragraph: 'has duly caused this report to be signed on its behalf by the undersigned, thereunto duly authorized'"
+      ],
+      "added": [],
+      "reason": "The compressed text omits the original entry preceding 34.23 ('Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)'), which is a factual exhibit listing item. It also slightly weakens the signature attestation by dropping 'duly' and 'thereunto' from 'has duly caused ... thereunto duly authorized'; this changes the exact legal wording in a signed filing sentence, so it is not strictly fact-preserving."
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "tier": 2,
+      "achieved_ratio": 0.955,
+      "category": "floor",
+      "verdict": "LOSSY",
+      "dropped": [
+        "In item 34.22, the original includes the phrase 'as Primary Servicer of the Related Home Depot Mortgage Loan'; the compressed version preserves only 'Association—Primary Servicer...' and omits the full entity name preceding 'Association'."
+      ],
+      "added": [],
+      "reason": "All listed exhibit numbers, organizations, roles, omitted/exhibit notes, signature name/title, and date are otherwise preserved by paraphrase/reformatting. However, the original entry for 34.22 is truncated in the compressed text to just 'Association', which does not preserve the full name as given in the original passage."
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "tier": 2,
+      "achieved_ratio": 0.545,
+      "category": "heavy",
+      "verdict": "LOSSY",
+      "dropped": [
+        "Marketing: \"And I'm marketing.\"",
+        "Project Manager affirms with \"Yeah, there you go.\" after Marketing identifies themself",
+        "Project Manager says the user-interface/industrial-designer roles overlap and addresses both: \"You two ... you just double up ... working together\"; compressed merges the follow-up research assignment into the same turn without preserving that the plural addressee changed to singular research assignment context",
+        "User Interface: \"Yeah.\" before \"it does seem like our responsibilities have some overlap.\"",
+        "Industrial Designer: \"Yeah.\" agreeing after Project Manager says they should work together",
+        "User Interface: \"Yeah.\" agreeing after Project Manager says they should work together"
+      ],
+      "added": [
+        "Project Manager: \"Industrial Designer.\" as a definite answer immediately after asking what _V_I_D_N_M_E_ stands for"
+      ],
+      "reason": "Most factual content is preserved, but the compressed version adds an unsupported attribution/answer (Project Manager says \"Industrial Designer\" right after asking what _V_I_D_N_M_E_ stands for). It also drops several speaker-attributed utterances, including Marketing identifying themself as marketing and some explicit agreement turns. Because speaker attributions and utterances are facts under the rules, this is LOSSY."
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "tier": 2,
+      "achieved_ratio": 0.446,
+      "category": "heavy",
+      "verdict": "LOSSY",
+      "dropped": [
+        "Marketing: 'I don't know.'",
+        "Project Manager: 'Okay.' after Marketing says 'You decide. You're the Project Manager.'",
+        "Project Manager: 'Why?' (asked twice)",
+        "Marketing: 'Uh.' response during Industrial Designer's explanation",
+        "Project Manager: 'Yeah.' acknowledgments at several points including after Industrial Designer says it's a step further and after Marketing says 'In the next meeting we decide'",
+        "Marketing: 'I think.' after 'the obsolete details.'"
+      ],
+      "added": [],
+      "reason": "The compressed version preserves the main substantive discussion, speakers, and decisions, and it does not add unsupported facts. However, several original utterances were omitted. While many fillers/backchannels are ignorable, some omitted items are contentful or speaker-attributed turns beyond pure filler, especially Marketing's 'I don't know,' and the Project Manager's two explicit 'Why?' questions. Therefore the compression is lossy."
+    }
+  ]
+}

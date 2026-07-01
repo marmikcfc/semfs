@@ -1,0 +1,211 @@
+{
+  "model": "gpt-4.1-mini",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All key facts including dates, names of astronauts, death tolls, quotes with speakers, event descriptions, and the delay due to the government shutdown are preserved exactly; restructuring into a list and paraphrasing does not alter factual content."
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts including events, speaker attributions, organizations, website, and the list of elements are preserved. Minor wording changes and reformatting do not affect factual content."
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts presented in the original text are preserved in the compressed version. The compressed text summarizes people's reasons for wearing baggy clothes, the AI's neutral stance, and various style observations without omitting or altering factual content. Wording and structure changes do not lead to factual loss or addition."
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information including names, roles, exhibits, omissions, and signature details are preserved exactly. The compression changes formatting and wording without altering any facts."
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements including names, roles, loan references, exhibit references, omitted notes, item references, and signature details are preserved exactly. The compression reformats the original prose into a more concise list format without altering or omitting factual content."
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [
+        "Various disfluencies and vocal sounds",
+        "Some repetitions like 'yeah, there you go' and filler 'um'"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version faithfully preserves all factual content on roles and responsibilities, meeting completion, and interactions. Removed disfluencies, filler, and repeated statements do not affect facts."
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [
+        "Multiple speech disfluencies, backchannels, and filler words (e.g., uh, mm, yeah, {vocalsound}, {disfmarker}), and repetitions"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All important facts, speaker attributions, decisions, and statements about planning, requirements, technical functions, steps, and next meetings are fully preserved. Removed filler, hedges, and disfluencies which do not constitute factual content."
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [
+        "emphasis on some of the facts may not be suitable for young listeners"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements including names, ages, races, charges, quotes, the number and roles of suspects, and procedural details are preserved. Minor style and structure changes do not omit or alter facts. The note on graphic content suitability is a caution, not a fact, so its soft removal is lossless."
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [
+        "phrases like 'I can provide an explanation of intention in visualization','helps to','helps in', 'helps to reinforce' which are minor wording repetitions or hedges"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text preserves all factual content about the role of intention, steps to set intention, and effectiveness of visualization for materialistic goals. Minor wording and phrase simplifications do not affect facts; no facts are removed or added."
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All brand names (Apple, Samsung, Fitbit, Garmin, Fossil, Huawei, Xiaomi) are preserved. Popular smartwatch features (fitness tracking, notifications, GPS, music playback, voice assistant, payments via NFC, sleep tracking, water resistance) are all listed with matching details and examples. Price information about basic/entry-level under $100, premium Apple/Samsung over $1000, and advice about choosing according to budget are maintained. Affordable option information about older models, lesser-known brands, feature parity at lower price, quality/longevity tradeoff, and recommendation to read reviews and compare prices are all retained. The format changed to a concise list and bullet points, but no facts were added or dropped."
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details, including names, roles, exhibits, notes on omissions, regulatory references, signature attribution, and date, are preserved exactly in the compressed version; minor wording adjustments in the signature section do not change facts."
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content, including section references, statute citations, subsections, amendment details, and quoted text, is preserved exactly. Only formatting spacing changes occurred, with no alteration or omission of facts."
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts from the original text are preserved with identical numeric values and named entities. The compression reformats the numbered lists and prose style without changing or omitting any factual data."
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts about the steps a government agency must take after a cost-benefit analysis, the 15-day comment and bid period, procurement procedures for architectural and engineering services, and the Secretary's waiver authority for specialty/emergency work are preserved exactly. Minor wording and structure changes do not alter or omit any factual details."
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numerical values, names, medical facts, and figure references from the original passage are fully preserved in the compressed version. Repetitions and minor formatting differences do not alter facts."
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "The exact phrase 'were n0' at the start",
+        "The statement 'less mortality risk in hpv-positive cases' appears contradictory to the mortality percentages given (34.4% HPV-negative died vs 73.3% HPV-positive died) and is unclear in the compression"
+      ],
+      "qwen_added": [
+        "N0 specified as a label at start, not explained in original",
+        "'Less mortality risk in HPV-positive cases' stated explicitly, contradicting original percentages"
+      ],
+      "qwen_reason": "The compressed version introduces the assertion 'Less mortality risk in HPV-positive cases' which contradicts the original facts where HPV-positive patients had a higher death percentage (73.3%) compared to HPV-negative (34.4%). This is a change in a key fact and thus lossy. Also, the original opening fragment 'were n0 .' is dropped; although it looks like an incomplete fragment, it might carry meaning (N0 being a staging term). The compressed text uses 'N0:' as a heading but with no clear explanation, potentially altering scope."
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All key facts about PCP stress related to family violence, support frameworks, healthcare policies, work-related and personal strategies, the role of education, Elwood and colleagues' caution on policy development, research limitations, recommendations, and the need for ongoing support and awareness are preserved with no added or missing facts. The compression is a faithful, factual summary with no changes to numeric or named references."
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [
+        "{disfmarker} fillers and vocal sounds"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All factual content including speaker attributions, statements, and decisions are preserved; only disfluencies and fillers removed which are not facts."
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information including names, dates, structure of objects, sorting criteria, and discussion points are preserved identically despite minor wording and formatting changes."
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts from the original text, including specifications, requirements, features, and warnings, are preserved accurately in the compressed version with only formatting and minor wording changes."
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details including prices, locations, types of properties, Riviera Invest's services and client portfolio, and descriptions of the market and region are preserved accurately. Changes are stylistic and rephrasing only without loss or addition of facts."
+    }
+  ]
+}
