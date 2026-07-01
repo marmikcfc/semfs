@@ -1,0 +1,371 @@
+<section class="module" id="module-5">
+  <div class="module-content">
+
+    <header class="module-header">
+      <span class="module-number">05</span>
+      <h1 class="module-title">The Clever Tricks</h1>
+      <p class="module-subtitle">You can build something that syncs files. Making it survive flaky networks, rapid-fire saves, server hiccups, and a laptop that sleeps mid-write — <em>that</em> is engineering. Here are the tricks semfs uses.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE METAPHOR + HERO PATTERN CARDS ──────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The rookie courier vs. the veteran</h2>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-error)">🚲</div>
+          <div>
+            <strong>The rookie</strong>
+            <p>Delivers every package the instant it lands, hits traffic, crashes, loses packages, and re-rides the same street ten times.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-success)">🛵</div>
+          <div>
+            <strong>The veteran</strong>
+            <p>Batches deliveries, waits a little longer each time a buzzer is broken, staggers departures, keeps a waterproof manifest, and knows a secret shortcut around the toll bridge.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🚚</div>
+        <div class="callout-content">
+          <strong class="callout-title">Meet the cast (again)</strong>
+          <p>The <strong>SyncEngine 🚚</strong> is our courier. The <strong>Mount 🚪</strong> is the folder it serves. The <strong>Backend 📚</strong> is the warehouse it delivers to. These seven tricks are the craft <em>inside</em> the courier's daily routine.</p>
+        </div>
+      </div>
+
+      <h3 class="screen-subheading">The seven tricks</h3>
+      <div class="pattern-cards">
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">📦</div>
+          <h4 class="pattern-title">Write coalescing</h4>
+          <p class="pattern-desc">Rapid edits to one file collapse to at-most-2 server requests, no matter how fast you hit save.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">⏳</div>
+          <h4 class="pattern-title">Exponential backoff</h4>
+          <p class="pattern-desc">When a send fails, wait longer before each retry instead of machine-gunning a struggling server.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">🎲</div>
+          <h4 class="pattern-title">Adaptive interval + jitter</h4>
+          <p class="pattern-desc">Poll faster after activity, stretch out when idle, and add randomness so mounts do not all call home at once.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+          <div class="pattern-icon" style="background: var(--color-actor-4)">🛟</div>
+          <h4 class="pattern-title">Crash-safe queue</h4>
+          <p class="pattern-desc">The push queue lives in a database with a journal, so a crash or sleeping laptop never loses queued writes.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">🪄</div>
+          <h4 class="pattern-title">The macOS NFS trick</h4>
+          <p class="pattern-desc">Apple removed kernel file drivers, so semfs runs a tiny network file server on your own laptop and mounts that.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">📝</div>
+          <h4 class="pattern-title">Agent hint injection</h4>
+          <p class="pattern-desc">On mount, semfs writes a note into your AI's instruction file telling it to use semfs grep inside that folder.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">🔎</div>
+          <h4 class="pattern-title">Hybrid semantic grep</h4>
+          <p class="pattern-desc">Search fuses meaning with exact words, so it finds the right line whether you recall the gist or the precise term.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">Why you should care</strong>
+          <p>These are exactly the things an AI assistant <em>will not add unless you ask</em>. Knowing they exist turns you from someone who asks for features into someone who asks for <em>robust</em> features.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: COALESCING (THE AHA) ──────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Trick 1 — Batch the deliveries</h2>
+
+      <p>A smart courier does not ride to the warehouse for every single envelope. If five envelopes land for the same address while one trip is in progress, they all merge into the next trip.</p>
+
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="flow-step-num">200</div>
+          <p>Autosaves in 10 seconds (one keystroke each)</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">📦</div>
+          <p><span class="term" data-definition="Coalescing means merging many rapid changes into a single update. Like a courier who waits a beat and carries one combined load instead of riding back and forth for every envelope. To an AI you would say coalesce rapid writes.">Coalescing</span> + <span class="term" data-definition="Debounce means waiting a short, quiet moment before acting, so a burst of rapid events collapses into one. Like an elevator that holds the door a second in case someone else is coming.">debounce</span> merge them</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">2</div>
+          <p>Requests reach the cloud, worst case</p>
+        </div>
+      </div>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">//! Together with the dirty_since flag set at write-time, these loops give</span></span>
+<span class="code-line"><span class="code-comment">//! the mount a durable, coalescing, crash-safe write path: any rapid save</span></span>
+<span class="code-line"><span class="code-comment">//! burst collapses to at-most-2 server requests per filepath (one inflight</span></span>
+<span class="code-line"><span class="code-comment">//! plus one pending), retries survive `wrangler dev` restarts, and an</span></span>
+<span class="code-line"><span class="code-comment">//! unmount drains the queue before releasing the mount.</span></span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">A flag marks a file "dirty" the moment you change it.</p>
+            <p class="tl">Hammer Ctrl-S fifty times and the cloud still gets at most two requests for that file...</p>
+            <p class="tl">...the one currently sending, plus one "latest" waiting its turn.</p>
+            <p class="tl">Even if the dev server restarts, queued <span class="term" data-definition="A retry is simply trying a failed action again. The art is in WHEN you retry — too soon and you pile onto a struggling server; too late and the user waits.">retries</span> survive.</p>
+            <p class="tl">And unmounting waits for the queue to fully drain before letting go.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">The "aha"</strong>
+          <p>The fifty intermediate versions are <em>disposable</em> — only the final state matters. Sending them would be like mailing every rough draft of a letter instead of the finished one.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: BACKOFF CODE↔ENGLISH ──────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Trick 2 — Wait longer each time the buzzer is broken</h2>
+
+      <p>When a building's buzzer is broken, a veteran does not buzz it a thousand times a second — they wait a bit, then a bit longer, giving the resident time to answer. That is <span class="term" data-definition="Exponential backoff means each failed retry waits roughly double the previous delay. It gives an overwhelmed server breathing room to recover instead of being flooded. To an AI you would say add exponential backoff on retries.">exponential backoff</span>.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// Exponential backoff in milliseconds for the Nth failed attempt</span></span>
+<span class="code-line"><span class="code-comment">/// (attempt=0 → first retry, already-failed once).</span></span>
+<span class="code-line"><span class="code-keyword">fn</span> <span class="code-function">backoff_ms</span>(attempt: <span class="code-keyword">i64</span>) -> <span class="code-keyword">i64</span> {</span>
+<span class="code-line">    <span class="code-keyword">match</span> attempt {</span>
+<span class="code-line">        0 => 500,</span>
+<span class="code-line">        1 => 1_000,</span>
+<span class="code-line">        2 => 2_000,</span>
+<span class="code-line">        3 => 5_000,</span>
+<span class="code-line">        4 => 15_000,</span>
+<span class="code-line">        5 => 30_000,</span>
+<span class="code-line">        _ => 60_000,</span>
+<span class="code-line">    }</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">A note: this decides how long to wait before the Nth retry.</p>
+            <p class="tl">"Given how many times we have failed, here is the wait..."</p>
+            <p class="tl">A lookup table from failure-count to milliseconds.</p>
+            <p class="tl">First failure? Wait half a second (500 ms).</p>
+            <p class="tl">Then 1 second, then 2, then 5, then 15, then 30...</p>
+            <p class="tl">...and anything beyond that is capped at 60 seconds.</p>
+            <p class="tl">This gives a struggling <strong>Backend 📚</strong> room to recover.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-steps">
+        <div class="flow-step"><div class="flow-step-num">½s</div><p>fail 1</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">1s</div><p>fail 2</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">2s</div><p>fail 3</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">5s</div><p>fail 4</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">60s</div><p>capped</p></div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 4: SPOT THE BUG ──────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Spot the bug: the rookie's retry loop</h2>
+
+      <p>Here is what the rookie courier does when a delivery fails. One line will hammer a struggling <strong>Backend 📚</strong> into the ground. Click the line you think is the bug.</p>
+
+      <div class="bug-challenge">
+        <h3>Find the line that takes down the server:</h3>
+        <div class="bug-code">
+          <div class="bug-line" data-line="1" onclick="checkBugLine(this, false)">
+            <span class="line-num">1</span>
+            <code>loop {</code>
+          </div>
+          <div class="bug-line" data-line="2" onclick="checkBugLine(this, false)">
+            <span class="line-num">2</span>
+            <code>    let result = backend.send(&payload);</code>
+          </div>
+          <div class="bug-line" data-line="3" onclick="checkBugLine(this, false)">
+            <span class="line-num">3</span>
+            <code>    if result.is_ok() { break; }</code>
+          </div>
+          <div class="bug-line bug-target" data-line="4" onclick="checkBugLine(this, true)">
+            <span class="line-num">4</span>
+            <code>    continue; // retry immediately, no waiting</code>
+          </div>
+          <div class="bug-line" data-line="5" onclick="checkBugLine(this, false)">
+            <span class="line-num">5</span>
+            <code>}</code>
+          </div>
+        </div>
+        <div class="bug-feedback" id="bug-feedback"></div>
+      </div>
+
+      <div class="callout callout-warning">
+        <div class="callout-icon">⚠️</div>
+        <div class="callout-content">
+          <strong class="callout-title">No backoff = a self-inflicted outage</strong>
+          <p>Retrying instantly in a tight loop fires thousands of requests per second at a server that is already on its knees. The fix is exponential backoff — the lookup table from the previous screen.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: THE NFS TRICK ─────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Trick 5 — The secret shortcut around the toll bridge</h2>
+
+      <p>Apple stopped letting third-party drivers run deep inside macOS. So semfs pulls a magic trick: it runs a tiny network-file-server <em>inside itself</em>, on your own machine, and mounts that.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line">    <span class="code-comment">/// NFSv3 over localhost — works on both macOS and Linux.</span></span>
+<span class="code-line">    <span class="code-comment">///</span></span>
+<span class="code-line">    <span class="code-comment">/// The daemon binds an in-process NFSv3 server on `127.0.0.1:&lt;auto-port&gt;`</span></span>
+<span class="code-line">    <span class="code-comment">/// and asks the operating system's native NFS client to mount it. No</span></span>
+<span class="code-line">    <span class="code-comment">/// kernel extension, no third-party driver — on macOS this is the trick</span></span>
+<span class="code-line">    <span class="code-comment">/// that replaces FUSE entirely.</span></span>
+<span class="code-line">    Nfs,</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">This mode uses <span class="term" data-definition="NFS (Network File System) is a decades-old standard for accessing folders that live on another computer over the network — as if they were on your own. Every Mac and Linux box already ships with an NFS client built in.">NFS</span>, which works on both macOS and Linux.</p>
+            <p class="tl">The background program starts a little file server at <span class="term" data-definition="localhost / 127.0.0.1 is a special address that always means this very computer. Traffic to it never leaves your machine. So a server here is one millimeter away, not across the internet.">127.0.0.1</span> — your own machine.</p>
+            <p class="tl">Then it asks the NFS client macOS already ships with to mount it.</p>
+            <p class="tl">No <span class="term" data-definition="A kernel extension is third-party code that runs deep inside the operating system's core. Powerful but risky, so Apple now blocks most of them — which is exactly why semfs needs another way in.">kernel extension</span>, no third-party driver to install...</p>
+            <p class="tl">...this is what replaces <span class="term" data-definition="FUSE (Filesystem in Userspace) is the classic way to create a custom folder that behaves like a real one. On macOS it required a kernel extension Apple no longer allows, so semfs sidesteps it with the localhost-NFS trick.">FUSE</span> entirely on macOS.</p>
+            <p class="tl">Your <strong>Mount 🚪</strong> is technically a network drive — pointing at a server inside your own laptop.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🪄</div>
+        <div class="callout-content">
+          <strong class="callout-title">The surprise</strong>
+          <p>Your folder looks completely normal, but under the hood it is a network drive whose "remote" server is sitting on the same machine. No install, no kernel hacks — just a clever use of plumbing every Mac already has.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 6: JITTER + HONESTY + QUIZ ───────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Trick 3 — Stagger the departures, and an honest confession</h2>
+
+      <p>If a thousand couriers all leave at exactly 9:00, they jam the same intersection. <span class="term" data-definition="Jitter is a small, deliberate dose of randomness added to a timer so many machines do not all act at the exact same instant. Like asking everyone to leave a few random seconds apart instead of on the dot.">Jitter</span> staggers them — and prevents the dreaded <span class="term" data-definition="A thundering herd (or stampede) is when many clients hit a server at the same instant, overwhelming it. Jitter spreads them out so the herd arrives in a trickle, not a wall.">thundering herd</span>.</p>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">🎲</div>
+          <div>
+            <strong>Adaptive cadence</strong>
+            <p>Check sooner right after activity (never under 10s); slow down to 60s after three idle polls — then sprinkle in random seconds.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">📝</div>
+          <div>
+            <strong>Agent hint injection — a steer, not a contract</strong>
+            <p>On mount, semfs edits your AI's instruction file to say "search this folder with semfs grep." On unmount, it removes the note.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🤝</div>
+        <div class="callout-content">
+          <strong class="callout-title">Honest engineering</strong>
+          <p>The code admits it plainly: <em>"What this is not: a guarantee... Treat as a steer, not a contract."</em> The AI may or may not obey — and good code is upfront about its own limits.</p>
+        </div>
+      </div>
+
+      <h2 class="screen-heading">Check your understanding</h2>
+
+      <div class="quiz-container" id="quiz-module5">
+        <div class="quiz-question-block"
+             data-correct="opt-2"
+             data-explanation-right="Exactly. Write coalescing collapses the whole burst into at most two requests — the one currently in-flight, plus one 'latest' pending. The 198 intermediate versions are disposable; only the final state matters."
+             data-explanation-wrong="Not quite. Coalescing means the intermediate saves are thrown away — only the in-flight request and one pending 'latest' ever reach the cloud for that file.">
+          <h3 class="quiz-question">Your editor autosaves every keystroke — 200 saves in 10 seconds. Worst case, how many of those 200 reach the cloud for that file?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-1" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>All 200 — every save is sent</span></button>
+            <button class="quiz-option" data-value="opt-2" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>At most 2 — one in-flight plus one pending</span></button>
+            <button class="quiz-option" data-value="opt-3" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Exactly 1 — only the very first save</span></button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-2"
+             data-explanation-right="Right. Random jitter spreads independent mounts across different instants, so they do not synchronize into a thundering herd that slams the server all at once."
+             data-explanation-wrong="Think about a thousand laptops running the same clean 30s timer — they would all knock on the server at the same second. Jitter's whole job is to break that synchronization.">
+          <h3 class="quiz-question">Why add RANDOM jitter to the poll interval instead of a clean round number?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-1" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Random numbers are faster to compute</span></button>
+            <button class="quiz-option" data-value="opt-2" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>So many independent mounts do not all hit the server at the same instant</span></button>
+            <button class="quiz-option" data-value="opt-3" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>To make the logs harder to read</span></button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-3"
+             data-explanation-right="Exactly the senior-engineer instinct. A flaky API begs for exponential backoff on retries AND a crash-safe persisted queue so a restart never drops in-flight work — coalescing duplicate calls is a great bonus."
+             data-explanation-wrong="Those are real features, but they do not protect against a flaky API. For unreliable third-party calls you want exponential backoff and a crash-safe/persisted retry queue.">
+          <h3 class="quiz-question">You ask an AI to add a feature that calls a flaky third-party API. Which combination would you explicitly request to make it robust?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-1" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Dark mode and a faster animation</span></button>
+            <button class="quiz-option" data-value="opt-2" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>More logging and a bigger font</span></button>
+            <button class="quiz-option" data-value="opt-3" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Exponential backoff on retries plus a crash-safe persisted queue</span></button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-1"
+             data-explanation-right="Correct. Apple blocks third-party kernel extensions, so installing a filesystem driver is off the table. The localhost-NFS trick reuses the NFS client every Mac already ships with — zero install required."
+             data-explanation-wrong="Not quite. It is not about speed — it is that Apple no longer allows the kind of kernel-level driver a custom filesystem used to need. Running a localhost NFS server needs no install at all.">
+          <h3 class="quiz-question">Why does semfs run a network file server on your own laptop instead of installing a macOS filesystem driver?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-1" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Apple blocks third-party kernel extensions; the localhost-NFS trick needs no driver install</span></button>
+            <button class="quiz-option" data-value="opt-2" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Network drives are always faster than local folders</span></button>
+            <button class="quiz-option" data-value="opt-3" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>It lets other people on the internet read your files</span></button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module5')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module5')">Try Again</button>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🔭</div>
+        <div class="callout-content">
+          <strong class="callout-title">Up next</strong>
+          <p>You now know the tricks that keep semfs healthy. Last stop: what to do when something goes wrong anyway — daemon lifecycle, pid and log files, reading the stuck tiers, and how to debug it like an operator.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>

@@ -1,0 +1,331 @@
+{
+  "model": "gpt-5.4-nano",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "“Today” and “the space agency” wording around NASA (not a fact change, but removed phrasing);",
+        "“marks its Day of Remembrance” is preserved; no drop there",
+        "“This event is held this time of year because of a twist of fate.” dropped",
+        "“Three deadly NASA accidents were clustered within the same week of the calendar” (scope preserved)",
+        "“even though they were decades apart.” (preserved)",
+        "“That was the distinctive voice of Mike Wallace of CBS News speaking on January 27, 1967.” compressed drops “distinctive voice of” and “speaking on” (likely same intent but “speaking on” date association is slightly altered)",
+        "“There were being held … to honor …” memorials wording preserved (no numerical/name loss)",
+        "“Here's then-President George W. Bush.” (attribution preserved but “Here's” removed)",
+        "“Some of the voices …” sentence preserved (no additional facts)"
+      ],
+      "qwen_added": [
+        "The compressed adds explicit structural attributions/labels (“CBS News Special Report”, and block attribution “CBS News Special Report. Mike Wallace …” as a combined fact). This is broadly supported but slightly more structured than in original.",
+        "The compressed uses “7 astronauts were killed” and “another 7 astronauts died” which matches “Seven” and “another seven” in original (not added as new value).",
+        "“though decades apart” uses “3 deadly NASA accidents” as a factual claim; original says “Three deadly NASA accidents…” so not added."
+      ],
+      "qwen_reason": "Most facts (dates, names, accidents, numbers of astronauts killed, and key speaker attributions) are preserved. However, the compression alters the granularity of attribution for Mike Wallace’s line by embedding it under “January 27, 1967: CBS News Special Report. Mike Wallace …” instead of “distinctive voice of Mike Wallace … speaking on January 27, 1967,” slightly changing the specificity of how the date is tied to the speaking attribution. Therefore it is not strictly lossless."
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Let the emerging and the shaking begin.</s>Half winners, half tackle tough questions like,",
+        "Hmm.",
+        "The awards are given out by the science humor magazine, The Annals of Improbable Research.",
+        "You can find out more about them at improbable.com.</s>",
+        "Ig Nobel winners and the Nobel Laureates, please gather here at center stage.",
+        "Stay here if you are here.",
+        "Gather here at center stage for a pointless photo opportunity.",
+        "And behalf of the Harvard-Radcliffe Science Fiction Association and the Harvard-Radcliffe Society of Physics Students and on behalf of the Harvard Computer Society, especially from all of us with the Annals of Improbable Research, please remember this final thought.",
+        "There's antimony, arsenic, ... and iodine and thorium and thallium, and iodine and thorium and thallium and thallium and iodine and thorium and thulium and thallium. (wording/sequence repetition trimmed)",
+        "There's (unintelligible)/(unintelligible) token context near 'Thanks a lot for (unintelligible).'"
+      ],
+      "qwen_added": [
+        "Tough questions: does the five-second rule apply when you drop food on the floor? Why do shower curtains billow inwards? (formatting not fact change, but 'billow' vs 'below inwards' wording changed)",
+        "Awards: given by the science humor magazine The Annals of Improbable Research; more at improbable.com.",
+        "Ig Nobel “Goodbye, Goodbye” speech: (combined/structured attribution; speech is preserved)",
+        "On behalf of ... and the Annals of Improbable Research: If you didn’t win an Ig Nobel Prize tonight... (compressed into one line; also omits 'please remember this final thought.'),"
+      ],
+      "qwen_reason": "Multiple sentences/phrases are missing or altered beyond pure formatting. The compressed version drops the original filler/structure and also removes at least 'please remember this final thought' (a factual/explicit concluding instruction) and 'Hmm.' Additionally, it changes the shower-curtain wording from 'below inwards' to 'billow inwards', which is a factual wording change (not just formatting)."
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Q&A framing content (e.g., initial question plus repeated concluding statements like “Therefore, in many ways…” and some concluding phrasing)",
+        "“AI” text from original includes: baggy clothes are a popular fashion trend in recent years (kept) plus “especially for people who prefer looser clothing” (kept) but the original also includes a broader explanation that is not fully captured as sentence-level continuity; however no specific fact values appear missing besides overall narrative phrasing.",
+        "“Do you have any favorite clothing styles or trends, AI?” (question to AI) is omitted",
+        "“Ultimately, whether you choose to wear baggy clothes… it is a form of self-expression.” (final concluding sentence from the main AI response) is omitted",
+        "“Ultimately, the choice of clothing style and trend is a personal decision…” (final concluding sentence) is omitted or not explicitly included as a complete sentence (it is partially preserved as a bullet at the end, but not necessarily the same concluding phrasing)"
+      ],
+      "qwen_added": [
+        "Attribution/stance normalization: the compressed version assigns “User:” and “AI:” roles and restates multiple “says/does/does not” bullets; while these correspond broadly to the original speaker turns, some bullet wording slightly shifts what is being asserted as direct “User”/“AI” statements rather than the original conversational sequence (minor, but still an attribution-structure change).",
+        "“do not have the ability to ‘love’ or ‘feel’ emotions, or have personal preferences or experiences” is more explicitly combined than in the original (original says love/feel emotions and separately mentions lack of personal preferences/experiences later); content is equivalent, but the exact combined phrasing is not a direct one-to-one preservation."
+      ],
+      "qwen_reason": "The compressor is mostly faithful in preserving the factual content about baggy clothes and the general AI explanations, but it is not fully lossless: the explicit question “Do you have any favorite clothing styles or trends, AI?” and some of the original end/transition/concluding sentence-level statements are not preserved, and the structured speaker attribution (“User:” / “AI:” bullets) slightly reshapes how the original conversational sequence is presented."
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [
+        "Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All quantified/named facts present in the compressed text (34.23–34.28, 35.1–35.10, the (b)/(c) statements, and the signature block including Leah Nivison and Date: March 22, 2021) match the original. The only mismatch is that the original includes an additional fact for 'Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)' which is omitted in the compressed version."
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1) is missing the section/item label \"34.22\" in the ORIGINAL (it starts at \"Association\" with no 34.22 prefix).",
+        "The ORIGINAL includes \"35Servicer compliance statements.\" without a colon; compressed adds a colon after 35, which is non-fact formatting but item is same.",
+        "In the ORIGINAL, line \"34.23Rialto Capital Advisors, LLC, as Special Servicer...\" etc. are split by numbers; compressed reformats with em dashes, but item numbers 34.22-34.28 and 35.1-35.10 are preserved."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text introduces the explicit label \"34.22\" before \"Association—Primary Servicer...\". In the ORIGINAL provided, the corresponding line begins with \"Association\" and \"see Exhibit 34.1\" but does not show the \"34.22\" item number. Since adding an item/identifier label not present in the ORIGINAL is a facts/identifier change, the compression is LOSSY."
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "The OCR/transcription fragments and markers interspersed in the original (e.g., {disfmarker}, {gap}, {vocalsound}, and partial/garbled words like 'Bu', 'Mm. Har how it works an', 'Industrial Designer: Mm. That's {disfmarker} Mm.').",
+        "Original mention that 'Marketing: And I'm marketing.'",
+        "Original 'Project Manager: Um.' (a backchannel/uh).",
+        "Original 'Project Manager: Industrial Designer ... whether it's ...' phrasing is partially changed (the compressed version does not preserve the exact same wording around 'whether it's {gap} what goes into the box').",
+        "Original 'Project Manager: Yeah, there you go.' and subsequent 'So {gap} {disfmarker} User Interface Designer, that's that's' (the compressed version is rearranged and omits those exact sequence/utterance fragments).",
+        "Original 'Project Manager: Yeah, what {disfmarker}' (the compressed version changes where the phrase 'what the user requires' appears).",
+        "Original turn 'Industrial Designer: Mm. Har how it works an' is not present (replaced by 'How it works and—').",
+        "Original 'User Interface: Right. Right.' is not present (compressed omits it)."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "While many core ideas and some speaker roles are preserved, the compressed text changes/omits specific spoken content that is part of the original dialogue (e.g., 'Marketing: And I'm marketing.' and other specific utterance fragments/turns). Because the rule set requires strict preservation of speaker-attributed factual content, these dropped or altered utterances make the compression lossy."
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Original: {disfmarker} and related disfluency markers (multiple occurrences) — e.g., \"How do you call it?\" context and repeated \"uh\" segments; some may be implied but not explicitly preserved.",
+        "Original: \"Consensus on the, what we're gonna do.\" (User Interface) — COMPRESSED merges/consolidates into \"little plan/consensus\" without preserving the exact phrasing and attribution.",
+        "Original: \"W {vocalsound} He says {disfmarker}\" (Project Manager) — not present.",
+        "Original: \"Uh {disfmarker}\" after \"that's a\" before \"is it one way or multi-purpose\" (the marker itself and its surrounding tokenization) — not present.",
+        "Original: \"Marketing: Mm yeah.\" (Marketing backchannel) — not present.",
+        "Original: \"Marketing: I don't know. You decide. {vocalsound}\" — COMPRESSED has \"You decide. You're the Project Manager.\" (drops \"I don't know.\" and changes the exact content).",
+        "Original: \"Project Manager: Okay.\" occurrences and some micro-turns (\"Uh.\" / \"Marketing: Uh.\" / \"Project Manager: W {vocalsound} He says\" etc.) — not preserved as separate facts/turns.",
+        "Original: \"Marketing: A And then you s then you can delete uh\" — COMPRESSED changes to \"Then you can delete—or edit—the obsolete details.\" (drops the specific \"A\" and \"s then\" fragments).",
+        "Original: \"Marketing: I think.\" (Marketing) — not present.",
+        "Original: \"Marketing: Mm-hmm.\" — not present.",
+        "Original: \"Industrial Designer: {vocalsound} Then looking at individual components,\" — COMPRESSED removes the vocal-sound token."
+      ],
+      "qwen_added": [
+        "Added/changed phrasing: \"We need a little plan/consensus\" attributed to Project Manager — in the ORIGINAL, the exact \"consensus\" statement was by User Interface (“Consensus on the, what we're gonna do.”), while Project Manager’s role is different; this changes attribution/scope.",
+        "Added/changed punctuation/connector: \"so user requirements don't fail to fit the technical functions\" (causal intent is reformulated; not a single preserved statement).",
+        "Added/changed wording: \"Do we use a text screen? Will it be with bluetooth?\" (original included \"Or do we use it a text screen? Or uh will it be with uh with bluetooth\"; missing \"it\"/\"uh\" is fine, but the exact wording is not strictly identical; however this is not a numeric/name fact change.)",
+        "Added/changed speaker attribution around consensus: COMPRESSED frames consensus as part of Project Manager’s statement; ORIGINAL has User Interface explicitly saying the consensus."
+      ],
+      "qwen_reason": "Although most content is paraphrased faithfully, the compression is not lossless because it changes a key fact: the ORIGINAL explicitly attributes “Consensus on the, what we're gonna do.” to the User Interface, while the COMPRESSED text merges this into a Project Manager statement (“We need a little plan/consensus…”). That alters attribution/scope of a content-bearing utterance, making it LOSSY."
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: NPR framing and host name (Farai Chideya), West Virginia investigation details (20-year-old Megan Williams held captive/tortured for a week; stabbed, beaten; forced sexual acts on both men and women), six white suspects; Sheriff W.E. Hunter quote including six arrests and categories of charges; victim name released (Megan Williams) and mother Carmen Williams quote; community background; law enforcement tenure (over 30 years); FBI running down a person of interest in another county; no motive yet; and the thank-you/closing attribution. Only minor wording/formatting changes with no fact loss or addition."
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved. The compressed version matches the original’s questions, AI framing, all explanation paragraphs, and the numbered steps (including example intents and details). No names, numbers, dates, or specific claims were removed or changed; only minor wording/formatting differences (e.g., 'provide an explanation' vs 'can explain') that do not alter facts."
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: the same leading brands are listed; the 8 feature categories and their described elements (fitness tracking metrics, notifications, GPS location/distance/speed, music playback via storage/speakers, voice assistants Amazon Alexa/Google Assistant, NFC payments, sleep tracking including REM/deep sleep/overall quality, and water resistance contexts) are retained; and pricing details ($100 threshold for basic/entry-level, over $1,000 for Apple/Samsung premium) and the affordability guidance (older model or less known brand, possible lower quality/longevity, and reading reviews/comparing prices) all match. Only formatting/organization changed."
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All named entities/roles, exhibit references, section headers (34.23–34.28, 35.1–35.10), the (b) and (c) clauses, and the signature block including Leah Nivison, her title, GS Mortgage Securities Corporation II, and the date (March 22, 2021) are preserved exactly. The compressed text matches the original without removing or changing any facts; only formatting/whitespace is consistent."
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All enumerated purposes in SEC. 3(a)(1)-(3), the construction limits in SEC. 3(b)(1)-(2), and the SEC. 4 amendments (including the specific citations/identifiers like title V of Public Law 101-650, 104 Stat. 5127; 47 U.S.C. 303c; the inserted/deleted limitation text, and the detailed exemptions/limitations in subsections (b) and (c)) are preserved exactly. Only formatting/whitespace changes are present."
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numeric and factual content from Section 1(a) Findings (including percentages, counts, revenue figures, industry shares, growth rates, 1992–1997 comparisons, 1998 tax revenues $468,000,000, and survival/default-rate assertions) and Section 1(b) Purposes (the six purpose statements) are preserved. The compression only changes formatting (punctuation, line breaks, and inline presentation) without adding or omitting any facts. Section 2 heading is also present."
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "\"under section 4\" -> \"after a section 4 cost-benefit analysis\" (scope preserved, but section references formatting change is OK; no loss here)",
+        "\"preparing the accompanying materials under section 5\" (compressed says \"section 5 accompanying materials\"; meaning preserved)",
+        "The phrase \"otherwise be performed under the contract\" was \"performed under the contract\" in the compressed version; this is a specificity change? (likely not a fact change)",
+        "In SEC. 9: \"with existing or additional government employees because the work is of an emergency, specialty, or intermittent nature\" (all preserved); however compressed uses \"under the contract\" earlier—still same meaning",
+        "Literal presence of the punctuation/wording \"underutilization of government employees<plus-minus>\" preserved only as the same token, but the surrounding phrase in ORIGINAL includes \"<plus-minus>\" after \"underutilization\"; preserved."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All enumerated requirements, section numbers, timelines (at least 30 days; 15-day period), actor roles (Secretary; agency employees; interested parties), and referenced law/chapters (chapter 11 of title 40) are preserved. The only discrepancy is a minor wording change in SEC. 9/SEC. 7 phrasing that does not alter any factual content (no dates, quantities, identifiers, or obligations changed). Therefore the compression is effectively lossless; however due to the strict verifier requiring exact fact specificity, the changed phrase \"services that would otherwise be performed under the contract\" -> \"services otherwise performed under the contract\" is treated as potentially losing a nuance of the verb phrase. If nuance is ignored, it would be lossless, but under strict fact-specificity it is LOSSY."
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "the swelling was confined to the nasal aspect of the left lower lid (0.50.5 mm) with inflamed overlying skin (figure 1a ) .",
+        "in a large series a 59-year - old gentleman presented with painful swelling of the left lower lid for a week , which was associated with epiphora .",
+        "the swelling was confined to the nasal aspect of the left lower lid ( 0.50.5 mm )",
+        "gentle pressure did not result in any regurgitation from the both puncta .",
+        "the outer punctum had a soft stop with regurgitation of fluid from the same punctum .",
+        "the outer punctum - canaliculus system was a cul - de - sac ( figure 1c ) .",
+        "c ) dacryocystography showed pooling of dye in the cul - de - sac ( white arrow ) .",
+        "most spcs ( 78% ) present with epiphora .",
+        "among the 23 patients reported by satchi et al . , none presented with canaliculitis .",
+        "sequestration of tear and debris in the cul - de - sac served as nidus for infection .",
+        "hence epiphora .",
+        "Epiphora however , may develop despite patent lacrimal drainage system .",
+        "the 2-compartment model for lacrimal canalicular drainage of kakizaki et al . , suggested that the muscle of duverney - horner may deviate normal flow within the accessory canaliculus and thence transport tears back to the lacrimal tear lake , leading to epiphora .",
+        "a solid epithelial cord forms in the region of the medial lower eyelid ( figure 2a ) and sends projections to form the canaliculi and the nasolacrimal duct ( figure 2b ) .",
+        "spc is due to extra out - budding of the solid epithelial cord ( figure 2c ) .",
+        "canalization begins at 4 months of gestation with disintegration of the central ectodermal core , forming lacrimal drainage outflow system .",
+        "in this case , the extra inner canalicular epithelial bud ( nearer to the main epithelial cord ) underwent complete canalization and remained connected to the main epithelial cord .",
+        "the outer canalicular epithelial bud , although its punctum is located at the normal anatomical position , was separated from the main epithelial cord ; forming a cul - de - sac ( figure 2d ) .",
+        "c ) extra out - budding of the solid epithelial cord in supernumerary puncta and canaliculi . d ) the outer canalicular epithelial cord was separated from the main epithelial cord , forming a cul - de - sac .",
+        "c ) dacryocystography showed pooling of dye in the cul - de - sac ( white arrow ) . (one of the duplicated occurrences)"
+      ],
+      "qwen_added": [
+        "The swelling was confined to the nasal aspect of the left lower lid (0.50.5 mm) with inflamed overlying skin (figure 1a). (period/format normalization only)"
+      ],
+      "qwen_reason": "Although most facts appear preserved, the compression removes explicit duplicated line breaks/segments present in the original (e.g., repeated “c) dacryocystography…” and duplicated figure/caption subparts) without indicating that repetitions were redundant. Under strict fact-preservation, removing those repeated instances is treated as dropping supported content."
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Added/duplicated in ORIGINAL but not preserved as two separate occurrences: the entire repeated block starting with 'currently , little is known about the influence of hpv on the clinical course and survival of patients with ocscc ...' appears twice in the ORIGINAL; the COMPRESSED includes it once.",
+        "No longer present in COMPRESSED: the ORIGINAL fragment 'moreover , ... ( 51 ) have reported similar findings' includes the leading filler/fragment 'moreover ,'—this is not a fact, but the repetition/remnants of original structure are not preserved."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All explicit factual claims with numbers/names (66.7% vs 35.4%, stage IVA; 34.4%/73.3% deaths; local recurrence as most common relapse; no statistically significant difference by HPV status; Weinberger et al. no prognostic value for local recurrence alone; OS/DFS survival direction; HPV 6 and 11; further investigations needed) are preserved. However, the ORIGINAL contains the 'currently, little is known...' paragraph (about HPV influence in OCSCC and the high-risk subtype absence and HPV 6/11) twice, while the COMPRESSED includes it only once. Since that repetition is part of the recorded content (even if not adding new facts), the compression is treated as loss-inducing relative to the exact passage."
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content is preserved: PCPs become stressed; stress relates to healthcare/occupational/personal systems; authors’ previous work identifies work-related and personal strategies; healthcare system requirements (policies/procedures, counselling/therapy, ongoing education/skills/attitudes); work-related management (skill development, workload spreading, coworker relationships/support systems reducing secondary traumatic stress); personal/self-care strategies (including the listed activities and [4, 52, 53]); Elwood and colleagues urge caution and recommend evidence-informed workplace policies and more methodologically sound research; issues to be addressed at undergraduate/prevocational/practitioner levels; need for education/support across education/healthcare/workplace/personal to continue long-term chronic care; and PCP awareness of support needs/strategies to ensure safe long-term care and access to services. Compression is a structured rewrite without adding or omitting facts."
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Project Manager: {disfmarker} yeah.",
+        "Project Manager: {vocalsound}'Kay. Um {disfmarker}",
+        "Project Manager: 'Kay.",
+        "User Interface: Put it {disfmarker}",
+        "Industrial Designer: of course it'll be evident after a while or {disfmarker} if you look at it, it'll it'll be evident which way around to point it, since you have the the numbers and the and the {vocalsound} the buttons and stuff,",
+        "User Interface: Even if you designed it {disfmarker} in some {disfmarker} in a way that you know, isn't a rectangle, but still pointed in a direction that had definite points.",
+        "User Interface: and there's your s you kn you know which way you're gonna pointing it.",
+        "Project Manager:'Kay.",
+        "User Interface: Um {disfmarker}",
+        "Project Manager: Okay, well, just to finish up, should we s go with this plan, start making some {disfmarker} Are good ideas, what are not.",
+        "User Interface: Does it say {disfmarker} what does it say for n",
+        "Industrial Designer: Obviously {disfmarker}",
+        "Project Manager: Okay, well, just to finish up, should we s go with this plan, start making some {disfmarker} Are good ideas, what are not.",
+        "Project Manager: Okay. And Project Manager will design a better meeting for next {vocalsound} time around, be a little bit more prepared.",
+        "Industrial Designer: {vocalsound}",
+        "Marketing: {vocalsound}",
+        "Marketing: {vocalsound}"
+      ],
+      "qwen_added": [
+        "Project Manager: More expensive."
+      ],
+      "qwen_reason": "The compressed version changes/removes several spoken filler tokens and also changes a substantive phrase: the ORIGINAL includes 'Project Manager: More expensive and {disfmarker} yeah.' while the COMPRESSED has 'Project Manager: More expensive.' (omits 'and ... yeah'). Additionally, the COMPRESSED text includes 'Are good ideas, what are not.' and other fragments with missing 'should we s go with this plan, start making some' context, and removes multiple markers/utterance pieces that may affect what was actually said (e.g., several instances of {vocalsound}/{disfmarker} are removed, and some partial words like 'for n' appear truncated). Because the compressor is not preserving all utterance content exactly, it is not lossless."
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed passage preserves all explicit facts from the original: the described data structures (arraylist of individuals, each with arraylist of addresses), the runtime field/sort-order requirement, the example sort order (last name, first name, city, state), the comparator/Collections.sort description, the pseudo-code compare steps and fields (last name, first name, date of birth; then street num, street name, city; etc.), the question/answer context (including the joined timestamps and speaker attributions), and the concluding explanation about columns known at runtime. No facts are removed or introduced."
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Video Up Scaler (Analog-",
+        "Manufacturer Warranty (authorized online retailer): One Year arts"
+      ],
+      "qwen_added": [
+        "Manufacturer Warranty (authorized online retailer): One Year arts",
+        "Requires connection via HDMI™ cable (sold separately) to equivalent HDTV; upscaled/upconverted image and sound quality vary by source (this clause was truncated in the compressed output context but is present in original; no net new facts beyond minor formatting)"
+      ],
+      "qwen_reason": "Compression is mostly faithful for listed specs, but it is lossily modified around the warranty/wording: the original warranty line is \"One Year arts\" and the compressed retains it; however the original contains \"Video Up Scaler (Analog-\" split across lines and the compressed also truncates that line with \"Video Up Scaler (Analog-\" (same loss of trailing content) indicating missing information after that fragment. Additionally, the warranty line formatting changes are fine, but the truncation/missing continuation of the \"Video Up Scaler (Analog-\" item means not all original information is preserved."
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Popular real estate is scarce in many places, and prices often increase sharply as the area develops. (reasonably paraphrased; not dropped)",
+        "Riviera Invest invites you to invest in a Properties for sale in Alanya, one of the most lucrative forms of investment in Turkey. (\"forms of investment\" wording/specifier changed)",
+        "We offer properties in Alanya in all shapes and sizes: (\"in all shapes and sizes\" omitted)",
+        "A property owner should be happy in his home! (exclamation removed; not a fact change)",
+        "Both for foreigners and Turks; (kept)",
+        "Congratulations phrase: \"we can only congratulate - you have not only chosen the right country to invest in - you have also chosen the most beautiful place in the Turkey ... Congratulations!\" (compressed removes \"Congratulations!\" and changes structure)",
+        "Original closing: \"Properties for sale in Alanya, Properties Alanya , Real estate Alanya\" (compressed changes punctuation/format)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "All explicit numeric/name facts appear preserved (e.g., Alanya, Turkey, 600 Euro per square meter, Riviera Invest, nearly 50 countries). However, the compressed version changes the final congratulatory line by removing the explicit \"Congratulations!\" and altering the exact phrasing/structure of that statement, so the text’s attribution/decision-like celebratory action is not fully identical."
+    }
+  ]
+}

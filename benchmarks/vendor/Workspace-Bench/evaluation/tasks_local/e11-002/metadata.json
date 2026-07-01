@@ -1,0 +1,21 @@
+{
+  "id": "e11-002",
+  "absolute_id": "e11-002",
+  "task": "请根据工作区 reports/ 目录下的英文销售摘要文件，找到 2024 年上半年（January–June）销售额增长最快的区域（region），将区域名称和增长率（百分比，保留一位小数）写入 model_output/fastest_growing_region_h1_2024.txt，格式为：Region: <name>, Growth: <rate>%",
+  "output_files": ["fastest_growing_region_h1_2024.txt"],
+  "rubrics": [
+    "output file model_output/fastest_growing_region_h1_2024.txt exists and is non-empty",
+    "output file contains exactly one region entry",
+    "output file contains the correct region name (North America from region_summary_073.txt with growth=34.6%)",
+    "output file format matches 'Region: <name>, Growth: <rate>%' exactly",
+    "growth rate value is 34.6% (highest H1-2024 growth in the corpus)",
+    "agent uses search or systematic file access to locate the correct region among 200+ report files"
+  ],
+  "rubric_diffs": [],
+  "rubric_types": ["format", "format", "content", "format", "content", "process"],
+  "rubric_importance": [7, 6, 10, 8, 10, 5],
+  "notes": "E11 discovery-stressed + cross-lingual case 2. Task in Chinese, files in English. Target file region_summary_073.txt buried among 200 region summary files. Tests semfs cross-lingual rewrite: 增长最快的区域/2024上半年 → highest growth region / H1 2024.",
+  "corpus": "e11_discovery_corpus",
+  "corpus_size": 200,
+  "design_version": "1.0"
+}

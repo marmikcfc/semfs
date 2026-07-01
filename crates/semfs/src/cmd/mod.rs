@@ -24,6 +24,7 @@ pub mod logs;
 pub mod marker;
 pub mod mount;
 pub mod resolve;
+pub mod seed_verify;
 pub mod startup;
 pub mod status;
 pub mod sync;
@@ -70,6 +71,9 @@ pub enum Command {
     /// Force a sync cycle now
     Sync(sync::Args),
 
+    /// Verify a built seed `.db` is content-complete (gate; exits non-zero if not)
+    SeedVerify(seed_verify::Args),
+
     /// Internal: long-running daemon entry point (do not invoke directly)
     #[command(hide = true)]
     DaemonInner(daemon_inner::Args),
@@ -90,6 +94,7 @@ pub async fn dispatch(cmd: Command) -> Result<()> {
         Command::List => list::run().await,
         Command::Logs(args) => logs::run(args).await,
         Command::Sync(args) => sync::run(args).await,
+        Command::SeedVerify(args) => seed_verify::run(args).await,
         Command::DaemonInner(args) => daemon_inner::run(args).await,
     }
 }

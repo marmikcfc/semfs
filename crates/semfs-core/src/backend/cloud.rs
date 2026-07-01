@@ -14,6 +14,7 @@ fn to_hit(r: crate::api::dto::SearchResult) -> SearchHit {
         memory: r.memory,
         chunk: r.chunk,
         similarity: r.similarity,
+        seen_at_turn: None,
     }
 }
 
@@ -31,8 +32,7 @@ impl CloudIndex {
 
 #[async_trait]
 impl SemanticIndex for CloudIndex {
-    async fn search(&self, query: &str, filepath: Option<&str>)
-        -> anyhow::Result<Vec<SearchHit>> {
+    async fn search(&self, query: &str, filepath: Option<&str>) -> anyhow::Result<Vec<SearchHit>> {
         let resp = self.api.search(query, filepath).await?;
         Ok(resp.results.into_iter().map(to_hit).collect())
     }

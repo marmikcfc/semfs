@@ -1,0 +1,4 @@
+{
+"SEMFS_DEDUP_WINDOW": "5",
+"SEMFS_REWRITE": "0"
+}

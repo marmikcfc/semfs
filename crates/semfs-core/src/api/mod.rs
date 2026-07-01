@@ -343,10 +343,7 @@ impl ApiClient {
     /// when the client knows its user id (`with_user_id`).
     fn mount_metadata(&self) -> crate::api::dto::MetadataMap {
         let mut m = crate::api::dto::MetadataMap::new();
-        m.insert(
-            "source".into(),
-            serde_json::Value::String("semfs".into()),
-        );
+        m.insert("source".into(), serde_json::Value::String("semfs".into()));
         if let Some(uid) = &self.user_id {
             m.insert(
                 "lastEditedBy".into(),
@@ -425,20 +422,6 @@ impl ApiClient {
             .await
     }
 
-    /// Get the memory profile for the container tag.
-    pub async fn get_profile(&self) -> Result<ProfileResp, ApiError> {
-        let body = ProfileReq {
-            container_tag: self.container_tag.clone(),
-        };
-
-        self.post_read("/v4/profile")
-            .json(&body)
-            .send_with_retry()
-            .await?
-            .parse_json()
-            .await
-    }
-
     // -- private helpers --
 
     fn get(&self, path: &str) -> RetryableRequest {
@@ -501,11 +484,22 @@ impl RetryableRequest {
         let json_body = self.json_body;
 
         let mut backoff = INITIAL_BACKOFF_MS;
+        // Hold the original builder so a NON-cloneable body (`try_clone()` == None,
+        // e.g. a streaming body — hit on the cloud-search fallback path) can still
+        // be sent ONCE rather than panicking. Cloneable bodies clone per attempt and
+        // retry as before; a non-cloneable body is consumed on attempt 0 and the
+        // retry guards below (`&& owned.is_some()`) stop further attempts.
+        // RCA: rcas/2026-06-15-grep-timeout-cloud-fallback-panic.md
+        let mut owned = Some(builder);
 
         for attempt in 0..MAX_RETRIES {
-            let mut req = builder
-                .try_clone()
-                .expect("request must be cloneable for retry");
+            let mut req = match owned.as_ref().and_then(reqwest::RequestBuilder::try_clone) {
+                Some(cloned) => cloned,
+                None => match owned.take() {
+                    Some(orig) => orig, // non-cloneable: single attempt, no retry
+                    None => break,      // already consumed → cannot retry
+                },
+            };
 
             if let Some(ref body) = json_body {
                 req = req.json(body);
@@ -535,7 +529,7 @@ impl RetryableRequest {
 
                     // Retry 429 and 5xx
                     if status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-                        if attempt < MAX_RETRIES - 1 {
+                        if attempt < MAX_RETRIES - 1 && owned.is_some() {
                             tracing::warn!(
                                 status = status.as_u16(),
                                 attempt = attempt + 1,
@@ -581,7 +575,12 @@ impl RetryableRequest {
             }
         }
 
-        unreachable!("loop should return before exhausting retries")
+        // Reachable only if a non-cloneable body's single attempt fell through
+        // (the retry guards stop further attempts). Return a typed error, not panic.
+        Err(ApiError::Server {
+            status: 0,
+            body: "request body not cloneable; single attempt did not complete".into(),
+        })
     }
 }
 

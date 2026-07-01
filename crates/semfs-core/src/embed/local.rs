@@ -5,10 +5,14 @@
 //! pooling/normalization internally, so there is no hand-rolled pooling here.
 //! (Bring-your-own-ONNX is intentionally deferred — see the project goal.)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use anyhow::Context;
+use fastembed::{
+    EmbeddingModel, InitOptions, InitOptionsUserDefined, OutputKey, QuantizationMode,
+    TextEmbedding, TokenizerFiles, UserDefinedEmbeddingModel,
+};
 
 use super::Embedder;
 
@@ -19,6 +23,21 @@ use super::Embedder;
 /// also invalidate. Enforced by `fastembed_rev_tracks_dependency` against the
 /// lockfile. (Full artifact-hash fingerprinting is deferred with the BYO-ONNX work.)
 const FASTEMBED_REV: &str = "fe5.13.4";
+
+/// Cap the embed batch passed to ONNX. fastembed defaults to 256; a 256-wide
+/// batch through the 768-d code model retains a multi-GB ONNX CPU arena (ort
+/// grows the arena to the largest tensor it ever sees and never shrinks),
+/// OOM-killing a full-container warm. Bounding the batch caps that high-water
+/// mark. See `tickets/solve-oom-issue/` (OOM #2).
+const EMBED_BATCH_SIZE: usize = 16;
+/// Cap the per-sequence token length. Chunks are word-windows (`max_words=200`),
+/// but `split_whitespace` on CJK text (no spaces) can make one chunk thousands
+/// of tokens — and attention memory is QUADRATIC in sequence length, so a long
+/// sequence dominates the arena regardless of batch. Bounding it (respecting the
+/// model's own max via fastembed's `.min(model_max)`) keeps the forward pass
+/// bounded. 2048 covers ~200-word English/code chunks fully; only pathological
+/// long CJK chunks truncate — an acceptable, bounded recall trade vs. OOM.
+const EMBED_MAX_LENGTH: usize = 1024;
 
 /// A local ONNX embedder backed by a fastembed registry model.
 pub struct LocalEmbedder {
@@ -35,15 +54,24 @@ impl LocalEmbedder {
     /// Build from a fastembed registry model. Downloads + caches the ONNX on
     /// first use (`cache_dir` overrides fastembed's default cache location).
     /// The vector width is read from the registry, never guessed.
-    pub fn from_registry(model: EmbeddingModel, cache_dir: Option<PathBuf>) -> anyhow::Result<Self> {
+    pub fn from_registry(
+        model: EmbeddingModel,
+        cache_dir: Option<PathBuf>,
+    ) -> anyhow::Result<Self> {
         let info = TextEmbedding::list_supported_models()
             .into_iter()
             .find(|m| m.model == model)
-            .ok_or_else(|| anyhow::anyhow!("embedding model {model:?} not in fastembed registry"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("embedding model {model:?} not in fastembed registry")
+            })?;
         let dims = info.dim;
         let identity = format!("fastembed:{FASTEMBED_REV}:{}:{}", info.model_code, dims);
 
-        let mut opts = InitOptions::new(model).with_show_download_progress(false);
+        let mut opts = InitOptions::new(model)
+            .with_show_download_progress(false)
+            // Bound sequence length so a long (CJK) chunk can't blow up the
+            // quadratic attention arena. fastembed clamps to the model's own max.
+            .with_max_length(EMBED_MAX_LENGTH);
         if let Some(dir) = cache_dir {
             opts = opts.with_cache_dir(dir);
         }
@@ -52,6 +80,56 @@ impl LocalEmbedder {
             model: Mutex::new(model),
             dims,
             identity,
+        })
+    }
+
+    /// Bring-your-own-ONNX embedder for a model the fastembed registry doesn't
+    /// expose — notably a **Q4-quantized** EmbeddingGemma (registry `gemma` is
+    /// fp32 only; fastembed has no Q4 mode). Loads `<base>.onnx` + its external
+    /// weights `<base>.onnx_data` + the gemma tokenizer files from `dir`.
+    ///
+    /// `dims` is the model's vector width (768 for EmbeddingGemma-300M).
+    /// `identity_tag` is folded into a `byo:<tag>:<dims>` identity that is
+    /// DISTINCT from the registry `fastembed:…` identity, so a reader never
+    /// mistakes a q4 seed for an fp32 one (their vectors differ → not searchable
+    /// against each other). EmbeddingGemma emits a pooled `sentence_embedding`
+    /// output, so we select it by name and apply NO extra pooling.
+    pub fn from_onnx_dir(
+        dir: &Path,
+        dims: usize,
+        model_base: &str,
+        identity_tag: &str,
+    ) -> anyhow::Result<Self> {
+        let rd = |name: &str| -> anyhow::Result<Vec<u8>> {
+            std::fs::read(dir.join(name))
+                .with_context(|| format!("read {}", dir.join(name).display()))
+        };
+        let onnx = rd(&format!("{model_base}.onnx"))?;
+        // The external-data filename MUST match the one referenced inside the
+        // ONNX (`<base>.onnx_data` for the onnx-community gemma exports).
+        let data_name = format!("{model_base}.onnx_data");
+        let data = rd(&data_name)?;
+        let tokenizer_files = TokenizerFiles {
+            tokenizer_file: rd("tokenizer.json")?,
+            config_file: rd("config.json")?,
+            special_tokens_map_file: rd("special_tokens_map.json")?,
+            tokenizer_config_file: rd("tokenizer_config.json")?,
+        };
+        let mut model = UserDefinedEmbeddingModel::new(onnx, tokenizer_files)
+            .with_external_initializer(data_name, data)
+            // q4 weights are statically quantized; `None` (no runtime dynamic
+            // quant) is the right mode. Verified by the cosine sanity gate.
+            .with_quantization(QuantizationMode::None);
+        model.output_key = Some(OutputKey::ByName("sentence_embedding"));
+
+        let te = TextEmbedding::try_new_from_user_defined(
+            model,
+            InitOptionsUserDefined::new().with_max_length(EMBED_MAX_LENGTH),
+        )?;
+        Ok(Self {
+            model: Mutex::new(te),
+            dims,
+            identity: format!("byo:{identity_tag}:{dims}"),
         })
     }
 }
@@ -81,7 +159,20 @@ impl Embedder for LocalEmbedder {
             .model
             .lock()
             .map_err(|_| anyhow::anyhow!("embedder mutex poisoned"))?;
-        model.embed(texts, None)
+        // Sub-batch HERE rather than relying on fastembed's `batch_size` arg.
+        // fastembed runs ALL inputs in ONE ONNX pass when `batch_size` is `None`
+        // (for dynamically-quantized models it forces `batch_size = texts.len()`
+        // and outright REJECTS `Some(n < len)`), so a large file's chunk list
+        // becomes a single giant batch → multi-GB ONNX arena → OOM on a full warm
+        // (a 273-chunk transcription spiked ~7 GB). Splitting into fixed windows
+        // and passing `None` per window (the only form dynamic-quant accepts)
+        // bounds every ONNX pass to EMBED_BATCH_SIZE sequences. See
+        // `tickets/solve-oom-issue/` (OOM #2).
+        let mut out = Vec::with_capacity(texts.len());
+        for window in texts.chunks(EMBED_BATCH_SIZE) {
+            out.extend(model.embed(window, None)?);
+        }
+        Ok(out)
     }
 }
 
@@ -93,8 +184,9 @@ mod tests {
     /// when re-bundled model artifacts must invalidate existing caches.
     #[test]
     fn fastembed_rev_tracks_dependency() {
-        let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
-            .expect("read workspace Cargo.lock");
+        let lock =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
+                .expect("read workspace Cargo.lock");
         let ver = lock
             .split("name = \"fastembed\"")
             .nth(1)

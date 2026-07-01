@@ -1,0 +1,78 @@
+name: bash release
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bash/**'
+      - '.github/workflows/bash-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bash
+    outputs:
+      should_publish: ${{ steps.versioncheck.outputs.publish }}
+      version: ${{ steps.versioncheck.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test:run
+      - run: bun run build
+      - run: npm pack --dry-run
+      - name: Detect version bump
+        id: versioncheck
+        run: |
+          LOCAL=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view @supermemory/bash version 2>/dev/null || echo "")
+          if [ -z "$PUBLISHED" ] || [ "$LOCAL" != "$PUBLISHED" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "version=$LOCAL" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: check
+    if: needs.check.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bash
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      # npm bundled with Node 20 is too old for OIDC; need >= 11.5.1
+      - run: npm install -g npm@latest
+      - run: npm publish --access public
+      - name: Push git tag
+        working-directory: ${{ github.workspace }}
+        run: |
+          tag="bash-v${{ needs.check.outputs.version }}"
+          git tag "$tag" "${{ github.sha }}"
+          git push origin "$tag"

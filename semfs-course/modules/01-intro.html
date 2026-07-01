@@ -1,0 +1,305 @@
+<section class="module" id="module-1">
+
+  <!-- ===================== SCREEN 1: The hook ===================== -->
+  <div class="module-screen">
+    <h2>Where Did Your Words Go?</h2>
+    <p>You type this into a folder, hit enter, and the prompt comes back instantly:</p>
+
+    <div class="callout callout-info">
+      <div class="callout-icon">⌨️</div>
+      <div class="callout-content">
+        <strong class="callout-title">The everyday moment</strong>
+        <p><code>echo "remember the deploy runs migrations first" > ./notes/deploy.md</code> — done before you blink. But where did your words actually <em>go</em>?</p>
+      </div>
+    </div>
+
+    <p>Meet <strong>semfs</strong> — short for <span class="term" data-definition="Semantic filesystem. It makes a cloud storage service look and feel like a normal folder on your computer, while quietly understanding the meaning of what you store.">semantic filesystem</span>. It is a single self-contained <span class="term" data-definition="A program compiled into one runnable file you double-click or call from the terminal — no installer, no extra libraries to download. semfs is one such file.">binary</span> that makes a storage service behave like an ordinary <span class="term" data-definition="The system that organizes your files into folders so you can open, move, and delete them. semfs makes cloud memory look like one of these.">filesystem</span> folder.</p>
+
+    <p>The whole point: every tool you already own — <code>cat</code>, <code>ls</code>, <code>grep</code>, your editor, git — already speaks "files." So memory delivered <em>as files</em> needs no new <span class="term" data-definition="Software Development Kit — a special bundle of code a programmer must wire into their app to use a service. semfs needs none of this; plain file operations are enough.">SDK</span> and no special tool.</p>
+  </div>
+
+  <!-- ===================== SCREEN 2: The metaphor ===================== -->
+  <div class="module-screen">
+    <h2>The Dropbox at the Post Office</h2>
+    <p>Picture sliding a letter through the slot of a post-office dropbox. The instant it drops, it is <em>safe</em> — the post office owns it now, it will not blow away. But it has not been <em>delivered</em> yet.</p>
+
+    <div class="icon-rows">
+      <div class="icon-row">
+        <div class="icon-circle" style="background: var(--color-actor-1)">✉️</div>
+        <div>
+          <strong>The letter drops — it is safe NOW</strong>
+          <p>Your write lands locally the instant the prompt returns. It will survive even if you pull the plug.</p>
+        </div>
+      </div>
+      <div class="icon-row">
+        <div class="icon-circle" style="background: var(--color-actor-3)">🚚</div>
+        <div>
+          <strong>A courier delivers it LATER</strong>
+          <p>Sending it on to the real destination happens afterward, quietly, in the background.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-accent">
+      <div class="callout-icon">💡</div>
+      <div class="callout-content">
+        <strong class="callout-title">The one idea that explains everything</strong>
+        <p>A write is <span class="term" data-definition="Durable means the data is safely written to disk and will survive a crash, restart, or power loss — it is not just floating in memory.">durable</span> the instant it lands locally, but <em>delivery</em> to the real <span class="term" data-definition="The storage system underneath that actually keeps your data long-term — semfs lets you pick which one. The folder behaves the same no matter which you choose.">backend</span> happens later, <span class="term" data-definition="Async (asynchronous) means it happens in the background on its own schedule, so you do not have to wait for it to finish.">in the background</span>. This explains every &quot;my note did not show up on the other machine yet&quot; question you will ever have.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SCREEN 3: The hero data flow ===================== -->
+  <div class="module-screen">
+    <h2>Follow Your Words Through Four Hands</h2>
+    <p>Step through exactly what happens after you hit enter. Watch carefully <em>where</em> the prompt returns to you.</p>
+
+    <div class="flow-animation" data-steps='[
+      {"highlight":"flow-actor-1","label":"You run echo to write a line into the folder"},
+      {"highlight":"flow-actor-2","label":"The folder receives your text","packet":true,"from":"actor-1","to":"actor-2"},
+      {"highlight":"flow-actor-3","label":"Bytes saved to local SQLite cache — now durable","packet":true,"from":"actor-2","to":"actor-3"},
+      {"highlight":"flow-actor-3","label":"The prompt returns to you HERE — your data is already safe"},
+      {"highlight":"flow-actor-4","label":"Later, in the background, it drains to the chosen backend to be embedded and indexed","packet":true,"from":"actor-3","to":"actor-4"}
+    ]'>
+      <div class="flow-actors">
+        <div class="flow-actor" id="flow-actor-1">
+          <div class="flow-actor-icon">🖥️</div>
+          <span>You / Shell</span>
+        </div>
+        <div class="flow-actor" id="flow-actor-2">
+          <div class="flow-actor-icon">📁</div>
+          <span>semfs mount</span>
+        </div>
+        <div class="flow-actor" id="flow-actor-3">
+          <div class="flow-actor-icon">💾</div>
+          <span>Local SQLite cache</span>
+        </div>
+        <div class="flow-actor" id="flow-actor-4">
+          <div class="flow-actor-icon">☁️</div>
+          <span>Backend (cloud)</span>
+        </div>
+      </div>
+
+      <div class="flow-packet" id="flow-packet"></div>
+
+      <div class="flow-step-label" id="flow-label">Click "Next Step" to begin</div>
+
+      <div class="flow-controls">
+        <button class="btn flow-next-btn">Next Step</button>
+        <button class="btn flow-reset-btn">Restart</button>
+        <span class="flow-progress"></span>
+      </div>
+    </div>
+
+    <div class="badge-list">
+      <div class="badge-item">
+        <code class="badge-code">mount</code>
+        <span class="badge-desc">To <span class="term" data-definition="Mounting attaches a storage system so it shows up as a folder you can open and use, just like plugging in a USB drive.">mount</span> means make a remote store appear as a folder on your machine.</span>
+      </div>
+      <div class="badge-item">
+        <code class="badge-code">container</code>
+        <span class="badge-desc">A <span class="term" data-definition="A named bucket of memory — one labeled box holding a related set of files. You mount one container as one folder.">container</span> is a named bucket of memory, identified by a <span class="term" data-definition="A short label that names a container, like a sticker on a box, so semfs knows which bucket of memory to open.">tag</span>.</span>
+      </div>
+      <div class="badge-item">
+        <code class="badge-code">SQLite</code>
+        <span class="badge-desc">A tiny <span class="term" data-definition="SQLite is a small, fast database that lives in a single file on your own machine — no server needed. semfs uses it as the local cache.">SQLite</span> database file that acts as the local <span class="term" data-definition="A cache is a nearby copy kept for speed, so you do not have to fetch from far away every time.">cache</span> — instant and works offline.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SCREEN 4: The quickstart, line by line ===================== -->
+  <div class="module-screen">
+    <h2>The Whole Journey, In Four Lines</h2>
+    <p>Here is a real session from the project README. Read the left as code, the right as plain English.</p>
+
+    <div class="translation-block animate-in">
+      <div class="translation-code">
+        <span class="translation-label">CODE</span>
+        <pre><code><span class="code-line"><span class="code-comment"># 2. mount a memory container as a folder</span></span>
+<span class="code-line">semfs mount my-notes --path ./my-notes</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="code-comment"># 3. use it like any folder</span></span>
+<span class="code-line">echo <span class="code-string">"the deploy pipeline runs migrations before swapping traffic"</span> > ./my-notes/deploy.md</span>
+<span class="code-line">cat ./my-notes/deploy.md</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="code-comment"># 4. search by meaning (run from inside the mount)</span></span>
+<span class="code-line">cd ./my-notes && semfs grep <span class="code-string">"how are schema changes applied during a release"</span></span>
+<span class="code-line"><span class="code-comment">#   → deploy.md:1:the deploy pipeline runs migrations before swapping traffic</span></span></code></pre>
+      </div>
+      <div class="translation-english">
+        <span class="translation-label">PLAIN ENGLISH</span>
+        <div class="translation-lines">
+          <p class="tl">Attach a memory container named "my-notes" so it appears as a real folder.</p>
+          <p class="tl">It now lives at <code>./my-notes</code> — open it like any folder.</p>
+          <p class="tl">&nbsp;</p>
+          <p class="tl">Write a sentence into a file. The prompt returns <strong>instantly</strong> — because the write only had to reach your local disk, not the cloud.</p>
+          <p class="tl">Read it straight back. You get the exact bytes you wrote.</p>
+          <p class="tl">&nbsp;</p>
+          <p class="tl">Step into the folder and ask a question in plain language.</p>
+          <p class="tl">The answer: the matching file, line number, and the verbatim text.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-accent">
+      <div class="callout-icon">🔎</div>
+      <div class="callout-content">
+        <strong class="callout-title">Look closely at the magic</strong>
+        <p>Your question — &quot;schema changes during a release&quot; — shares almost no words with the file — &quot;deploy pipeline runs migrations.&quot; Yet it matched. That is <span class="term" data-definition="Searching by meaning instead of exact words. The query and the file can share zero words and still match because the computer compares ideas, not letters.">semantic search</span>, the killer feature.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SCREEN 5: How grep finds it ===================== -->
+  <div class="module-screen">
+    <h2>Why grep-by-meaning Is a Superpower</h2>
+    <p>Here is the output format you get back when you ask a question:</p>
+
+    <div class="translation-block animate-in">
+      <div class="translation-code">
+        <span class="translation-label">CODE</span>
+        <pre><code><span class="code-line">$ semfs grep <span class="code-string">"credential renewal flow"</span></span>
+<span class="code-line">auth.md:12:the access token is refreshed by the middleware before each request</span></code></pre>
+      </div>
+      <div class="translation-english">
+        <span class="translation-label">PLAIN ENGLISH</span>
+        <div class="translation-lines">
+          <p class="tl">You ask about "credential renewal" — words that never appear in the file.</p>
+          <p class="tl">It still finds the right line and hands back exactly three things: <strong>filepath : line : chunk</strong>. The chunk is <span class="term" data-definition="Word-for-word, exactly as written, with nothing changed or summarized.">verbatim</span> text from the file.</p>
+        </div>
+      </div>
+    </div>
+
+    <p>Behind the scenes, the backend turns each line into an <span class="term" data-definition="An embedding turns text into a list of numbers that captures its meaning, so the computer can tell that two differently-worded sentences mean the same thing.">embedding</span> and builds an <span class="term" data-definition="An index is a lookup structure that lets the computer find relevant things fast, like the index at the back of a book.">index</span> over them. That is what lets it match by idea, not by letters.</p>
+
+    <div class="callout callout-info">
+      <div class="callout-icon">🤖</div>
+      <div class="callout-content">
+        <strong class="callout-title">Why this matters for AI agents</strong>
+        <p>An AI agent can grab <em>just</em> the relevant lines instead of stuffing whole files into its limited <span class="term" data-definition="The amount of text an AI model can hold in mind at once. Smaller is cheaper and faster, so handing the AI only the relevant lines is a big win.">context window</span>. Memory-as-files gives the model a stable surface it already knows how to use.</p>
+      </div>
+    </div>
+
+    <div class="pattern-cards">
+      <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+        <div class="pattern-icon" style="background: var(--color-actor-1)">🪣</div>
+        <h4 class="pattern-title">SQLite-vec</h4>
+        <p class="pattern-desc">A local backend — runs on your machine, no server. Great for getting started.</p>
+      </div>
+      <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+        <div class="pattern-icon" style="background: var(--color-actor-2)">🐘</div>
+        <h4 class="pattern-title">Postgres / pgvector</h4>
+        <p class="pattern-desc">A full database backend for teams and shared memory.</p>
+      </div>
+      <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+        <div class="pattern-icon" style="background: var(--color-actor-4)">☁️</div>
+        <h4 class="pattern-title">Supermemory</h4>
+        <p class="pattern-desc">A hosted cloud memory service. The folder behaves identically either way.</p>
+      </div>
+    </div>
+
+    <p>The storage underneath is <strong>pluggable</strong> — you pick it when you mount, and the folder behaves the same no matter which you chose. We will meet each of these later.</p>
+  </div>
+
+  <!-- ===================== SCREEN 6: Quiz ===================== -->
+  <div class="module-screen">
+    <h2>Think It Through</h2>
+    <p>Three scenarios. No memorizing — just apply what you saw.</p>
+
+    <div class="quiz-container" id="quiz-module1">
+
+      <div class="scenario-block">
+        <div class="scenario-context">
+          <span class="scenario-label">Scenario 1</span>
+          <p>You write a file and the prompt returns. A millisecond later you yank your network cable out of the wall. Is your data lost?</p>
+        </div>
+        <div class="quiz-question-block"
+             data-correct="opt-safe"
+             data-explanation-right="Exactly. The write became durable the moment it landed in the local SQLite cache — that happened before the prompt returned. Only the background sync to the cloud is delayed; it resumes when the network is back."
+             data-explanation-wrong="Not quite — remember the post-office dropbox. The bytes were saved to the local SQLite cache before the prompt returned, so they are already durable. Only the background delivery to the cloud is delayed.">
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-lost" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Yes — it never reached the cloud, so it is gone.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-safe" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>No — it is already in the local cache; only the cloud sync is delayed.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-maybe" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Only if you never reconnect within a few seconds.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+      </div>
+
+      <div class="scenario-block">
+        <div class="scenario-context">
+          <span class="scenario-label">Scenario 2</span>
+          <p>The team debates: should we give the AI a custom "save_memory" tool, or expose memory as a plain folder? Why does semfs choose the folder?</p>
+        </div>
+        <div class="quiz-question-block"
+             data-correct="opt-files"
+             data-explanation-right="Right. Editors, git, grep, and shells already speak files — so no new SDK, no tool schema, nothing to wire in. The AI uses skills it already has."
+             data-explanation-wrong="Think about what every tool already knows how to do. A custom tool means new code and a new schema everywhere; a folder works with cat, ls, grep, git, and your editor out of the box — no SDK needed.">
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-fast" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Folders are technically faster than tool calls.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-files" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Every tool already speaks files, so no new SDK or tool schema is needed.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-secure" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Folders are more secure than custom tools.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+      </div>
+
+      <div class="scenario-block">
+        <div class="scenario-context">
+          <span class="scenario-label">Scenario 3</span>
+          <p>You run <code>semfs grep "how do I roll back a release"</code> and it returns a line that never contains the word "rollback." How is that possible?</p>
+        </div>
+        <div class="quiz-question-block"
+             data-correct="opt-meaning"
+             data-explanation-right="Yes. semantic search compares meaning using embeddings, so a query and a matching line can share zero words and still match because the ideas line up."
+             data-explanation-wrong="It is not luck or hidden keywords. The backend turns text into embeddings — numbers that capture meaning — and matches by idea, not by exact text. Shared words are not required.">
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-keyword" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>It secretly stores hidden keyword tags on every file.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-luck" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>It guessed — semantic search is just fuzzy spelling matching.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-meaning" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Semantic search matches by meaning via embeddings, not exact text.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+      </div>
+
+      <button class="quiz-check-btn" onclick="checkQuiz('quiz-module1')">Check Answers</button>
+      <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module1')">Try Again</button>
+    </div>
+
+    <div class="callout callout-info">
+      <div class="callout-icon">➡️</div>
+      <div class="callout-content">
+        <strong class="callout-title">Next up</strong>
+        <p>You just watched your words travel through four hands. Next, let us meet each of them by name — the Mount, the Cache, the Sync, the Backend, and the Daemon — as characters.</p>
+      </div>
+    </div>
+  </div>
+
+</section>

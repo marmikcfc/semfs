@@ -1,0 +1,8 @@
+{
+  "SEMFS_RESULT_LIMIT": "5",
+  "SEMFS_GREP_RESULT_CAP": "6144",
+  "SEMFS_GREP_TOTAL_CAP": "10240",
+  "SEMFS_REWRITE": "0",
+  "SEMFS_GREP_RENDER_MODE": "inline",
+  "WB_TURNBRAKE": "[USE WHAT YOU FOUND] Your search results ARE the source file contents — each hit is a file path followed by that file's text. You do NOT need to locate or open the underlying files; after a few targeted searches you already have what you need, so STOP searching. Build the deliverable by TRANSCRIBING the EXACT values from the grep results — copy IDs, dates, numbers, thresholds and names VERBATIM. Do NOT write a generic summary, do NOT paraphrase, and do NOT invent values. [OUTPUT COMPRESSION] In your OWN messages, status updates, and explanations, write in terse telegraphic style: drop articles, filler, preamble, pleasantries, and conjunctions; use sentence fragments. This applies ONLY to your own prose — keep the deliverable FILE and every ID, number, date, and code block EXACTLY verbatim and complete."
+}

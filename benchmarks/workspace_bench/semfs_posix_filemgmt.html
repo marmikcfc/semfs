@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>find, and the semantic-FS variation of POSIX file commands</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --posix:#f0883e; --sem:#d2a8ff; --read:#58a6ff; --write:#7ee787; --warn:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:30px 20px 80px}
+  h1{font-size:24px;margin:0 0 4px}
+  h2{font-size:18px;margin:28px 0 8px;border-bottom:1px solid var(--line);padding-bottom:5px}
+  .sub{color:var(--mut);margin:0 0 16px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .note{border-left:3px solid var(--sem);padding:6px 0 6px 14px;margin:12px 0;color:var(--mut)}
+
+  /* find anatomy */
+  .anat{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:16px;font:14px/1.4 ui-monospace,Menlo,monospace;margin:10px 0}
+  .tok{padding:8px 12px;border-radius:8px;cursor:pointer;border:1px solid var(--line);transition:.15s}
+  .tok small{display:block;font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;font-family:-apple-system,sans-serif}
+  .tok.cmd{color:var(--posix)} .tok.where{color:var(--read)} .tok.test{color:#e3b341} .tok.act{color:var(--write)}
+  .tok:hover, .tok.sel{background:#161b22;box-shadow:0 0 0 2px currentColor inset}
+  #explain{min-height:54px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 15px;margin:8px 0 4px;font-size:13.5px}
+
+  .levels{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}
+  .lvlbtn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12.5px}
+  .lvlbtn.active{border-color:var(--read);background:var(--panel2)}
+  .lvltext{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:6px 0 4px;min-height:60px}
+
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut)}
+  td.cmd{font-family:ui-monospace,Menlo,monospace;color:var(--posix);white-space:nowrap}
+  td.sem{color:var(--sem)}
+  .tag{display:inline-block;border-radius:999px;padding:2px 8px;font-size:10.5px;font-weight:700}
+  .tag.read{background:#10243f;color:var(--read);border:1px solid var(--read)}
+  .tag.write{background:#0f2a16;color:var(--write);border:1px solid var(--write)}
+  .prim{font-family:ui-monospace,Menlo,monospace;color:var(--read);font-size:11.5px}
+  .principle{border:1px solid var(--sem);background:#1a1430;border-radius:12px;padding:14px 18px;margin:22px 0}
+  .principle b{color:var(--sem)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>What <code>find</code> is — and the <span style="color:var(--sem)">semantic-FS</span> variation of POSIX file commands</h1>
+  <p class="sub">POSIX commands act on a <b>namespace (paths) + bytes + metadata</b>. A semantic filesystem keeps the same verbs but makes them act on <b>meaning + relations</b>: read/discovery verbs return <i>ranked</i> results; write/management verbs additionally <i>maintain the index &amp; graph</i>.</p>
+
+  <h2>1 · Anatomy of <code>find</code> <span style="font-size:12px;color:var(--mut)">— click each part</span></h2>
+  <div class="anat" id="anat">
+    <div class="tok cmd" data-k="cmd"><small>command</small>find</div>
+    <div class="tok where" data-k="where"><small>where to start</small>/workspace</div>
+    <div class="tok test" data-k="test"><small>tests / predicates</small>-type f -name "*.xlsx" -mtime -7</div>
+    <div class="tok act" data-k="act"><small>action</small>-print</div>
+  </div>
+  <div id="explain">Click a part above to see what it does.</div>
+  <p class="note">In one line: <b><code>find</code> walks a directory tree recursively and returns every file matching <i>attribute</i> tests (name, type, size, time, permissions)</b>. It matches on <b>names &amp; metadata — never content or meaning</b>. To search <i>content</i> you must pipe it: <code>find … | xargs grep "pattern"</code>.</p>
+
+  <h2>2 · <code>find</code>, explained at five levels <span style="font-size:12px;color:var(--mut)">— pick one</span></h2>
+  <div class="levels" id="levels">
+    <button class="lvlbtn active" data-l="0">🧸 ELI5</button>
+    <button class="lvlbtn" data-l="1">🎮 Teen</button>
+    <button class="lvlbtn" data-l="2">🎓 College</button>
+    <button class="lvlbtn" data-l="3">🔬 Post-grad</button>
+    <button class="lvlbtn" data-l="4">🧠 Professor</button>
+  </div>
+  <div class="lvltext" id="lvltext"></div>
+
+  <h2>3 · Semantic-FS variation of each basic command</h2>
+  <table>
+    <thead><tr><th>POSIX</th><th>What it does (paths/bytes/metadata)</th><th class="sem">Semantic-FS variation</th><th>Class</th></tr></thead>
+    <tbody>
+      <tr><td class="cmd">ls</td><td>list a directory's entries, unranked</td>
+          <td class="sem">entries returned <b>ranked by relevance</b> to your goal, each with a 1-line gist — <code>ls</code> becomes a shortlist, not a dump</td>
+          <td><span class="tag read">read → ranked</span></td></tr>
+      <tr><td class="cmd">find</td><td>walk the tree; match files by <b>name/type/size/time</b></td>
+          <td class="sem">match by <b>meaning</b>: describe what you want (“docs about Q3 best-sellers”) → ranked nodes, regardless of filename or language</td>
+          <td><span class="tag read">read → ranked</span></td></tr>
+      <tr><td class="cmd">grep</td><td>scan file bytes for a <b>literal/regex</b> match</td>
+          <td class="sem"><b>semantic search</b>: hybrid vector+keyword → top-k passages with provenance (<code>file:lines</code>) — this is <code>semfs grep</code></td>
+          <td><span class="tag read">read → ranked</span></td></tr>
+      <tr><td class="cmd">cat / head / tail</td><td>read the whole file (all bytes)</td>
+          <td class="sem">read the <b>relevant chunk</b>, or <b>ask a question</b> of the node and get an answer — not the entire file</td>
+          <td><span class="tag read">read → scoped</span></td></tr>
+      <tr><td class="cmd">stat / file</td><td>fetch metadata / sniff format</td>
+          <td class="sem"><b>typed node</b> with normalized content (table/doc/image-caption) — format detection &amp; parsing are already done at ingest</td>
+          <td><span class="tag read">read → typed</span></td></tr>
+      <tr><td class="cmd">cp</td><td>copy bytes to a new path</td>
+          <td class="sem">copy the node <b>and re-index it</b> (embeddings/edges); the graph notices the near-duplicate (dedup)</td>
+          <td><span class="tag write">write → re-index</span></td></tr>
+      <tr><td class="cmd">mv / rename</td><td>change a file's path</td>
+          <td class="sem">update the node's path while <b>preserving its embeddings &amp; edges</b> — semantic identity is unchanged by a rename</td>
+          <td><span class="tag write">write → relink</span></td></tr>
+      <tr><td class="cmd">rm</td><td>unlink bytes</td>
+          <td class="sem"><b>forget</b>: remove the node + its vectors + its graph edges (so it stops surfacing in search)</td>
+          <td><span class="tag write">write → forget</span></td></tr>
+      <tr><td class="cmd">mkdir</td><td>create a hierarchy node (folder)</td>
+          <td class="sem">folders become <b>optional/virtual</b> — grouping is by semantic cluster or a <code>tag</code>, not just a physical parent</td>
+          <td><span class="tag write">write → namespace</span></td></tr>
+      <tr><td class="cmd">echo &gt; f / write</td><td>store bytes at a path</td>
+          <td class="sem"><b>write-through indexing</b>: on save, content is chunked, embedded, and linked into the graph — “every file is on the knowledge graph”</td>
+          <td><span class="tag write">write → embed</span></td></tr>
+      <tr><td class="cmd">ln</td><td>hard/soft link (alias a path)</td>
+          <td class="sem">an explicit <b>edge/alias</b> in the graph (e.g. <code>derived-from</code>, <code>references</code>) — a typed relation, not just a second name</td>
+          <td><span class="tag write">write → edge</span></td></tr>
+    </tbody>
+  </table>
+
+  <div class="principle">
+    <b>The rule that generates every row:</b> a semantic filesystem keeps the POSIX verbs but swaps their substrate.
+    <ul style="margin:8px 0 0;color:var(--mut)">
+      <li><b style="color:var(--read)">Read / discovery verbs</b> (<code>ls find grep cat stat</code>) → return <b>meaning-ranked / scoped</b> results instead of unranked enumerations or whole files. <i>The filtering moves from the agent (tokens) into the index.</i></li>
+      <li><b style="color:var(--write)">Write / management verbs</b> (<code>cp mv rm mkdir write ln</code>) → behave the same on bytes, but <b>maintain the index &amp; graph</b> as a side effect (re-embed, relink, forget, edge).</li>
+      <li><b>The directory hierarchy stops being the only relation.</b> POSIX has exactly one (parent→child); a semantic FS adds typed edges (<code>mentions</code>, <code>references</code>, <code>derived-from</code>) and similarity — which is what makes <code>ls</code>/<code>find</code> rankable and enables “what’s related to this?”.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+const FIND = {
+  cmd:"<b>find</b> — the POSIX “search for files” program. Unlike <code>ls</code> (one directory) it descends the <b>entire tree</b>. Unlike <code>grep</code> it matches <b>files</b>, not <b>content</b>.",
+  where:"<b>Starting path</b> (here <code>/workspace</code>). find recurses into every subdirectory beneath it. Multiple paths allowed; default is <code>.</code> (current dir).",
+  test:"<b>Tests / predicates</b> — the filters. <code>-type f</code> (regular file), <code>-name \"*.xlsx\"</code> (glob on the name), <code>-mtime -7</code> (modified &lt;7 days). Also <code>-size</code>, <code>-perm</code>, <code>-path</code>, <code>-iname</code>, combined with <code>-o</code> (or), <code>!</code> (not). <b>All attribute/metadata — no content, no meaning.</b>",
+  act:"<b>Action</b> on each match. Default <code>-print</code> (list the path). Powerful ones: <code>-exec cmd {} \\;</code> (run a command per match), <code>-delete</code>, <code>-ls</code>."
+};
+const anat=document.getElementById('anat'), explain=document.getElementById('explain');
+anat.addEventListener('click',e=>{const t=e.target.closest('.tok'); if(!t)return;
+  anat.querySelectorAll('.tok').forEach(x=>x.classList.remove('sel')); t.classList.add('sel');
+  explain.innerHTML=FIND[t.dataset.k];});
+
+const LV=[
+  "🧸 <b>ELI5:</b> <code>find</code> is a robot you send into a giant house. You tell it what to look for — “toys that are red, made this week” — and it opens <b>every room</b> and brings back a list of everything that matches. But it can only check the <b>label on the box</b> (the name), not what’s <i>inside</i>.",
+  "🎮 <b>Teen:</b> <code>find &lt;where&gt; &lt;filters&gt;</code> walks all folders under <where> and lists files matching the filters — by <b>name, type, size, or date</b>. To search what’s <i>written inside</i> files, you pipe it into grep: <code>find . | xargs grep \"word\"</code>. find = locate by attributes; grep = locate by content.",
+  "🎓 <b>College:</b> <code>find</code> performs a recursive directory traversal (DFS) evaluating a boolean expression of <b>predicates</b> (<code>-name -type -size -mtime -perm -path</code>) against each inode's <b>name + stat() metadata</b>, then applies an <b>action</b> (<code>-print</code>, <code>-exec</code>, <code>-delete</code>). It never reads file <i>contents</i> — that's outside its model. Hence the classic <code>find … | xargs grep</code> pipeline to add a content filter.",
+  "🔬 <b>Post-grad:</b> find is a streaming tree-walker: it <code>opendir/readdir</code>s recursively and <code>lstat</code>s each entry, short-circuit-evaluating the predicate AST (with <code>-prune</code> to cut subtrees). Its information model is the <b>namespace + inode metadata</b> only — O(files) syscalls, no notion of similarity or relation. Content search bolted on via <code>-exec grep</code> means O(files) <i>reads</i> too. This is exactly why agents that explore with find burn tokens: the relevance filtering happens <i>after</i> enumeration, in the consumer.",
+  "🧠 <b>Professor:</b> find embodies the filesystem's fundamental abstraction — a tree of names with attribute metadata — and exposes it as a query language over that single relation (containment) plus inode predicates. It cannot express <i>meaning</i> (“files about X”) or <i>relation</i> (“files derived from Y”) because those aren't in the substrate; you can only approximate them through names/paths (a lossy proxy) or by escalating to content scans. A semantic filesystem changes the substrate — content-addressed embeddings + a typed graph — so the <i>same</i> discovery intent (`find`) is answered by ranked retrieval rather than exhaustive metadata matching. The verb survives; its denotation moves from <code>match(metadata)</code> to <code>rank(meaning)</code>."
+];
+const lt=document.getElementById('lvltext'); lt.innerHTML=LV[0];
+document.getElementById('levels').addEventListener('click',e=>{const b=e.target.closest('.lvlbtn'); if(!b)return;
+  document.querySelectorAll('.lvlbtn').forEach(x=>x.classList.remove('active')); b.classList.add('active');
+  lt.innerHTML=LV[+b.dataset.l];});
+</script>
+</body>
+</html>

@@ -51,3 +51,37 @@ __pycache__/
 docs/
 paper/
 .scratch/
+# benchmark assets pulled from Modal (corpus/seed/embedder) — never commit
+benchmarks/e2b/assets/
+
+# OpenRouter dashboard client cookie (auth secret)
+scripts/.or_client_cookie
+
+# secrets / auth / logs — NEVER commit
+codex_auth.json
+codex-home/
+claude_auth_config.json
+openrouter_logs.csv
+claude_auth_config.json
+*.session.txt
+2026-*-this-session-is-being-continued*.txt
+ANTHROPIC_API_KEY=*
+OPENAI_API_KEY=*
+sk-*
+
+# evo workspace + harness artifacts
+.evo/
+.evo_bench_metrics.json
+benchmarks/e2b/assets/.evo_bin_cache/
+tickets/workspace-bench-5arm-matrix/artifacts/
+tickets/wblite-ppr-ab/artifacts/
+.video-gen/
+*.pyc
+/2026-*-can-yiu-*.txt
+tickets/next-plaid-late-interaction/artifacts/
+tickets/*/artifacts/
+benchmarks/modal/_mined.json
+benchmarks/modal/_mined_candidates.json
+benchmarks/modal/_inspect.json
+benchmarks/modal/_reverify_diag.json
+benchmarks/modal/_reverify_sample.json

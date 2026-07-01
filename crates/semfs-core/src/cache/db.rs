@@ -25,6 +25,7 @@ fn register_sqlite_vec() {
     });
 }
 
+use crate::vfs::mode::{S_IFDIR, S_IFREG};
 use crate::vfs::{FileAttr, Timestamp, DEFAULT_DIR_MODE, PREFERRED_BLOCK_SIZE};
 
 /// Default chunk size for file data storage (bytes).
@@ -197,11 +198,15 @@ impl Db {
             conn.execute_batch("DROP TABLE IF EXISTS vchunks;")?;
         }
         match (stored("code_embed_dims"), code_dims) {
+            // Active code embedder at a CHANGED width → drop the wrong-width lane.
             (Some(old), Some(new)) if old != new => {
                 conn.execute_batch("DROP TABLE IF EXISTS vchunks_code;")?;
             }
-            // Code embedder removed → drop the now-orphaned table.
-            (Some(_), None) => conn.execute_batch("DROP TABLE IF EXISTS vchunks_code;")?,
+            // No code embedder on THIS open (text-only readers/writers: build_kg,
+            // materialize_*, merge_seeds, a text-only daemon): PRESERVE the existing
+            // code lane + its gemma vectors. Destroying it here is exactly what
+            // silently dropped every offline-built code lane — the vectors stay valid
+            // and a later code-aware open reuses them (see `code_embed_dims` doc).
             _ => {}
         }
 
@@ -222,9 +227,11 @@ impl Db {
                 "INSERT OR REPLACE INTO fs_config (key, value) VALUES ('code_embed_dims', ?1)",
                 [cd.to_string()],
             )?;
-        } else {
-            conn.execute("DELETE FROM fs_config WHERE key = 'code_embed_dims'", [])?;
         }
+        // No code embedder this open → PRESERVE any existing `vchunks_code` AND its
+        // `code_embed_dims` stamp (the match above kept the table; keep it self-
+        // describing too). Deleting the stamp here is what left the offline-built lane
+        // un-advertised; a later code-aware open reuses it at its recorded width.
 
         Ok(())
     }
@@ -715,6 +722,74 @@ impl Db {
         .unwrap_or(false)
     }
 
+    /// Enqueue EVERY real (non-derived) regular file in the materialized POSIX tree as a
+    /// `push_queue` Create job. The indexer (`seed_dir`) and `materialize_fs` write the cache
+    /// directly and never enqueue (only the live FUSE write path does), so a freshly built
+    /// seed has an empty `push_queue`. This backfills it so the whole corpus can be pushed to
+    /// Supermemory wholesale via the `push_seed --backfill` tool — making one seed serve both
+    /// the local (`sqlite`) and cloud (`supermemory`) backends. Returns the count enqueued.
+    pub fn enqueue_all_real_files_for_push(&self, now_ms: i64, prefix: Option<&str>) -> usize {
+        // Reconstruct each file's full path by walking fs_dentry from ROOT, keeping only
+        // real (derived=0) regular files — `(mode & S_IFMT) == S_IFREG`, i.e. 61440/32768.
+        // `prefix` (e.g. "/dp_001") scopes to one subtree — used for a smoke before the full push.
+        let rows: Vec<(String, i64)> = {
+            let conn = self.conn.lock();
+            let mut stmt = match conn.prepare(
+                "WITH RECURSIVE paths(ino, path) AS (
+                     SELECT ino, '' FROM fs_inode WHERE ino = ?1
+                   UNION ALL
+                     SELECT d.ino, paths.path || '/' || d.name
+                       FROM fs_dentry d JOIN paths ON d.parent_ino = paths.ino)
+                 SELECT paths.path, paths.ino
+                   FROM paths JOIN fs_inode i ON i.ino = paths.ino
+                  WHERE i.derived = 0 AND (i.mode & 61440) = 32768 AND paths.ino != ?1
+                    AND (?2 IS NULL OR paths.path LIKE ?2 || '/%')",
+            ) {
+                Ok(s) => s,
+                Err(_) => return 0,
+            };
+            let mapped = stmt.query_map(rusqlite::params![ROOT_INO as i64, prefix], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            });
+            match mapped {
+                Ok(it) => it.filter_map(Result::ok).collect(),
+                Err(_) => return 0,
+            }
+        }; // conn guard dropped — push_queue_upsert re-locks it
+        let mut seq = 0i64;
+        for (path, ino) in &rows {
+            self.push_queue_upsert(path, PushOp::Create, Some(*ino as u64), None, None, now_ms + seq);
+            seq += 1;
+        }
+        rows.len()
+    }
+
+    /// The set of real (derived=0) regular-file paths already in the materialized POSIX tree.
+    /// Used by `materialize_fs --resume` (SEMFS_FS_RESUME) to skip files done before a Modal
+    /// worker preemption — so the fs materialize CONVERGES across restarts instead of starting
+    /// over (the embed/KG phases already resume this way).
+    pub fn materialized_file_paths(&self) -> std::collections::HashSet<String> {
+        let conn = self.conn.lock();
+        let mut stmt = match conn.prepare(
+            "WITH RECURSIVE paths(ino, path) AS (
+                 SELECT ino, '' FROM fs_inode WHERE ino = ?1
+               UNION ALL
+                 SELECT d.ino, paths.path || '/' || d.name
+                   FROM fs_dentry d JOIN paths ON d.parent_ino = paths.ino)
+             SELECT paths.path
+               FROM paths JOIN fs_inode i ON i.ino = paths.ino
+              WHERE i.derived = 0 AND (i.mode & 61440) = 32768 AND paths.ino != ?1",
+        ) {
+            Ok(s) => s,
+            Err(_) => return std::collections::HashSet::new(),
+        };
+        let mapped = stmt.query_map([ROOT_INO as i64], |r| r.get::<_, String>(0));
+        match mapped {
+            Ok(it) => it.filter_map(Result::ok).collect(),
+            Err(_) => std::collections::HashSet::new(),
+        }
+    }
+
     /// On 404 from the server: clear the pushed remote_id from both
     /// `push_queue` and `fs_remote` so the next retry creates a fresh doc.
     pub(crate) fn clear_remote_id_after_404(&self, filepath: &str, remote_id: &str) {
@@ -755,6 +830,227 @@ impl Db {
         }
         out.truncate(size as usize);
         out
+    }
+
+    /// Record a binary file whose content could not be extracted to searchable
+    /// text. Keyed by inode (idempotent) so the row reflects the current state.
+    pub(crate) fn mark_unindexed(&self, ino: u64, filepath: &str, format: &str) {
+        let conn = self.conn.lock();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO fs_unindexed (ino, filepath, format, ts)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![ino as i64, filepath, format, Timestamp::now().sec],
+        );
+    }
+
+    /// Drop a file's unindexed marker (a later flush extracted it, or it was
+    /// deleted). No-op if absent.
+    pub(crate) fn clear_unindexed(&self, ino: u64) {
+        let conn = self.conn.lock();
+        let _ = conn.execute("DELETE FROM fs_unindexed WHERE ino = ?1", [ino as i64]);
+    }
+
+    /// Return the full extracted text for a binary file by stitching all chunks
+    /// ordered by `ord`. Returns `None` if no chunks exist for this filepath.
+    pub fn get_extracted_text(&self, filepath: &str) -> Option<String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT text FROM chunks WHERE filepath = ?1 ORDER BY ord")
+            .ok()?;
+        let parts: Vec<String> = stmt
+            .query_map([filepath], |r| r.get(0))
+            .ok()?
+            .filter_map(|r| r.ok())
+            .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    }
+
+    /// Materialize a read-only `<filepath>.extracted.md` sibling holding the
+    /// extracted text of a binary file, so an agent can `cat`/`head`/`sed` a few
+    /// lines instead of getting the whole file inlined via grep (or shelling out
+    /// to openpyxl/libreoffice — the format trap). Gated at the call site (flush)
+    /// by `SEMFS_EXTRACT_SIBLING`. Mirrors `CacheFs::create_derived_sibling`'s row
+    /// shape: `derived=1`, mode `S_IFREG|0444`, content split by `chunk_size`.
+    ///
+    /// Lives on `Db` (not `CacheFs`) because `flush()` only holds an `Arc<Db>`.
+    /// The source file's directory already exists, so the parent walk always
+    /// resolves. A name already taken by a NON-derived (user) file is left
+    /// untouched.
+    pub fn upsert_extracted_sibling(&self, filepath: &str, content: &str) -> rusqlite::Result<u64> {
+        let sibling = format!("{filepath}.extracted.md");
+        let pos = sibling
+            .rfind('/')
+            .ok_or_else(|| rusqlite::Error::InvalidParameterName(sibling.clone()))?;
+        let dir = if pos == 0 { "/" } else { &sibling[..pos] };
+        let filename = &sibling[pos + 1..];
+
+        let bytes = content.as_bytes();
+        let size = bytes.len() as i64;
+        let chunk_size = self.chunk_size;
+        let now = Timestamp::now();
+
+        let conn = self.conn.lock();
+
+        // Resolve the parent dir ino by walking from root (ino 1). Every
+        // component exists because the binary source file lives in this dir.
+        let mut parent_ino: i64 = 1;
+        for part in dir.split('/').filter(|p| !p.is_empty()) {
+            parent_ino = conn.query_row(
+                "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+                rusqlite::params![parent_ino, part],
+                |r| r.get(0),
+            )?;
+        }
+
+        let existing: Option<(i64, i64)> = conn
+            .query_row(
+                "SELECT d.ino, i.derived FROM fs_dentry d JOIN fs_inode i ON i.ino = d.ino
+                  WHERE d.parent_ino = ?1 AND d.name = ?2",
+                rusqlite::params![parent_ino, filename],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+
+        let ino = if let Some((ino, derived)) = existing {
+            // A user-owned file at this name — do not clobber it.
+            if derived == 0 {
+                return Ok(ino as u64);
+            }
+            conn.execute("DELETE FROM fs_data WHERE ino = ?1", [ino])?;
+            for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
+                conn.execute(
+                    "INSERT INTO fs_data (ino, chunk_index, data) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![ino, i as i64, chunk],
+                )?;
+            }
+            conn.execute(
+                "UPDATE fs_inode SET size = ?2, mtime = ?3, mtime_nsec = ?4 WHERE ino = ?1",
+                rusqlite::params![ino, size, now.sec, now.nsec as i64],
+            )?;
+            ino as u64
+        } else {
+            conn.execute(
+                "INSERT INTO fs_inode (mode, nlink, uid, gid, size, atime, mtime, ctime, rdev, atime_nsec, mtime_nsec, ctime_nsec, derived)
+                 VALUES (?1, 1, 0, 0, ?2, ?3, ?3, ?3, 0, ?4, ?4, ?4, 1)",
+                rusqlite::params![(S_IFREG | 0o444) as i64, size, now.sec, now.nsec as i64],
+            )?;
+            let new_ino = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO fs_dentry (name, parent_ino, ino) VALUES (?1, ?2, ?3)",
+                rusqlite::params![filename, parent_ino, new_ino],
+            )?;
+            for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
+                conn.execute(
+                    "INSERT INTO fs_data (ino, chunk_index, data) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![new_ino, i as i64, chunk],
+                )?;
+            }
+            new_ino as u64
+        };
+        Ok(ino)
+    }
+
+    /// Materialize a REAL file into the POSIX tree (`fs_inode`/`fs_dentry`/`fs_data`)
+    /// with full content, creating any missing parent directories (`mkdir -p`).
+    /// Idempotent: re-materializing replaces the file's data. This is the OFFLINE
+    /// builder a seed needs to be mountable — `seed_dir`/`index()` only write
+    /// `chunks`/`vchunks` (search), never the tree, so a seed built without this is
+    /// search-only (no browsable `ls`/`cat`). Files are `derived=0` (real user files,
+    /// not the `/kg/` or `.extracted.md` siblings). Does NOT touch chunks/vchunks/
+    /// graph — pure tree materialization. Returns the file's inode.
+    pub fn materialize_file(&self, filepath: &str, bytes: &[u8]) -> rusqlite::Result<u64> {
+        let (dir, filename) = match filepath.rfind('/') {
+            Some(0) => ("/", &filepath[1..]),
+            Some(p) => (&filepath[..p], &filepath[p + 1..]),
+            None => ("/", filepath),
+        };
+        let size = bytes.len() as i64;
+        let chunk_size = self.chunk_size;
+        let now = Timestamp::now();
+        let conn = self.conn.lock();
+
+        // mkdir -p: walk/create the parent dir hierarchy from root (mirrors
+        // CacheFs::ensure_dirs_with_ownership), bumping each new parent's nlink.
+        let mut parent_ino = ROOT_INO as i64;
+        for part in dir.split('/').filter(|s| !s.is_empty()) {
+            let existing: Option<i64> = conn
+                .query_row(
+                    "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+                    rusqlite::params![parent_ino, part],
+                    |r| r.get(0),
+                )
+                .ok();
+            parent_ino = if let Some(ino) = existing {
+                ino
+            } else {
+                conn.execute(
+                    "INSERT INTO fs_inode (mode, nlink, uid, gid, size, atime, mtime, ctime, rdev, atime_nsec, mtime_nsec, ctime_nsec, derived)
+                     VALUES (?1, 2, 0, 0, 0, ?2, ?2, ?2, 0, ?3, ?3, ?3, 0)",
+                    rusqlite::params![(S_IFDIR | 0o755) as i64, now.sec, now.nsec as i64],
+                )?;
+                let new_ino = conn.last_insert_rowid();
+                conn.execute(
+                    "INSERT INTO fs_dentry (name, parent_ino, ino) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![part, parent_ino, new_ino],
+                )?;
+                conn.execute(
+                    "UPDATE fs_inode SET nlink = nlink + 1 WHERE ino = ?1",
+                    [parent_ino],
+                )?;
+                new_ino
+            };
+        }
+
+        // Create or replace the file inode + dentry, then its data chunks.
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+                rusqlite::params![parent_ino, filename],
+                |r| r.get(0),
+            )
+            .ok();
+        let ino = if let Some(ino) = existing {
+            conn.execute("DELETE FROM fs_data WHERE ino = ?1", [ino])?;
+            conn.execute(
+                "UPDATE fs_inode SET size = ?2, mtime = ?3, mtime_nsec = ?4 WHERE ino = ?1",
+                rusqlite::params![ino, size, now.sec, now.nsec as i64],
+            )?;
+            ino
+        } else {
+            conn.execute(
+                "INSERT INTO fs_inode (mode, nlink, uid, gid, size, atime, mtime, ctime, rdev, atime_nsec, mtime_nsec, ctime_nsec, derived)
+                 VALUES (?1, 1, 0, 0, ?2, ?3, ?3, ?3, 0, ?4, ?4, ?4, 0)",
+                rusqlite::params![(S_IFREG | 0o444) as i64, size, now.sec, now.nsec as i64],
+            )?;
+            let new_ino = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO fs_dentry (name, parent_ino, ino) VALUES (?1, ?2, ?3)",
+                rusqlite::params![filename, parent_ino, new_ino],
+            )?;
+            new_ino
+        };
+        for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
+            conn.execute(
+                "INSERT INTO fs_data (ino, chunk_index, data) VALUES (?1, ?2, ?3)",
+                rusqlite::params![ino, i as i64, chunk],
+            )?;
+        }
+        Ok(ino as u64)
+    }
+
+    /// Count of binary files currently recorded as unindexed. Surfaced as
+    /// `unindexed_files` in `semfs status`.
+    pub(crate) fn count_unindexed(&self) -> usize {
+        let conn = self.conn.lock();
+        conn.query_row("SELECT COUNT(*) FROM fs_unindexed", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map(|n| n as usize)
+        .unwrap_or(0)
     }
 
     /// Inodes whose server-side processing has not reached `done`. Drives the
@@ -985,6 +1281,56 @@ mod tests {
     }
 
     #[test]
+    fn materialize_file_builds_tree_mkdir_p_and_is_idempotent() {
+        let db = Db::open_in_memory().unwrap();
+        let ino = db
+            .materialize_file("/proj/src/main.rs", b"fn main() {}")
+            .unwrap();
+        assert!(ino > 1, "real inode allocated");
+
+        let dentries = |db: &Db| -> i64 {
+            db.conn
+                .lock()
+                .query_row("SELECT COUNT(*) FROM fs_dentry", [], |r| r.get(0))
+                .unwrap()
+        };
+        // tree built from root: proj/ + src/ + main.rs.
+        assert_eq!(dentries(&db), 3, "proj/ + src/ + main.rs dentries");
+
+        // full content in fs_data (chunk 0).
+        let data: Vec<u8> = db
+            .conn
+            .lock()
+            .query_row(
+                "SELECT data FROM fs_data WHERE ino = ?1 AND chunk_index = 0",
+                [ino as i64],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(data, b"fn main() {}");
+
+        // mkdir -p reuse: a sibling under the SAME dirs adds only ONE dentry.
+        db.materialize_file("/proj/src/lib.rs", b"pub fn x() {}")
+            .unwrap();
+        assert_eq!(dentries(&db), 4, "sibling reuses proj/+src/, adds only lib.rs");
+
+        // idempotent: re-materializing replaces content in place (no duplicate).
+        db.materialize_file("/proj/src/main.rs", b"fn main() { /* v2 */ }")
+            .unwrap();
+        assert_eq!(dentries(&db), 4, "re-materialize updates in place");
+        let nmain: i64 = db
+            .conn
+            .lock()
+            .query_row(
+                "SELECT COUNT(*) FROM fs_dentry WHERE name = 'main.rs'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(nmain, 1, "exactly one main.rs after re-materialize");
+    }
+
+    #[test]
     fn open_in_memory_creates_config() {
         let db = Db::open_in_memory().unwrap();
         let conn = db.conn.lock();
@@ -1102,6 +1448,42 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cd, "768");
+    }
+
+    /// Regression (offline-build code-lane drop, SEM-38): a text-only open — no code
+    /// embedder, as `merge_seeds` / `build_kg` / `materialize_*` all do — must PRESERVE
+    /// an existing `vchunks_code` lane, its vectors, AND its `code_embed_dims` stamp.
+    /// The old `(Some(_), None) => DROP` silently destroyed every offline-built code
+    /// lane the moment the next phase opened the seed after the shards populated it.
+    #[test]
+    fn text_only_open_preserves_existing_code_lane() {
+        let db = Db::open_in_memory().unwrap();
+        // Shard build: code embedder attached → lane created + one code vector written.
+        db.ensure_vector_tables(384, Some(768)).unwrap();
+        {
+            let conn = db.conn.lock();
+            let v768: Vec<u8> = (0..768).flat_map(|_| 0.5f32.to_le_bytes()).collect();
+            conn.execute(
+                "INSERT INTO vchunks_code(rowid, embedding) VALUES (1, ?1)",
+                rusqlite::params![v768],
+            )
+            .unwrap();
+        }
+        // A LATER text-only open (build_kg / materialize / merge): must NOT drop it.
+        db.ensure_vector_tables(384, None).unwrap();
+        let conn = db.conn.lock();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM vchunks_code_rowids", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "text-only open dropped the code lane's vectors");
+        let cd: String = conn
+            .query_row(
+                "SELECT value FROM fs_config WHERE key='code_embed_dims'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cd, "768", "text-only open dropped the code_embed_dims stamp");
     }
 
     /// Phase 2 T4 (F2): changing the text dimension rebuilds ONLY `vchunks`.

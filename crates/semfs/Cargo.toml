@@ -12,6 +12,16 @@ description = "semfs CLI — mount your Supermemory container as a local filesys
 name = "semfs"
 path = "src/main.rs"
 
+[features]
+# External Postgres/pgvector backend (SEMFS_STORAGE_BACKEND=pgvector).
+# Off by default so the standard build stays lean (no sqlx/Postgres deps).
+pg = ["semfs-core/pg"]
+# Embedded pglite backend (SEMFS_STORAGE_BACKEND=pglite) — ships an in-process
+# Postgres+pgvector, no external server. Superset of `pg`: a pglite-built binary
+# supports BOTH embedded pglite AND external pgvector, so it must enable the
+# binary's own `pg` cfg too (not just semfs-core/pg-local).
+pglite = ["pg", "semfs-core/pg-local"]
+
 [dependencies]
 semfs-core = { workspace = true }
 tokio = { workspace = true }
@@ -23,6 +33,7 @@ libc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 directories = { workspace = true }
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>The workspace map — FS skeleton + community overlay</title>
+<style>
+  :root{
+    --bg:#0d1117;--panel:#161b22;--panel2:#1c2230;--border:#2a3240;--txt:#e6edf3;--muted:#8b949e;
+    --good:#3fb950;--bad:#f85149;--warn:#d29922;--accent:#58a6ff;--pin:#a371f7;--cyan:#39c5cf;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding-bottom:80px}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 22px}
+  header{padding:30px 0 14px;border-bottom:1px solid var(--border);margin-bottom:22px}
+  h1{font-size:25px;margin:0 0 8px}
+  .lede{color:var(--muted);max-width:820px}
+  h2{font-size:19px;margin:30px 0 12px;padding-top:6px}
+  .one{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:13px 16px;margin:14px 0;font-size:14.5px}
+  .one b{color:var(--accent)}
+  code,.mono{font-family:var(--mono);font-size:.9em}
+  .ascii{font-family:var(--mono);font-size:12.5px;white-space:pre;overflow-x:auto;background:#0b0f15;border:1px solid var(--border);border-radius:9px;padding:14px;color:#c9d1d9;line-height:1.5}
+  .g{color:var(--good)}.r{color:var(--bad)}.w{color:var(--warn)}.a{color:var(--accent)}.p{color:var(--pin)}.c{color:var(--cyan)}.m{color:var(--muted)}
+  /* budget bars */
+  .bars{display:flex;flex-direction:column;gap:12px;margin:14px 0}
+  .barrow{display:grid;grid-template-columns:200px 1fr 130px;align-items:center;gap:12px}
+  .barrow .lab{font-size:13.5px}
+  .barrow .lab .s{display:block;color:var(--muted);font-size:11.5px}
+  .track{position:relative;height:26px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px 0 0 5px;display:flex;align-items:center;padding-left:8px;font:11px var(--mono);color:#04101f;white-space:nowrap}
+  .fill.ok{background:linear-gradient(90deg,#2ea043,#3fb950)}
+  .fill.no{background:linear-gradient(90deg,#b62324,#f85149);color:#fff}
+  .budline{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--warn);z-index:3}
+  .budlab{position:absolute;top:-18px;font:10px var(--mono);color:var(--warn);transform:translateX(-50%)}
+  .verdict{font:11.5px var(--mono);text-align:right}
+  .verdict.ok{color:var(--good)}.verdict.no{color:var(--bad)}
+  /* generic card/grid */
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin:14px 0}
+  .step{display:flex;align-items:center;gap:10px;color:var(--muted);font:12px var(--mono);margin:10px 0 6px}
+  .step:before{content:"▼";color:var(--cyan)}
+  .layers{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+  @media(max-width:760px){.layers{grid-template-columns:1fr};.barrow{grid-template-columns:130px 1fr 90px}}
+  .lcard{border:1px solid var(--border);border-radius:9px;padding:14px}
+  .lcard.ctx{border-left:3px solid var(--good);background:rgba(63,185,80,.04)}
+  .lcard.disk{border-left:3px solid var(--pin);background:rgba(163,113,247,.04)}
+  .lcard h4{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+  .lcard.ctx h4{color:var(--good)}.lcard.disk h4{color:var(--pin)}
+  .lcard ul{margin:6px 0 0;padding-left:18px;font-size:13px}.lcard li{margin:4px 0}
+  /* distinctiveness chart */
+  .hist{display:flex;flex-direction:column;gap:8px;margin:12px 0}
+  .hrow{display:grid;grid-template-columns:90px 1fr 130px;align-items:center;gap:10px;font-size:13px}
+  .htrack{height:22px;background:var(--panel2);border-radius:5px;overflow:hidden}
+  .hfill{height:100%;border-radius:5px}
+  .hnote{font:11.5px var(--mono);color:var(--muted)}
+  .tag{display:inline-block;font:11px var(--mono);padding:2px 7px;border-radius:5px;border:1px solid var(--border)}
+  .tag.good{color:var(--good);border-color:#1f5128}.tag.bad{color:var(--bad);border-color:#5c2526}
+  .callout{background:rgba(248,81,73,.08);border:1px solid #5c2526;border-radius:8px;padding:12px 14px;margin:12px 0;font-size:13.5px;color:#ffc9c6}
+  .callout.good{background:rgba(63,185,80,.08);border-color:#1f5128;color:#9be7a8}
+  .foot{color:var(--muted);font-size:12px;margin-top:28px;border-top:1px solid var(--border);padding-top:14px}
+  .foot code{color:var(--accent)}
+  b.g{color:var(--good)}b.r{color:var(--bad)}b.w{color:var(--warn)}b.p{color:var(--pin)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>The workspace <span style="color:var(--cyan)">map</span> — what actually fits in the agent's context</h1>
+  <div class="lede">Not "the knowledge graph" (it's 6–10× too big) and not "just a file list." A layered map: a <b style="color:var(--good)">filesystem skeleton</b> + a distilled <b style="color:var(--pin)">community overlay</b>, always cached; the full KG stays on disk as an on-demand lookup. All numbers are measured from the real <span class="mono">chanpin-gemma-q4</span> seed (698 files, 9,300 entities).</div>
+  <div class="one"><b>The map in one idea:</b> give the agent a cheap, cached <i>table of contents</i> of the workspace so it navigates to the right place itself — instead of relying on the opaque ranked retrieval that buried the right file.</div>
+</header>
+
+<h2>1 · What fits in a 5,000-token budget</h2>
+<div class="bars" id="bars"></div>
+<div class="one" style="border-left-color:var(--warn)"><b style="color:var(--warn)">Takeaway:</b> the full KG can't go in context — 9,300 entity names alone are ~28k tokens, the edge list ~50k. Only the <b class="g">FS skeleton (1.4k)</b> + the <b class="p">community overlay (2.1k)</b> fit, together ≈ <b>3.5k</b>.</div>
+
+<h2>2 · What is a "community overlay"? (the worked example)</h2>
+<p>The KG clusters files into <b>communities</b> (Leiden clustering on the file↔entity graph): files that share many entities land in the same community ≈ a topical group. The <b>overlay</b> is just <b>one line per community</b> — a label + size + where it lives. It's the KG <i>distilled to a table of contents</i>, not the raw graph.</p>
+
+<div class="card">
+<div class="ascii"><span class="m"># RAW KG — every file and the entities it mentions (9,300 entities total — too big to show/ship)</span>
+  compliance_policy.md     → {<span class="c">content governance</span>, <span class="c">grading</span>, China-US, <span class="c">risk</span>}
+  content_grading.xlsx     → {<span class="c">grading</span>, classification, <span class="c">risk</span>, audit}
+  risk_audit_2025.pdf      → {<span class="c">risk</span>, audit, <span class="c">governance</span>}
+  evaluation_1.txt         → {<span class="w">product eval</span>, score, UX}
+  evaluation_10.txt        → {<span class="w">product eval</span>, score, rating}</div>
+<div class="step">Leiden clustering — group files that share entities</div>
+<div class="ascii"><span class="c">Community C4</span> = { compliance_policy.md, content_grading.xlsx, risk_audit_2025.pdf }   <span class="m">share {governance, risk, grading}</span>
+<span class="w">Community C0</span> = { evaluation_1.txt, evaluation_10.txt, … 60 more }                <span class="m">share {product eval, score}</span></div>
+<div class="step">label each community (by dominant dir / top entities) → keep only the label</div>
+<div class="ascii"><span class="m"># THE COMMUNITY OVERLAY — what the agent actually sees (1 line each, ~173 lines, 2.1k tokens)</span>
+<span class="c">C4</span> (19 files) ~ /chanpin/compliance_and_risk_control/   · governance, grading, risk
+<span class="w">C0</span> (62 files) ~ /Desktop/Product_Evaluation/            · product eval, scores
+<span class="g">C1</span> (61 files) ~ /chanpin/platform_and_open_capabilities/ · reporting API, data fields
+<span class="g">C3</span> (28 files) ~ /chanpin/quality_assurance_and_testing/  · API test coverage
+   …</div>
+</div>
+<div class="one"><b>Why "overlay":</b> it sits <i>on top of</i> the FS skeleton. The FS skeleton says <b>where files are</b> (dirs, counts, types). The community overlay says <b>which files form a topic</b> — and topics can span directories. Together: structure + semantics.</div>
+
+<h2>3 · The full FS skeleton (real, 1,410 tokens, all 698 files)</h2>
+<div class="ascii"><span class="m"># WORKSPACE MAP — chanpin · 698 files, 53 top-dirs</span>
+/chanpin/strategic_planning/          (87: .pdf×23 .docx×19 .md×19)  e.g. brd_content_review_engine…, brd_data_analysis_module…
+/chanpin/compliance_and_risk_control/ (54: .xlsx×18 .pdf×14 .md×9)   e.g. china_us_platform_content_governance…, content_grading…
+/chanpin/project_release_management/  (45: .xlsx×23 .pdf×7)          e.g. action_item_tracker_2025q1.xlsx…
+/chanpin/data_review_and_feedback/    (42: .xlsx×15 .pdf×14)         e.g. user_feature_suggestion_summary…, npssurvey_results…
+/Desktop/Product_Evaluation/          (90: .txt×90)                  e.g. evaluation_1.txt, evaluation_10.txt
+   … 53 dirs</div>
+
+<h2>4 · The punchline — the KG is 82% precise pins, 0.3% decoy-magnets</h2>
+<p>For each entity, how many files does it link to? (Fewer files = more <i>distinctive</i> = a better landmark.)</p>
+<div class="hist" id="hist"></div>
+<div class="callout"><b class="r">The 32 generic entities (11+ files) are exactly what the PPR diffusion spread mass through to bury the right file.</b> The prior mixed all 9,300 into one diffused score → the 32 hyper-connected ones dominated → the named file sank to #13.</div>
+<div class="callout good"><b class="g">The map uses the KG the opposite way.</b> The 7,644 single-file entities become precise <span class="mono">entity → file</span> lookups (used on demand); the 32 generic ones pin nothing. Same graph — flipped from <i>harmful ranking prior</i> to <i>helpful navigation index</i>.</div>
+
+<h2>5 · The layered architecture</h2>
+<div class="layers">
+  <div class="lcard ctx">
+    <h4>◆ In context (cached, ~3.5k tok)</h4>
+    <ul>
+      <li><b class="g">FS skeleton</b> — dirs, counts, types, landmark files → <i>where</i> things are</li>
+      <li><b class="p">Community overlay</b> — ~173 cluster labels → <i>what</i> each region is about</li>
+    </ul>
+    <div class="hnote" style="margin-top:8px">prefix-cached → ≈free after turn 1 · always present, no tool call needed</div>
+  </div>
+  <div class="lcard disk">
+    <h4>▸ On disk (queried on demand)</h4>
+    <ul>
+      <li><b>Distinctive entity → file</b> lookup (7,644 single-file pins, ~50k tok — never dumped)</li>
+      <li><b>Content FTS / scoped grep</b> — when the agent drills into a region</li>
+    </ul>
+    <div class="hnote" style="margin-top:8px">the agent calls these <i>after</i> the map tells it where to look</div>
+  </div>
+</div>
+<div class="ascii">agent reads <span class="g">map (FS + communities)</span>  ──▶  picks a dir / cluster  ──▶  drills:
+        <span class="p">scoped grep</span> in that dir   ·   <span class="p">entity lookup</span> "where is X"   ·   <span class="p">cat</span> a small file
+  ⇒ decoys in OTHER dirs fall out of scope · the buried file is reachable directly · fewer blind turns</div>
+
+<div class="callout good"><b class="g">Why this beats the prior:</b> the prior <i>mixed</i> distinctive + generic into one diffused score (generic won → burial). The map <i>separates</i> them — communities for coarse semantic navigation, single-file entities for precise on-demand pins — and lets the <b>agent</b> navigate (its strength) instead of trusting an opaque ranking (the thing that failed).</div>
+
+<h2>6 · The realistic middle ground — the <span style="color:var(--cyan)">enriched</span> overlay</h2>
+<p>Plain community labels route the agent to a <i>region</i> but say nothing about content (the <span class="mono">abc.txt = Anthropic call</span> problem). The fix: per community, append its <b>top distinctive entities</b> (the single-file / low-degree ones — the precise pins, not the generic decoy-magnets). One line now carries <b>structure + topic + content signal</b>.</p>
+<div class="card">
+<div class="ascii"><span class="m"># PLAIN overlay — region only</span>
+C1 (61f) /platform_and_open_capabilities/
+              │  + append each community's top DISTINCTIVE entities (degree ≤ 4)
+              ▼
+<span class="m"># ENRICHED overlay — region + content signal (REAL chanpin)</span>
+<span class="c">C1</span> (61f) /platform_and_open_capabilities/ · <span class="w">王芳, Redis会话缓存, RSA非对称加密机制, iOS SDK</span>
+<span class="c">C4</span> (19f) /compliance_and_risk_control/    · <span class="w">SGS工作编号, UR研究院, 上海市宝山区漠河路151号</span>
+<span class="c">C7</span> (13f) /desktop/product/                · <span class="w">Product Director, Q21, gmv</span>
+<span class="m"># illustrative — your example:</span>
+<span class="c">C12</span> (8f) /notes/  · sales calls · <span class="w">Anthropic, OpenAI, pricing-tier, Q3-deal</span>   ← now "Anthropic" is visible in the map</div>
+</div>
+<div class="bars" id="bars2"></div>
+<div class="one"><b>Budget:</b> the enriched overlay is <b class="g">~4.2k tokens and carries the directory in each line</b> → it can be the <i>whole</i> map (no separate FS skeleton needed), fitting 5k. Adding a separate FS skeleton pushes it to ~5.6k → then trim to 3 entities/community or merge tiny clusters.</div>
+<div class="callout"><b class="w">Selection quality is the lever.</b> Notice C0/C2 surfaced bare dates (<span class="mono">2024-07-09</span>) — low-value labels. The overlay is only as good as the entity ranking: filter out dates/standalone numbers, prefer <b>named</b> entities (people, orgs, products, ids, tech terms). Garbage entities → a map that misroutes.</div>
+
+<h2>7 · Which problems does the enriched overlay actually solve?</h2>
+<table style="width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px">
+<thead><tr style="border-bottom:1px solid var(--border);text-align:left">
+<th style="padding:7px 8px">Problem (from the SEM-40 analysis)</th><th style="padding:7px 8px;width:80px">Verdict</th><th style="padding:7px 8px">Why</th></tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px">Ranking <b>burial</b> (named file sank to #13)</td><td style="padding:7px 8px"><span class="tag good">✓ solves</span></td><td style="padding:7px 8px">agent navigates to the region from the cached map → <b>bypasses the ranker entirely</b> (the buried fused-score never matters)</td></tr>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px"><b>"What do I grep / which files do I read?"</b></td><td style="padding:7px 8px"><span class="tag good">✓ solves</span></td><td style="padding:7px 8px">map = <i>where</i> + <i>key terms</i> per region → scoped grep / <span class="mono">cat</span> by choice</td></tr>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px"><b>Under-exploration</b> (turnbrake stops early)</td><td style="padding:7px 8px"><span class="tag good">✓ solves</span></td><td style="padding:7px 8px">structure + entities upfront → straight to the region → fewer blind turns</td></tr>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px"><b>Affordance</b> (agent ignores the <span class="mono">semfs grep</span> hint)</td><td style="padding:7px 8px"><span class="tag good">✓ solves</span></td><td style="padding:7px 8px">it's <b>always-cached context</b>, not a tool the agent can skip</td></tr>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px"><b>Token cost</b></td><td style="padding:7px 8px"><span class="tag good">✓ improves</span></td><td style="padding:7px 8px">~4.2k cached (≈free after turn 1) + fewer wandering turns → net likely <b>down</b></td></tr>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px"><b>Opaque-named content</b> (abc.txt = Anthropic call)</td><td style="padding:7px 8px"><span class="tag" style="color:var(--warn);border-color:#5c4a18">◐ partial</span></td><td style="padding:7px 8px">works <i>if</i> the distinctive entity is a top-K community term → it shows in the map; otherwise routes to the topic-region only → then grep</td></tr>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px"><b>Generic-only queries</b> (no distinctive token)</td><td style="padding:7px 8px"><span class="tag" style="color:var(--warn);border-color:#5c4a18">◐ partial</span></td><td style="padding:7px 8px">topic-level routing via community labels helps even with no distinctive token — but it's a region, not a file</td></tr>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px"><b>Near-duplicate decoys</b> (139: 60 event_plans ×4 dirs)</td><td style="padding:7px 8px"><span class="tag" style="color:var(--warn);border-color:#5c4a18">◐ partial</span></td><td style="padding:7px 8px">map makes the duplication <b>visible</b> (a big gain over being blind) — but picking the canonical copy still needs <b>enumeration</b></td></tr>
+<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 8px"><b>Filename / output collection</b> (box 9 — ~15% zeroed)</td><td style="padding:7px 8px"><span class="tag bad">✗ no</span></td><td style="padding:7px 8px">that's a harness output-collection bug, not retrieval — needs its own fix</td></tr>
+<tr><td style="padding:7px 8px"><b>Per-file precise content</b> for <i>every</i> file</td><td style="padding:7px 8px"><span class="tag bad">✗ no</span></td><td style="padding:7px 8px">would need per-file summaries ≈ 30k tokens (6× over) — out of budget by design</td></tr>
+</tbody>
+</table>
+<div class="callout good"><b class="g">The pattern:</b> the enriched overlay solves the <i>navigation</i> failures (burial, under-exploration, affordance, "what to grep") cleanly, and <i>partially</i> the content-precision ones (opaque names, generics, duplicates) by routing the agent to the right region where a cheap scoped grep finishes the job. It does <b>not</b> touch the harness output bug or replace per-file summaries — those are separate levers.</div>
+
+<div class="foot">
+  Measured from <code>benchmarks/e2b/assets/chanpin-gemma-q4.db</code>: 698 files · 9,300 entities · 13,322 edges · 173 communities. FS skeleton 1,410 tok · community overlay ~2,110 tok · full entity list ~28.6k tok · full edges ~50k tok. Entity distinctiveness: 7,644 link to 1 file · 1,376 to 2–3 · 243 to 4–10 · 32 to 11+. Ties to: <code>SEM-40</code> burial diagnosis (the 32 = PPR decoy-magnets) and the literal-floor / decoupling thread.
+</div>
+</div>
+
+<script>
+const BUD=5000;
+const BARS=[
+  {lab:'FS skeleton',sub:'dirs + counts + landmarks',tok:1410,ok:true},
+  {lab:'Community overlay',sub:'173 cluster labels (distilled KG)',tok:2110,ok:true},
+  {lab:'FS + overlay (the map)',sub:'what goes in context',tok:3520,ok:true},
+  {lab:'Full entity list',sub:'9,300 names',tok:28650,ok:false},
+  {lab:'Full edge list',sub:'13,322 entity→file',tok:49957,ok:false},
+];
+const MAXT=52000;
+function pctOf(t){return Math.min(100, t/MAXT*100);}
+const budPct=BUD/MAXT*100;
+document.getElementById('bars').innerHTML = BARS.map(b=>{
+  const w=pctOf(b.tok);
+  return `<div class="barrow">
+    <div class="lab">${b.lab}<span class="s">${b.sub}</span></div>
+    <div class="track">
+      <div class="fill ${b.ok?'ok':'no'}" style="width:${Math.max(w,9)}%">${b.tok.toLocaleString()} tok</div>
+      <div class="budline" style="left:${budPct}%"></div>
+      ${b===BARS[0]?`<div class="budlab" style="left:${budPct}%">5k budget</div>`:''}
+    </div>
+    <div class="verdict ${b.ok?'ok':'no'}">${b.ok?'✓ fits':'✗ '+(b.tok/BUD).toFixed(0)+'× over'}</div>
+  </div>`;
+}).join('');
+
+const HIST=[
+  {lab:'1 file',n:7644,col:'#3fb950',note:'precise landmarks ✦'},
+  {lab:'2–3',n:1376,col:'#39c5cf',note:'still usable'},
+  {lab:'4–10',n:243,col:'#d29922',note:'getting generic'},
+  {lab:'11+',n:32,col:'#f85149',note:'decoy-magnets — buried the file'},
+];
+const HM=7644;
+document.getElementById('hist').innerHTML=HIST.map(h=>`
+  <div class="hrow">
+    <div>${h.lab}</div>
+    <div class="htrack"><div class="hfill" style="width:${Math.max(h.n/HM*100,1.5)}%;background:${h.col}"></div></div>
+    <div class="hnote" style="color:${h.col}">${h.n.toLocaleString()} · ${h.note}</div>
+  </div>`).join('');
+
+const BARS2=[
+  {lab:'Enriched overlay (alone)',sub:'dir + topic + entities · 173 communities',tok:4174,ok:true},
+  {lab:'+ separate FS skeleton',sub:'redundant (overlay carries the dir) → trim',tok:5584,ok:false},
+];
+const MAX2=6500, bp2=BUD/MAX2*100;
+document.getElementById('bars2').innerHTML=BARS2.map(b=>{
+  const w=Math.min(100,Math.max(b.tok/MAX2*100,9));
+  return `<div class="barrow"><div class="lab">${b.lab}<span class="s">${b.sub}</span></div>`
+   +`<div class="track"><div class="fill ${b.ok?'ok':'no'}" style="width:${w}%">${b.tok.toLocaleString()} tok</div>`
+   +`<div class="budline" style="left:${bp2}%"></div><div class="budlab" style="left:${bp2}%">5k</div></div>`
+   +`<div class="verdict ${b.ok?'ok':'no'}">${b.ok?'✓ fits':'✗ trim'}</div></div>`;
+}).join('');
+</script>
+</body>
+</html>

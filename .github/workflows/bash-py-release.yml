@@ -1,0 +1,79 @@
+name: bash-py release
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bash-py/**'
+      - '.github/workflows/bash-py-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bash-py
+    outputs:
+      should_publish: ${{ steps.versioncheck.outputs.publish }}
+      version: ${{ steps.versioncheck.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - run: uv pip install ruff mypy pytest pytest-asyncio
+      - run: uv run ruff check .
+      - run: uv run mypy supermemory_bash
+      - run: uv run pytest
+      - run: uv build
+      - name: Detect version bump
+        id: versioncheck
+        run: |
+          LOCAL=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/')
+          PUBLISHED=""
+          if curl -fsSL "https://pypi.org/pypi/supermemory-bash/json" -o /tmp/pypi.json; then
+            PUBLISHED=$(python -c "import json; print(json.load(open('/tmp/pypi.json'))['info']['version'])")
+          fi
+          if [ -z "$PUBLISHED" ] || [ "$LOCAL" != "$PUBLISHED" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "version=$LOCAL" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: check
+    if: false && needs.check.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bash-py
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: bash-py/dist
+      - name: Push git tag
+        working-directory: ${{ github.workspace }}
+        run: |
+          tag="py-v${{ needs.check.outputs.version }}"
+          git tag "$tag" "${{ github.sha }}"
+          git push origin "$tag"

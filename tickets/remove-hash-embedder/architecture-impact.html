@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>remove HashEmbedder — architectural impact (before / after)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --mount:#58a6ff; --cache:#7ee787; --embed:#d2a8ff; --cloud:#f0883e; --bad:#f85149; --good:#3fb950; --warn:#d29922; --store:#79c0ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 18px 90px}
+  h1{font-size:23px;margin:0 0 4px}
+  h2{font-size:18px;margin:30px 0 8px;border-bottom:1px solid var(--line);padding-bottom:5px}
+  h3{font-size:15px;margin:18px 0 6px}
+  .sub{color:var(--mut);margin:0 0 14px;max-width:920px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;font:12px/1.5 ui-monospace,Menlo,monospace}
+  pre .del{color:var(--bad)} pre .add{color:var(--good)} pre .cm{color:var(--mut)}
+  .note{border-left:3px solid var(--embed);padding:8px 12px;margin:12px 0;color:var(--mut);background:#150f22;border-radius:0 8px 8px 0}
+  .note b{color:var(--ink)}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--mut);font-size:11px;text-transform:uppercase}
+  .bad{color:var(--bad);font-weight:700}.good{color:var(--good);font-weight:700}.warn{color:var(--warn);font-weight:700}
+
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0;position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:20;border-bottom:1px solid var(--line)}
+  .tab{flex:1;min-width:130px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:9px;cursor:pointer;text-align:center;font-size:13px}
+  .tab.active{border-color:var(--embed);background:var(--panel2);box-shadow:0 0 0 1px var(--embed) inset}
+  .sec{display:none}.sec.show{display:block}
+
+  .layer{border:1px solid var(--line);border-radius:10px;padding:10px 13px;margin:7px 0;background:var(--panel)}
+  .layer .lh{font-weight:700;font-size:13px;margin-bottom:3px}
+  .l-embed{border-left:4px solid var(--embed)} .l-store{border-left:4px solid var(--store)}
+  .l-cloud{border-left:4px solid var(--cloud)} .l-route{border-left:4px solid var(--warn)}
+  .layer small{color:var(--mut)}
+  .arrowdown{text-align:center;color:var(--mut);font-size:16px;margin:2px 0}
+
+  .sim{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
+  .row{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end}
+  .fld{display:flex;flex-direction:column;gap:4px}
+  .fld label{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  select,.modetog{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:8px 10px;font:13px ui-monospace,Menlo,monospace}
+  .modetog{cursor:pointer}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{border:0;background:var(--panel);color:var(--mut);padding:8px 16px;cursor:pointer;font-size:13px;font-weight:700}
+  .seg button.on{background:#1d1430;color:var(--embed)}
+  .out{margin-top:16px;border:1px dashed var(--line);border-radius:10px;padding:14px;background:#0b0f14}
+  .flowline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font:13px ui-monospace,Menlo,monospace;margin:4px 0}
+  .chip{border-radius:7px;padding:4px 10px;font-weight:700;border:1px solid}
+  .c-embed{background:#1d1430;color:var(--embed);border-color:var(--embed)}
+  .c-store{background:#0d2238;color:var(--store);border-color:var(--store)}
+  .c-cloud{background:#2a1a0d;color:var(--cloud);border-color:var(--cloud)}
+  .c-gate{background:#2a2410;color:var(--warn);border-color:var(--warn)}
+  .c-err{background:#2a1010;color:var(--bad);border-color:var(--bad)}
+  .c-ok{background:#0f2a16;color:var(--good);border-color:var(--good)}
+  .arrow{color:var(--mut)}
+  .verdict{margin-top:12px;font-size:13.5px;padding:10px 12px;border-radius:8px;border:1px solid var(--line)}
+  .verdict.cloud{background:#1c1206;border-color:var(--cloud)}
+  .verdict.local{background:#08130b;border-color:var(--good)}
+  .verdict.err{background:#1c0c0c;border-color:var(--bad)}
+
+  /* DIP diagram */
+  .dip{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:10px 0}
+  @media(max-width:720px){.dip{grid-template-columns:1fr}}
+  .dipcol{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--panel)}
+  .dipcol h3{margin:0 0 8px;font-size:13px}
+  .node{border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin:6px 0;font:12.5px ui-monospace,Menlo,monospace;background:#0b0f14}
+  .node.fake{border-color:var(--bad);color:var(--bad)}
+  .node.iface{border-color:var(--store);color:var(--store)}
+  .node.embed{border-color:var(--embed);color:var(--embed)}
+  .node.sub{margin-left:18px;font-size:11.5px}
+  .pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px}
+  .pill.new{background:#0f2a16;color:var(--good);border:1px solid var(--good)}
+  .pill.gone{background:#2a1010;color:var(--bad);border:1px solid var(--bad)}
+  .site{cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:7px 0;background:var(--panel);transition:border-color .15s}
+  .site:hover{border-color:var(--warn)}
+  .site .sh{font:12.5px ui-monospace,Menlo,monospace;color:var(--warn);font-weight:700}
+  .site .det{display:none;margin-top:8px}
+  .site.open .det{display:block}
+  .kv{font-size:12px;color:var(--mut)}
+  .foot{color:var(--mut);font-size:12px;margin-top:30px;border-top:1px solid var(--line);padding-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Remove <code>HashEmbedder</code> — <span style="color:var(--embed)">architectural impact</span></h1>
+  <p class="sub">What changes when the fake embedder is dissolved. The thesis: <b>one knob that pretends to be a model selector is secretly the search router</b>. This splits it into two honest, orthogonal axes. Grounded in the verified code on <code>feat/backend-agnostic-store</code> — every file:line below was checked against the tree.</p>
+
+  <div class="note"><b>Headline:</b> this is a <b>control-plane refactor, not a data-plane one</b>. The storage schema has <b>zero</b> coupling to <code>hash</code> — <b>no re-index, no migration, no stored-vector change.</b> Only config / routing / wiring moves.</div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-s="eli5">1 · ELI5</button>
+    <button class="tab" data-s="today">2 · The conflation today</button>
+    <button class="tab" data-s="sim">3 · Simulator</button>
+    <button class="tab" data-s="dip">4 · Dependency flip</button>
+    <button class="tab" data-s="expert">5 · Expert: deltas</button>
+  </div>
+
+  <!-- 1 ELI5 -->
+  <div class="sec show" data-sec="eli5">
+    <h2>1 · One knob becomes two</h2>
+    <p class="sub">Today a single setting pretends to choose a <i>model</i> but actually decides <i>where search runs</i>:</p>
+    <div class="layer l-route"><div class="lh">Today — "pick the <code>hash</code> model" → really means → "turn off local search, use the cloud"</div>
+      <small>You say "give me garbage vectors" when you mean "search the cloud." The model axis is secretly the router.</small></div>
+    <div class="arrowdown">▼ split into two honest questions</div>
+    <div class="layer l-embed"><div class="lh">After — Axis A · <code>SEMFS_EMBED_BACKEND</code> = how vectors are made</div>
+      <small><code>local | openai | openrouter</code> — real embedders only. <code>hash</code> is gone.</small></div>
+    <div class="layer l-store"><div class="lh">After — Axis B · <code>SEMFS_STORAGE_BACKEND</code> = where search happens</div>
+      <small><code>sqlite | pgvector | pglite | <b style="color:var(--good)">cloud</b></code> — <code>cloud</code> becomes a first-class storage choice. Routing keys off <b>this</b>, never the embedder.</small></div>
+    <div class="note">Net: we don't <i>add</i> a component — we <b>dissolve</b> one. Fewer concepts, each with a single responsibility.</div>
+  </div>
+
+  <!-- 2 TODAY -->
+  <div class="sec" data-sec="today">
+    <h2>2 · The conflation, in the real code</h2>
+    <p class="sub">One boolean — derived purely by sniffing for <code>Hash</code> — silently gates three production sites. Click each to expand.</p>
+    <pre><span class="cm">// crates/semfs/src/cmd/resolve.rs:111</span>
+pub fn local_indexing_enabled(env:&ResolveEnv) -> bool {
+    choose_embed(env) != EmbedChoice::Hash   <span class="cm">// ← the entire router is "is it hash?"</span>
+}</pre>
+
+    <div class="site" data-site="grep">
+      <div class="sh">▸ grep.rs:54 — does <code>grep</code> search local or cloud?</div>
+      <div class="det"><div class="kv"><code>if super::resolve::local_indexing_enabled(&env) { /* build local index */ } else { /* cloud */ }</code><br>
+        After → <code>if choose_storage(&env).is_local() { … }</code></div></div>
+    </div>
+    <div class="site" data-site="daemon">
+      <div class="sh">▸ daemon_runtime.rs:352 — does the mount build a local fs / index?</div>
+      <div class="det"><div class="kv"><code>let fs = if local_indexing_enabled(&resolve_env) || explicit_backend { … }</code><br>
+        After → keys off <code>StorageChoice::is_local()</code>. <b class="warn">The design's prose forgot this site — it only named grep's <code>build_index</code>.</b></div></div>
+    </div>
+    <div class="site" data-site="guard">
+      <div class="sh">▸ resolve.rs:233 — the "pgvector + hash = misconfig" guard</div>
+      <div class="det"><div class="kv"><code>explicit_backend_without_embedder()</code> returns the backend name to FAIL the mount if an explicit pg/pglite store is paired with the no-semantics <code>hash</code> floor.<br>
+        After → once <code>Hash</code> is gone, <code>local_indexing_enabled</code> is always true → this <b class="bad">always returns None → dead code</b>. Remove the function, not just its tests.</div></div>
+    </div>
+    <div class="note"><b>Why it's a smell:</b> the embedder axis is <i>steering</i> the storage axis, and <code>cloud</code> isn't even a <code>StorageChoice</code> — it's an emergent side-effect of choosing a fake embedder.</div>
+  </div>
+
+  <!-- 3 SIM -->
+  <div class="sec" data-sec="sim">
+    <h2>3 · Config simulator — feel the conflation</h2>
+    <p class="sub">Set the two env vars and watch how routing resolves. Flip <b>Today</b> ↔ <b>After</b> to see the same intent expressed honestly.</p>
+    <div class="sim">
+      <div class="row">
+        <div class="fld"><label>mode</label>
+          <div class="seg" id="mode">
+            <button data-m="today" class="on">Today</button>
+            <button data-m="after">After</button>
+          </div>
+        </div>
+        <div class="fld"><label>SEMFS_EMBED_BACKEND</label>
+          <select id="embed"></select>
+        </div>
+        <div class="fld"><label>SEMFS_STORAGE_BACKEND</label>
+          <select id="store"></select>
+        </div>
+      </div>
+      <div class="out" id="out"></div>
+    </div>
+    <div class="note" id="simnote"></div>
+  </div>
+
+  <!-- 4 DIP -->
+  <div class="sec" data-sec="dip">
+    <h2>4 · The dependency flip (the real structural win — DIP)</h2>
+    <p class="sub">Today the caller must resolve an <code>Arc&lt;dyn Embedder&gt;</code> for <i>every</i> path — so the cloud path is handed a <b class="bad">fake</b> <code>HashEmbedder</code> it never uses. After: the embedder retreats into the local store constructors; the mount depends only on the abstraction it actually uses.</p>
+    <div class="dip">
+      <div class="dipcol">
+        <h3 style="color:var(--bad)">BEFORE — embedder forced everywhere</h3>
+        <div class="node iface">mount / grep</div>
+        <div class="arrowdown">│ depends on</div>
+        <div class="node embed">Arc&lt;dyn Embedder&gt;  <span style="color:var(--mut)">(always)</span></div>
+        <div class="arrowdown">│ even for cloud</div>
+        <div class="node fake">HashEmbedder ⚠ fake — to satisfy the type</div>
+        <div class="node sub">→ CloudIndex (never reads it)</div>
+      </div>
+      <div class="dipcol">
+        <h3 style="color:var(--good)">AFTER — embedder hidden in local impls</h3>
+        <div class="node iface">mount / grep</div>
+        <div class="arrowdown">│ depends on</div>
+        <div class="node iface">Arc&lt;dyn SemanticIndex&gt;</div>
+        <div class="arrowdown">│ built per storage</div>
+        <div class="node">CloudIndex <span style="color:var(--good)">— no embedder, honestly</span></div>
+        <div class="node">SqliteVecStore <span style="color:var(--embed)">↳ owns text+code embedder</span></div>
+        <div class="node">PgVectorStore <span style="color:var(--embed)">↳ owns embedder</span></div>
+      </div>
+    </div>
+    <div class="note"><b>Verified:</b> the trait is <code>SemanticIndex</code> (<code>backend/mod.rs:29</code>); impls are <code>CloudIndex</code> (<code>cloud.rs:33</code>), <code>SqliteVecStore</code> (<code>sqlite_vec.rs:125</code>), <code>PgVectorStore</code> (<code>pgvector.rs:74</code>). <code>SqliteVecStore</code> is <b>dual-lane</b> (text + code), which is why the test double must be one dims-configurable stub, not two.</div>
+  </div>
+
+  <!-- 5 EXPERT -->
+  <div class="sec" data-sec="expert">
+    <h2>5 · Expert — what changes, what doesn't</h2>
+    <h3>Changes to expect</h3>
+    <table>
+      <tr><th>Area</th><th>Today</th><th>After</th></tr>
+      <tr><td>Public API</td><td><code>semfs_core::embed::HashEmbedder</code>, <code>HASH_DIMS</code>, <code>EmbedChoice::Hash</code></td><td><b class="bad">removed</b> from shipped crate <span class="pill gone">gone</span></td></tr>
+      <tr><td>Router</td><td><code>local_indexing_enabled()</code> (sniffs Hash), 3 callers</td><td><code>StorageChoice::is_local()</code> / <code>needs_local_embedder()</code> <span class="pill new">new</span></td></tr>
+      <tr><td>Storage enum</td><td><code>Sqlite | Pgvector | Pglite</code></td><td>+ <code>Cloud</code> <span class="pill new">new</span> (parses <code>"cloud"</code>)</td></tr>
+      <tr><td>Cloud routing</td><td><code>SEMFS_EMBED_BACKEND=hash</code> (a hack)</td><td><code>SEMFS_STORAGE_BACKEND=cloud</code> (honest)</td></tr>
+      <tr><td>Misconfig guard</td><td><code>explicit_backend_without_embedder</code> live</td><td>dead → <b class="bad">delete the fn</b>, not just its tests</td></tr>
+      <tr><td>Test embedder</td><td>94 <code>HashEmbedder::new(N)</code> (82 sqlite + 12 pg)</td><td>→ <code>StubEmbedder</code> under <code>#[cfg(test)]</code> / test-util feature</td></tr>
+      <tr><td>Bench harness + docs</td><td>menus list <code>…|hash</code> (<code>EC2_TESTING_PROGRESS.md</code>)</td><td>drop <code>hash</code>; route via <code>STORAGE_BACKEND=cloud</code></td></tr>
+    </table>
+
+    <h3>What does <span class="good">not</span> change — your reassurance</h3>
+    <table>
+      <tr><th>Guarantee</th><th>Why</th></tr>
+      <tr><td><b>No stored data touched</b> — no re-index, no migration</td><td><code>schema.sql</code> / <code>sqlite_vec.rs</code> have <b>zero</b> <code>hash</code> coupling (verified by grep). Vectors, FTS, pg columns, cloud containers untouched.</td></tr>
+      <tr><td><b>No retrieval-quality change</b></td><td>You never <i>searched</i> with hash vectors in prod — <code>hash</code> only ever meant "don't index, go cloud." Real embedders are unchanged.</td></tr>
+      <tr><td><b><code>SemanticIndex</code> contract keeps its shape</b></td><td>The refactor rewires <i>who constructs what</i>, not the index trait.</td></tr>
+    </table>
+
+    <div class="note"><b>Scope honesty:</b> the ticket's prose implies a single <code>build_index</code> switch. The real branch points are <code>resolve_index</code>/<code>build_local_store</code> in <b>grep.rs</b> <i>and</i> a separate gate in <b>daemon_runtime.rs:352</b>. Migrate both. And <code>local_indexing_enabled</code> is a real 3-site router, not the one-spot Hash-sniff §1 calls it.</div>
+  </div>
+
+  <div class="foot">Generated for <code>tickets/remove-hash-embedder</code> · grounded in <code>feat/backend-agnostic-store</code> @ verified file:lines · counts: sqlite_vec 82 / pgvector 12 HashEmbedder uses.</div>
+</div>
+
+<script>
+// tabs
+const tabs=[...document.querySelectorAll('.tab')], secs=[...document.querySelectorAll('.sec')];
+tabs.forEach(t=>t.onclick=()=>{
+  tabs.forEach(x=>x.classList.remove('active')); t.classList.add('active');
+  secs.forEach(s=>s.classList.toggle('show', s.dataset.sec===t.dataset.s));
+});
+// expandable sites
+document.querySelectorAll('.site').forEach(s=>s.onclick=()=>s.classList.toggle('open'));
+
+// ---- simulator ----
+const EMBED={today:['local','openai','openrouter','hash'], after:['local','openai','openrouter']};
+const STORE={today:['sqlite','pgvector','pglite'], after:['sqlite','pgvector','pglite','cloud']};
+let mode='today';
+const embedSel=document.getElementById('embed'), storeSel=document.getElementById('store'),
+      out=document.getElementById('out'), simnote=document.getElementById('simnote');
+
+function fill(sel,arr,keep){
+  const prev=sel.value;
+  sel.innerHTML=arr.map(v=>`<option ${ (keep&&v===prev)?'selected':'' }>${v}</option>`).join('');
+}
+function chip(t,c){return `<span class="chip ${c}">${t}</span>`;}
+const A=' <span class="arrow">→</span> ';
+
+function render(){
+  const e=embedSel.value, s=storeSel.value;
+  let flow, verdict, vclass, note;
+  if(mode==='today'){
+    // router = (embed==hash) ? cloud : local(storage); but explicit pg/pglite + hash = misconfig
+    const isHash = e==='hash';
+    if(isHash && (s==='pgvector'||s==='pglite')){
+      flow = chip('embed='+e,'c-embed')+A+chip('local_indexing_enabled = (hash!=Hash) = false','c-gate')+A+chip('explicit_backend_without_embedder → "'+s+'"','c-err');
+      verdict='MOUNT FAILS — explicit '+s+' store paired with the no-semantics hash floor. The guard fails closed.';
+      vclass='err';
+    } else if(isHash){
+      flow = chip('embed=hash','c-embed')+A+chip('local_indexing_enabled = false','c-gate')+A+chip('CloudIndex (Supermemory)','c-cloud');
+      verdict='Search routes to the CLOUD — but only because you picked a FAKE embedder. The storage knob ('+s+') is ignored.';
+      vclass='cloud';
+    } else {
+      flow = chip('embed='+e,'c-embed')+A+chip('local_indexing_enabled = true','c-gate')+A+chip('build_embedder()','c-embed')+A+chip('store='+s,'c-store');
+      verdict='Local search on '+s+'. Note: the embedder choice ('+e+') is what flipped indexing ON — the conflation just happens to do the right thing here.';
+      vclass='local';
+    }
+  } else {
+    // after: router = storage; embedder only when storage.is_local()
+    if(s==='cloud'){
+      flow = chip('store=cloud','c-store')+A+chip('needs_local_embedder() = false','c-gate')+A+chip('CloudIndex — NO embedder','c-cloud');
+      verdict='Search routes to the CLOUD — honestly, via storage. embed='+e+' is never consulted (cloud embeds its own).';
+      vclass='cloud';
+    } else {
+      flow = chip('store='+s,'c-store')+A+chip('needs_local_embedder() = true','c-gate')+A+chip('build_embedder()='+e,'c-embed')+A+chip(s==='pgvector'?'PgVectorStore':(s==='pglite'?'PgLiteStore':'SqliteVecStore'),'c-ok');
+      verdict='Local search on '+s+' with the '+e+' embedder. Two independent axes; no fake type, no misconfig case to guard.';
+      vclass='local';
+    }
+  }
+  out.innerHTML = `<div class="flowline">${flow}</div><div class="verdict ${vclass}">${verdict}</div>`;
+}
+
+document.querySelectorAll('#mode button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#mode button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); mode=b.dataset.m;
+  fill(embedSel,EMBED[mode],true); fill(storeSel,STORE[mode],true);
+  simnote.innerHTML = mode==='today'
+    ? '<b>Today:</b> try <code>embed=hash</code> with any storage — watch the storage knob get ignored. Try <code>hash</code> + <code>pgvector</code> — watch it fail closed.'
+    : '<b>After:</b> the embedder dropdown lost <code>hash</code>; storage gained <code>cloud</code>. Cloud never touches the embedder. The misconfig case is structurally gone.';
+  render();
+});
+embedSel.onchange=render; storeSel.onchange=render;
+fill(embedSel,EMBED.today); fill(storeSel,STORE.today);
+simnote.innerHTML='<b>Today:</b> try <code>embed=hash</code> with any storage — watch the storage knob get ignored. Try <code>hash</code> + <code>pgvector</code> — watch it fail closed.';
+render();
+</script>
+</body>
+</html>

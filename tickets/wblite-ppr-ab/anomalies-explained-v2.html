@@ -1,0 +1,64 @@
+<!doctype html><html><head><meta charset="utf-8"><title>WB-Lite — Two Anomalies, validated + extended</title>
+<style>
+body{background:#0e1116;color:#cdd9e5;font:15px/1.55 -apple-system,system-ui,sans-serif;max-width:980px;margin:0 auto;padding:28px}
+h1{font-size:22px;margin:0 0 4px} h2{font-size:17px;margin:26px 0 8px;color:#7ee2a8} h3{font-size:15px;color:#9db4d0;margin:16px 0 4px}
+.sub{color:#7d8da3;font-size:13px;margin-bottom:18px}
+table{border-collapse:collapse;width:100%;margin:8px 0;font-size:13px} th,td{border:1px solid #243042;padding:5px 8px;text-align:right} th.l,td.l{text-align:left}
+th{background:#172234;color:#9db4d0} .up{color:#ff9b8a} .dn{color:#ff9b8a} .ok{color:#7ee2a8}
+.box{border:1px solid #243042;border-radius:8px;padding:12px 14px;margin:12px 0;background:#131a24}
+.warn{border-color:#6f5a1f;background:#241f0d;color:#e2cf7e} .good{border-color:#1f6f3f;background:#0d2818;color:#7ee2a8}
+.zone{font-size:11px;color:#7d8da3;text-transform:uppercase;letter-spacing:.5px}
+code{background:#1c2533;padding:1px 5px;border-radius:4px;font-size:12px} .cred{color:#ffd479;font-weight:600}
+a{color:#6cb6ff}
+</style></head><body>
+
+<h1>Two anomalies — validated, then extended</h1>
+<p class="sub">PPR (semfs retrieval) vs plain, converged judge · GLM-5.1 · n=2–3 · 4 personas.
+Builds on <a href="anomalies-explained.html">anomalies-explained.html</a> (the original hypothesis).
+Method: thinking-model-combination (parallel lenses) → forming-opinions (credence + falsifier).</p>
+
+<h2>① The two anomalies — PPR-on minus plain</h2>
+<table>
+<tr><th class="l">persona</th><th>Δacc</th><th>Δtok (mean)</th><th>flag</th></tr>
+<tr><td class="l">chanpin</td><td class="ok">+8.3</td><td class="ok">−38K</td><td></td></tr>
+<tr><td class="l">kaifa</td><td class="ok">+16.0</td><td class="up">+237K</td><td class="up">TOK ↑ (only)</td></tr>
+<tr><td class="l">houqin</td><td class="dn">−6.1</td><td class="ok">−158K</td><td class="dn">ACC ↓ (only)</td></tr>
+<tr><td class="l">yunying</td><td class="ok">+10.8</td><td class="ok">−174K</td><td></td></tr>
+</table>
+<p>PPR helps accuracy & saves tokens everywhere — <b>except</b>: tokens rise in kaifa, accuracy drops in houqin. Different personas, different axes.</p>
+
+<h2>② Validating the original hypothesis ("plain is maxed exactly there")</h2>
+<div class="box good"><b>CONFIRMED as a correlation — exactly.</b><br>
+Cross-persona rankings: <b>kaifa = lowest plain tokens</b> (381K &lt; 472 &lt; 619 &lt; 723) and <b>houqin = highest plain accuracy</b> (27.9% &gt; 19.7 &gt; 17.5 &gt; 9.8). The anomaly lands on the exact persona where plain peaks on that axis. The original call deserves credit: the pattern is real and precisely stated.</div>
+<p><b>houqin accuracy drop — fully explained by the hypothesis.</b> Decomposing the drop: plain 27.9% (HIGHEST plain) vs PPR 21.8% (rank 3/4 — mid, not catastrophic). So the gap is driven by plain being <i>exceptional</i>, not by PPR collapsing. "Plain is maxed" holds. ✓</p>
+
+<h2>③ Where the hypothesis is incomplete (kaifa)</h2>
+<div class="box warn"><b>The kaifa token rise is only HALF "cheap plain."</b><br>
+kaifa plain = 381K (lowest, ✓) — but kaifa PPR = 619K is also the <b>most expensive PPR of any persona</b> (rank 1/4). So the rise is <b>cheap-plain AND expensive-PPR</b>. The ceiling story explains the cheap baseline but is silent on why kaifa's <i>PPR</i> is uniquely costly.</div>
+<div class="box warn"><b>And ~half of it is a mean artifact.</b><br>
+Token cost is fat-tailed (medians ~250–310K everywhere; outliers 2–4M). kaifa PPR <b>mean 509K but median 275K (mean = 1.9× median)</b>. The anomaly table is mean-based, so the +237K overstates the <i>typical-cell</i> rise — much of it is the same outlier tail (case 226 etc.), not a uniform PPR tax.</div>
+
+<h2>④ Candidate hypotheses (parallel lenses)</h2>
+<table>
+<tr><th class="l">lens</th><th class="l">claim</th><th class="l">verdict vs data</th></tr>
+<tr><td class="l">A. Baseline ceiling <span class="zone">(original)</span></td><td class="l">Anomaly = where plain peaks; retrieval can't beat a maxed baseline</td><td class="l ok">Correlation exact. Explains houqin fully, kaifa half.</td></tr>
+<tr><td class="l">B. <b>Workspace structure</b> <span class="zone">(common cause)</span></td><td class="l">Code repo → cheap dir-navigation + DENSE call/import KG → PageRank over-retrieves (expensive PPR). Doc tree → browsable (accurate plain) + semantic retrieval pulls similar-but-wrong docs (misdirects → acc drop).</td><td class="l ok">Explains BOTH halves of kaifa + the houqin drop mechanistically. The structure causes the plain-peak, so A is a symptom of B.</td></tr>
+<tr><td class="l">C. Measurement <span class="zone">(artifact)</span></td><td class="l">kaifa token rise is mean-inflated by the fat tail; at median it shrinks</td><td class="l ok">Confirmed: kaifa PPR mean/median = 1.9×.</td></tr>
+<tr><td class="l">D. houqin index quality <span class="zone">(active harm)</span></td><td class="l">Chinese logistics docs misrank in the embedder → PPR actively wrong</td><td class="l warn">Weak here — houqin PPR is mid-pack (21.8%), not collapsed. Drop is mostly high-plain, not low-PPR. Amplifier at most.</td></tr>
+</table>
+
+<h2>⑤ Verdict (forming-opinions)</h2>
+<div class="box">
+<p><b>Original hypothesis ("one phenomenon: plain is maxed"): <span class="cred">~60%</span></b> — the correlation is exact and houqin is well-explained, but it (a) only half-explains kaifa (omits the uniquely-expensive PPR), (b) is mean-based (the rise shrinks at the median), and (c) rests on <b>n=4 personas</b> — a 4-point correlation is weak as a law.</p>
+<p><b>Refinement — workspace structure is the common cause: <span class="cred">~70%</span></b>. Code-vs-docs structure drives <i>both</i> the plain-peak (A's observation) and the PPR-failure mode (the half A misses): dense code graph → over-retrieval → tokens; browsable doc tree → semantic distractors → accuracy. "Plain is maxed" is the symptom; structure is the root.</p>
+<p><b>Strongest case against (steel-manned):</b> with only 4 personas, both stories are post-hoc fits; the true driver could be per-persona <i>task type</i> (kaifa has more enumeration tasks → crawl/over-read; houqin has more navigational tasks → plain wins) independent of code-vs-docs.</p>
+<p><b>I'd change my mind if:</b> (1) kaifa PPR does <i>not</i> read more distinct files than other personas → kills the "dense graph → over-retrieval" half of B; (2) houqin's failed PPR cases do <i>not</i> show reads of semantically-near-but-wrong docs → kills the "distractor misdirection" half; (3) on MEDIAN tokens (not mean), kaifa's rise vanishes → the token anomaly was C (artifact) all along.</p>
+</div>
+
+<h2>⑥ Caveats</h2>
+<ul>
+<li><b>n=4 personas</b> — every "law" here is a 4-point fit. Treat as a hypothesis to test on more personas, not a result.</li>
+<li><b>Token anomaly is mean-based</b> — fat-tailed distribution; the median tells a calmer story.</li>
+<li><b>plaid (next_plaid) not yet in this comparison</b> — needs converged re-judge to join.</li>
+</ul>
+</body></html>

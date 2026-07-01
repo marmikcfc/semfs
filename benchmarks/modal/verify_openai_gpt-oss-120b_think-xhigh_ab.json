@@ -1,0 +1,320 @@
+{
+  "model": "openai/gpt-oss-120b",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements (dates, names, events, numbers, quotations, attributions) from the original are present in the compressed version; only non‑factual opinion/filler language was removed, which is permissible.",
+      "usage": {
+        "in": 1889,
+        "out": 6269,
+        "reasoning": 7571
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Half winners, half tackle tough questions"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omits the introductory statement that ‘Half winners, half tackle tough questions’, which is a quantitative fact about the participants. All other names, organizations, URLs, element listings, and other factual details are retained.",
+      "usage": {
+        "in": 2030,
+        "out": 5325,
+        "reasoning": 6108
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original (claims about baggy clothes as self‑expression, motivations, comfort, freedom, rebellion, confidence, versatility, AI limitations, fashion trends, and style preferences) are retained in the compressed version. The compression only reformats and removes filler, without omitting or inventing any facts.",
+      "usage": {
+        "in": 2181,
+        "out": 7121,
+        "reasoning": 8885
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Association as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omitted the fact that Association is the Primary Servicer of the Related Home Depot Mortgage Loan (Exhibit 34.1); all other facts are preserved.",
+      "usage": {
+        "in": 2270,
+        "out": 3578,
+        "reasoning": 3905
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All entity‑role assignments, exhibit citations, specific obligations, signature details, dates and identifiers are present in the compressed version. Only formatting, punctuation and minor wording (e.g., removal of non‑factual words like \"the requirements of\" or \"see\") were changed, which does not affect any factual content.",
+      "usage": {
+        "in": 2302,
+        "out": 3154,
+        "reasoning": 3443
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements—role assignments (User Interface Designer, Industrial Designer), responsibilities (UI will work out buttons, ID will work out box design), mention of requirement specifications, discussion of overlap, research task about remote button usage, meeting wrap‑up, and the timing note ('see you in thirty minutes')—are retained. Only filler, disfluencies, and non‑informative vocal sounds were removed, and no new facts were introduced.",
+      "usage": {
+        "in": 1813,
+        "out": 3864,
+        "reasoning": 4435
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "User Interface: Consensus on the, what we're gonna do"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omitted the User Interface utterance that explicitly states 'Consensus on the, what we're gonna do', which is a factual speaker attribution in the original. This missing fact makes the compression lossy, even though other facts are preserved.",
+      "usage": {
+        "in": 1995,
+        "out": 7916,
+        "reasoning": 7830
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information from the original—names (Megan Williams, Carmen Williams, Sheriff W.E. Hunter), age (20), race (African‑American), alleged week‑long captivity and torture, specific alleged injuries and forced acts, six white suspects, charges (kidnapping, sexual assault, malicious wounding, false information, etc.), release of victim's name, sheriff’s quote about arrests (mother/son, mother/daughter, two others), sheriff’s 30‑year tenure, community cooperation statements, demographic comment about African‑Americans and whites, lack of known motive, FBI pursuing a person of interest, and the thank‑you exchange—are all preserved. Only non‑facts (opinion words, filler, minor phrasing tweaks) were removed, which is permissible.",
+      "usage": {
+        "in": 2195,
+        "out": 3330,
+        "reasoning": 3911
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Step 3 continuation: \"Instead of focusing on what you don't want, focus on what you do want.\"",
+        "Step 3 example: \"For example, instead of saying \\\"I want quit smoking\\\", say \\\"I want to live a healthy and smoke‑free life\\\".\"",
+        "Step 4: \"Visualize the outcome: Once you have set your intention, spend some time visualizing the outcome. Imagine what it would look, feel, sound, and smell like once you have achieved your goal.\"",
+        "Step 5: \"Repeat your intention: Repeat your intention to yourself several times a day, especially before you start your visualization practice. This helps reinforce your intention and keeps you focused on your goal.\"",
+        "Conclusion after steps: \"By following these steps, you can set a clear intention for your visualization practice and increase your chances of manifesting your desired outcome.\"",
+        "Question about materialistic goals: \"Can visualization be effective for achieving materialistic goals like wealth and possessions?\"",
+        "Answer opening: \"Visualization can be effective for achieving materialistic goals such as wealth and possessions.\"",
+        "Benefit statement: \"Visualization helps create a positive attitude towards wealth and possessions, focusing on positive aspects such as security, comfort, and enjoyment.\"",
+        "Limitation statement: \"Visualization alone is not enough; you need to take action such as developing skills, taking opportunities, or investing resources to attain wealth and possessions.\"",
+        "Tool description: \"Visualization is simply a tool that you can use to help you stay focused and motivated on the path towards achieving your desired outcomes.\""
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version truncates the original after the start of step 3, omitting the remainder of step 3, steps 4 and 5, the concluding sentence, and the entire third section about materialistic goals. These omissions remove several factual action items and informational statements, making the compression lossy.",
+      "usage": {
+        "in": 2345,
+        "out": 4579,
+        "reasoning": 5396
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Most smartwatches come with sensors and built-in apps that track your workouts, steps, heart rate, and other fitness-related metrics."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version removed the quantifier 'most' from the fitness‑tracking statement, changing the original claim that most smartwatches have sensors and built‑in apps for tracking. All other facts (brand names, feature details, price ranges, and advice) are retained.",
+      "usage": {
+        "in": 1908,
+        "out": 7797,
+        "reasoning": 9368
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details (entity names, roles, exhibit references, signature name, title, date, regulatory citations) are unchanged. Only non‑factual filler words (e.g., “duly” before “caused”, “thereunto”) were removed, which does not affect any fact.",
+      "usage": {
+        "in": 2318,
+        "out": 3001,
+        "reasoning": 3271
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text retains every factual element from the original (section numbers, subsection references, statutory citations, quoted language, and all enumerated items). Only formatting and line‑break changes were made; no facts were omitted, altered, or added.",
+      "usage": {
+        "in": 2234,
+        "out": 1450,
+        "reasoning": 1375
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numerical values, percentages, dates, revenue amounts, industry breakdowns, growth rates, cost-effectiveness figures, and purpose statements from the original are present in the compressed version. The compression only reformats and streamlines the prose without altering any factual content.",
+      "usage": {
+        "in": 2238,
+        "out": 2492,
+        "reasoning": 3052
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements (section numbers, time frames, actions, requirements, and conditions) from the original text are retained in the compressed version. The changes are purely stylistic or phrasing; no facts were omitted, altered, or introduced.",
+      "usage": {
+        "in": 1806,
+        "out": 2349,
+        "reasoning": 3074
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements (patient age, presentation details, measurements, treatment regimen, imaging findings, percentage prevalence, literature references, embryological details, and anatomical descriptions) are preserved. No facts were omitted or introduced; only wording and formatting were changed.",
+      "usage": {
+        "in": 2382,
+        "out": 1547,
+        "reasoning": 1609
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All quantitative facts (66.7% HPV‑positive stage IVA, 35.4% HPV‑negative stage IVA, 34.4% HPV‑negative died, 73.3% HPV‑positive died), the stage designation, the statement that local recurrence was the most common relapse type with no statistically significant difference by HPV status, low recurrence rates in HPV‑related OPSCC (citations 2,50), Weinberger et al. finding (citation 52), the statistically meaningful relation between HPV status and death, the lower mortality risk for HPV‑positive cases, the lack of any oral cavity cancer study on HPV‑positive mortality, longer OS and DFS for HPV‑negative patients, similar findings in higher‑stage studies (citations 16,22), the improved prognosis citations (2,5,18,19,33,39‑41,44,50,53) and no‑difference citations (2,5,18,19), lower tobacco/alcohol intake citations (33,39,44,50), the statement that little is known about HPV influence on OCSCC, low HPV DNA prevalence, absence of high‑risk subtypes, observation of HPV 6 and 11 variants, and the call for further investigations, are all preserved. No original fact was omitted, altered, or invented; the leading \"N0:\" is a formatting artifact derived from a noisy fragment and does not constitute a new factual claim.",
+      "usage": {
+        "in": 2138,
+        "out": 7068,
+        "reasoning": 7974
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original (stress of PCPs, three systems, support frameworks, healthcare policy and service needs, education needs, work‑related management details, self‑care strategies list, Elwood citation, research limitations, recommendations for further research, education levels, and need for ongoing support) are preserved unchanged in the compressed version. No facts were omitted or introduced.",
+      "usage": {
+        "in": 2107,
+        "out": 2044,
+        "reasoning": 2794
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original (e.g., \"More expensive\", mention of \"two sensors on both sides\", the warning to finish, reference to the next meeting, marketing looking at what people want, and the plan for the Project Manager to design a better meeting next time) are retained. Filler tokens and disfluencies are removed, but no facts are added, altered, or omitted. Speaker attributions for contentful utterances are preserved.",
+      "usage": {
+        "in": 1915,
+        "out": 4621,
+        "reasoning": 5290
+      }
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "If they happen to be the same, then city and state in the address objects are compared."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text omitted the fact that when last name and first name are equal, the city and state fields of the address objects should be compared.",
+      "usage": {
+        "in": 2405,
+        "out": 4850,
+        "reasoning": 5714
+      }
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details from the original (feature flags, specifications, dimensions, warranty info, HDMI and 3D requirements, iPod support list, etc.) are present in the compressed version; only formatting and punctuation changed, no facts were omitted or added.",
+      "usage": {
+        "in": 2290,
+        "out": 4141,
+        "reasoning": 4264
+      }
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original (price 600 Euro per sqm, vibrant Turkish market, affordable housing, low entry price, modern hospitable country, tourist‑paradise description, increasing property values, Alanya leading price‑rise region, Riviera Invest’s service span, investors from nearly 50 countries, property types offered, professional service for foreigners and Turks, satisfied‑customer focus, appealing location, fast‑growing population and tourism, high long‑term and short‑term profits, and the congratulatory claim about choosing the right country and beautiful place) are preserved verbatim or with equivalent wording. No facts were omitted or added.",
+      "usage": {
+        "in": 1960,
+        "out": 1418,
+        "reasoning": 1592
+      }
+    }
+  ]
+}

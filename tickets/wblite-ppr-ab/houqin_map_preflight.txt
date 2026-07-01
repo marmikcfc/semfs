@@ -1,0 +1,199 @@
+# WORKSPACE MAP — 2313 files, 157 dirs, 47 topic-clusters.
+# Use it to pick the directory/cluster to read, then grep/cat there.
+
+## DIRECTORIES
+/logistics/meeting_records/ (331: .md×222 .txt×33 .html×24) e.g. AI Roadmap.md, Base System Building Agent Overv
+/logistics/meeting_minutes/ (306: .md×257 .txt×29 .csv×7) e.g. 02_07_technical_sharing.md, Release Note.md
+/logistics/meeting_materials/ (282: .jpg×237 .pptx×25 .md×20) e.g. 00_Poelen_ES_DD2023.pptx, 1-s2.0-S1096717618302635-SuppFig
+/Desktop/Logistics_Management/ (130: .txt×76 .csv×52 .json×2) e.g. acquisition_request_2597.csv, annual_report_6617.csv
+/logistics/temporary_files/ (120: .xlsx×34 .csv×15 .json×14) e.g. annual_training_plan_schedule.xl, approved_sun_wei_2024_08_fixed_a
+/logistics/office_supplies/ (104: .xlsx×73 .docx×11 .pdf×8) e.g. chen_jing_stapler_and_staples_re, electric_bicycle_trade_in_subsid
+/logistics/suppliers/ (85: .xlsx×49 .pdf×23 .docx×9) e.g. 2024_q1_supplier_evaluation_summ, 2024_q2_supplier_evaluation_summ
+/logistics/warehouse/ (80: .xlsx×42 .pdf×17 .docx×12) e.g. hazardous_goods_warehouse_safety, hazardous_goods_zone_location_pl
+/Desktop/Downloads/ (75: .txt×61 .docx×14) e.g. 2024_medical_checkup_plan.txt, administrative_management_policy
+/logistics/archive_do_not_touch/ (48: .md×11 .eml×11 .txt×9) e.g. access_record_6894.md, analysis_report_7066.txt
+/logistics/business_trips/ (48: .xlsx×33 .docx×7 .py×4) e.g. 2024_business_trip_application_a, beijing_municipal_bureau_of_comm
+/logistics/employee_benefits/ (46: .xlsx×30 .pdf×8 .docx×4) e.g. 2024_logistics_team_reward_distr, 2024_year_end_performance_bonus_
+/logistics/contracts/ (44: .pdf×19 .xlsx×18 .py×3) e.g. contract_system_reviewer_list.xl, create_report.js
+/logistics/fixed_assets/ (36: .xlsx×26 .pdf×4 .docx×4) e.g. 2024_asset_transfer_and_disposal, asset_disposal_application_form.
+/Desktop/Application_Form/ (30: .txt×30) e.g. Application_001.txt, Application_002.txt
+/logistics/data_for_engineer_liu/ (28: .xlsx×26 .py×2) e.g. energy_stats.py, monthly_cost_analysis.py
+/logistics/reports_for_finance/ (27: .xlsx×27) e.g. 2022_logistics_annual_report.xls, 2023_logistics_annual_report.xls
+/Desktop/Meeting_Minutes/ (26: .txt×22 .docx×4) e.g. 10-company_dormitory_liability_w, 11-liability_waiver_for_employee
+/logistics/approvals/ (23: .xlsx×10 .pdf×10 .docx×2) e.g. air_conditioning_system_maintena, equipment_major_repair_applicati
+/Desktop/Vendor_Settlement/ (20: .txt×20) e.g. Statement_01.txt, Statement_02.txt
+/logistics/assorted_inspections/ (17: .xlsx×10 .pdf×6 .py×1) e.g. 2024_01_january_warehouse_safety, 2024_02_fire_protection_facility
+/logistics/inventory/ (17: .xlsx×11 .pdf×4 .docx×2) e.g. 2024_inventory_inbound_outbound_, abnormal_inventory_inbound_outbo
+/logistics/kpi_dashboard_for_general_manager_chen/ (17: .xlsx×17) e.g. 2024_01_logistics_kpi_dashboard_, 2024_02_logistics_kpi_dashboard_
+/logistics/temporary_affairs/ (17: .xlsx×13 .json×2 .docx×1) e.g. 2024_temporary_affairs_summary_l, exhibition_material_temporary_re
+/Desktop/Budget_Management/ (16: .csv×9 .json×4 .txt×2) e.g. leave_request_6684.csv, logistics_budget_plan_2024.txt
+/Desktop/human-resources/ (16: .xlsx×8 .docx×5 .pptx×2) e.g. 1-human-resources-decision-analy, 2-KPIkpi-analysis-performance-ev
+/logistics/daily_operations/ (14: .xlsx×14) e.g. 2024_01_logistics_work_log.xlsx, 2024_02_logistics_work_log.xlsx
+/logistics/policies_legal_confirmed/ (13: .docx×13) e.g. air_conditioning_and_hvac_equipm, elevator_equipment_maintenance_m
+/logistics/year_end_summaries/ (12: .docx×12) e.g. 2024_01_logistics_monthly_summar, 2024_02_logistics_monthly_summar
+/employee_benefits/2024/ (10: .txt×10) e.g. benefits_distribution_form_01.tx, benefits_distribution_form_02.tx
+/Desktop/Projects/ (8: .txt×8) e.g. chat_1376.txt, chat_2395.txt
+/Desktop/Resumes/ (8: .docx×8) e.g. Curriculum_Vitae_Of_The_Administ, Junior_Programmer_Candidate_Resu
+/Desktop/logistics/ (8: .txt×3 .xlsx×3 .csv×2) e.g. 2024.txt, benefits-distribution-sheet-1.xl
+/logistics/basic_data/ (8: .xlsx×4 .pdf×2 .py×1) e.g. basic_explanation_of_internal_ap, common_service_provider_emergenc
+/logistics/performance_hr_requested/ (8: .xlsx×8) e.g. chen_zhiqiang_facility_maintenan, li_minghui_procurement_specialis
+/healthcare_data/fy2023/ (7: .xlsx×7) e.g. 1_2_2023yearregional_medical_hea, 1_3_2023yearby_category_medical_
+/Office/Templates/ (6: .docx×6) e.g. 10_Temporary_Labor_Contract.docx, 2_Labor_Contracts_Generic.docx
+/logistics/material_requests/ (6: .xlsx×6) e.g. approved_material_procurement_fo, approved_pending_distribution_ma
+/logistics_data/monthly_statistics/ (6: .csv×6) e.g. logistics_statistics_table_07.cs, logistics_statistics_table_08.cs
+/Desktop/Corporate_Culture_Wall/ (5: .docx×5) e.g. 1_Culture_Wall_Company_Profile_C, 2_Cultural_Wall_Corporate_Cultur
+/Desktop/Files/ (5: .xlsx×3 .xls×2) e.g. Course_Schedule_1.xlsx, Final_Grades_Sheet.xlsx
+/Desktop/code-105-idiom-image-guessing/ (5: .pptx×5) e.g. 1.pptx, 2.pptx
+/Desktop/manage/ (5: .txt×5) e.g. business_trip_summary_21.txt, business_trip_summary_22.txt
+/Desktop/project-plan/ (5: .txt×5) e.g. project-plan_1.txt, project-plan_2.txt
+/administrative_finance/marketing_budget_review/ (5: .xlsx×3 .txt×1 .xls×1) e.g. _zhitongche_flagship_store_zhito, _zhitongche_zhitongche_work_plan
+/logistics/Temporary_Files/ (5: .json×2 .html×1 .md×1) e.g. reimbursement_request_2092.html, leave_request_7893.md
+/logistics_meeting_records/january_2024/ (5: .txt×5) e.g. meeting_minutes_01.txt, meeting_minutes_02.txt
+/Desktop/Documents/ (4: .txt×4) e.g. vendor_management_policy_1.txt, vendor_management_policy_2.txt
+/Desktop/Security/ (4: .docx×3 .pdf×1) e.g. Contingency_Plan_For_Production_, Guidelines_For_The_Preparation_O
+/Desktop/annual-party/ (4: .xlsx×4) e.g. 3-annual-partyactivityplanning-t, 4-annual-party-table.xlsx
+/Desktop/birthday-events/ (4: .docx×2 .xlsx×2) e.g. 10-employee-birthday-activity-pl, 6-employee-birthday-reminder-reg
+/Desktop/compensation-data/ (4: .xlsx×3 .docx×1) e.g. 1-company_annual_human-resources, 3-company_monthly_-analysischart
+/Desktop/financial-analysis-tables/ (4: .xlsx×4) e.g. 1-financial-table-income-expense, 13-annual-salary-budget-table_vi
+/Desktop/logistics-report/ (4: .txt×4) e.g. 2024-logistics-plan.txt, inventory-list_2438.txt
+/Desktop/personnel-analysis/ (4: .csv×2 .txt×2) e.g. analysis-report_5856.csv, operation-record_6518.txt
+/Desktop/relocation-progress/ (4: .xlsx×4) e.g. company-_-plan.xlsx, company-activity.xlsx
+/Desktop/safety-standards/ (4: .docx×3 .xlsx×1) e.g. administration-essential_securit, elevator-safety-sign.docx
+/Desktop/team-games/ (4: .txt×2 .pptx×2) e.g. 01-idiom-image-guessing-answers., 02-idiom-image-guessing-answers.
+/Desktop/todo-items/ (4: .txt×2 .csv×2) e.g. analysis-report_8950.txt, chat_7753.txt
+/Desktop/work-plan/ (4: .xlsx×3 .docx×1) e.g. 2025-annual-work-plan-table-admi, admin-department-second-half-wor
+/logistics/Notices/ (4: .txt×4) e.g. notice_008.txt, notice_013.txt
+/logistics/inspection_records/ (4: .xlsx×3 .py×1) e.g. building_and_event_venue_mainten, daily_inspection_checker.py
+/logistics/work_records/ (4: .txt×3 .xlsx×1) e.g. 2024_10_work_log.txt, 2024_11_work_log.txt
+/management/permission-management/ (4: .xlsx×2 .docx×2) e.g. core_file_inventory.xlsx, current_user_permission_configur
+/Desktop/administrative/ (3: .xlsx×3) e.g. 1-administrative-budget-and-expe, 2025-annualadministrative-table.
+/Desktop/meeting-minutes/ (3: .txt×3) e.g. minutes_002.txt, minutes_003.txt
+/Documents/Office/ (3: .xlsx×2 .docx×1) e.g. 116_Common_Excel_Shortcuts_For_H, 50_HR_Prerequisites.xlsx
+/Desktop/Images/ (2: .txt×2) e.g. procurement_plan_3638.txt, temporary_work_order_001.txt
+/logistics/emergency_plans/ (2: .pdf×2) e.g. comprehensive_workplace_safety_e, fire_incident_emergency_plan_wan
+/project_management/raw_data/ (2: .xlsx×1 .md×1) e.g. 2024_annualproject_income_expend, project_income_expenditure_manag
+/Desktop/1-employee-project.xlsx/ (1: .xlsx×1) e.g. 1-employee-project.xlsx
+/Desktop/2-table.xlsx/ (1: .xlsx×1) e.g. 2-table.xlsx
+/Desktop/3-statisticstable.xlsx/ (1: .xlsx×1) e.g. 3-statisticstable.xlsx
+/Desktop/Assessment_Metrics/ (1: .xls×1) e.g. _Team_Assessment_Key_Team_Assess
+/Desktop/attendance/ (1: .xlsx×1) e.g. _-_-attendancetable_-_.xlsx
+/Desktop/customer-service-and-care-table.xlsx/ (1: .xlsx×1) e.g. customer-service-and-care-table.
+/Desktop/customer-service-daily-report.xls/ (1: .xls×1) e.g. customer-service-daily-report.xl
+/Desktop/customer-service-key-points.xlsx/ (1: .xlsx×1) e.g. customer-service-key-points.xlsx
+/Desktop/customer-service-team-metrics.xls/ (1: .xls×1) e.g. customer-service-team-metrics.xl
+/Desktop/notice.docx/ (1: .docx×1) e.g. notice.docx
+/Desktop/school_course_management/ (1: .xlsx×1) e.g. hongxing_primary_schoolcourse_in
+/Download/10-10_top_10_malignant_tumor_mortality_rates_urban.xlsx/ (1: .xlsx×1) e.g. 10-10_top_10_malignant_tumor_mor
+/Download/10-11_top_10_malignant_tumor_mortality_rates_rural.xlsx/ (1: .xlsx×1) e.g. 10-11_top_10_malignant_tumor_mor
+/Download/10-6 hypertension_treatment_rate_in_china.xlsx/ (1: .xlsx×1) e.g. 10-6 hypertension_treatment_rate
+/Download/10-7_top_10_malignant_tumor_mortality_rates_overall.xlsx/ (1: .xlsx×1) e.g. 10-7_top_10_malignant_tumor_mort
+/Download/10-9_top_10_malignant_tumor_mortality_rates_female.xlsx/ (1: .xlsx×1) e.g. 10-9_top_10_malignant_tumor_mort
+/Download/21-2_total_health_expenditure_beijing_2000_2022.xls/ (1: .xls×1) e.g. 21-2_total_health_expenditure_be
+/Download/22-6_class_a_b_notifiable_infectious_disease_incidence_and_mortality_henan_2023.xls/ (1: .xls×1) e.g. 22-6_class_a_b_notifiable_infect
+/Download/2512.21898v2.pdf/ (1: .pdf×1) e.g. 2512.21898v2.pdf
+/Download/2601.09974v1 (1).pdf/ (1: .pdf×1) e.g. 2601.09974v1 (1).pdf
+/Download/2601.09974v1 (2).pdf/ (1: .pdf×1) e.g. 2601.09974v1 (2).pdf
+/Download/2601.09974v1.pdf/ (1: .pdf×1) e.g. 2601.09974v1.pdf
+/Download/2601.10349v1.pdf/ (1: .pdf×1) e.g. 2601.10349v1.pdf
+/Download/2601.10651v1.pdf/ (1: .pdf×1) e.g. 2601.10651v1.pdf
+/Download/2601.11147v1.pdf/ (1: .pdf×1) e.g. 2601.11147v1.pdf
+/Download/2601.11421v1.pdf/ (1: .pdf×1) e.g. 2601.11421v1.pdf
+/Download/2601.11969v2.pdf/ (1: .pdf×1) e.g. 2601.11969v2.pdf
+/Download/2601.12049v1.pdf/ (1: .pdf×1) e.g. 2601.12049v1.pdf
+/Download/2601.12099v1.pdf/ (1: .pdf×1) e.g. 2601.12099v1.pdf
+/Download/2601.12141v1.pdf/ (1: .pdf×1) e.g. 2601.12141v1.pdf
+/Download/2601.12234v1 (1).pdf/ (1: .pdf×1) e.g. 2601.12234v1 (1).pdf
+/Download/2601.12234v1.pdf/ (1: .pdf×1) e.g. 2601.12234v1.pdf
+/Download/2601.12667v1.pdf/ (1: .pdf×1) e.g. 2601.12667v1.pdf
+/Download/2601.12904v1.pdf/ (1: .pdf×1) e.g. 2601.12904v1.pdf
+/Download/2601.12951v1.pdf/ (1: .pdf×1) e.g. 2601.12951v1.pdf
+/Download/4-2-2_national_volume_based_drug_procurement_2018_2023.xlsx/ (1: .xlsx×1) e.g. 4-2-2_national_volume_based_drug
+/Download/4-2-3_online_drug_procurement_on_provincial_platforms_2020_2023.xlsx/ (1: .xlsx×1) e.g. 4-2-3_online_drug_procurement_on
+/Download/4-2-4 national_medicine_price_and_procurement_credit_evaluation_2021_2023.xlsx/ (1: .xlsx×1) e.g. 4-2-4 national_medicine_price_an
+/Download/4-5-3_china_total_health_expenditure_financing_sources_over_years.xlsx/ (1: .xlsx×1) e.g. 4-5-3_china_total_health_expendi
+/Download/8-5_child_healthcare_status.xlsx/ (1: .xlsx×1) e.g. 8-5_child_healthcare_status.xlsx
+/Download/Aimeike_management_shareholding_changes.xlsx/ (1: .xlsx×1) e.g. Aimeike_management_shareholding_
+/Download/Aimeike_top_10_shareholders_2025_Q1.xlsx/ (1: .xlsx×1) e.g. Aimeike_top_10_shareholders_2025
+/Download/Config_cn.md/ (1: .md×1) e.g. Config_cn.md
+/Download/Config_en.md/ (1: .md×1) e.g. Config_en.md
+/Download/Documents/ (1: .txt×1) e.g. benefits_distribution_sheet_01.t
+/Download/Entrance_cn.md/ (1: .md×1) e.g. Entrance_cn.md
+/Download/Entrance_en.md/ (1: .md×1) e.g. Entrance_en.md
+/Download/Extension_cn.md/ (1: .md×1) e.g. Extension_cn.md
+/Download/Extension_en.md/ (1: .md×1) e.g. Extension_en.md
+/Download/Images/ (1: .txt×1) e.g. monthly_analysis_report_02.txt
+/Download/Introduction_cn.md/ (1: .md×1) e.g. Introduction_cn.md
+/Download/Introduction_en.md/ (1: .md×1) e.g. Introduction_en.md
+/Download/Projects/ (1: .txt×1) e.g. temporary_work_order_002.txt
+/Download/agreed_procurement_volume_next_year_for_renewed_fifth_batch_national_vbp_winners.xlsx/ (1: .xlsx×1) e.g. agreed_procurement_volume_next_y
+/Download/detailed_agreed_procurement_volume_for_guangdong_in_henan_14_province_alliance_vbp.xlsx/ (1: .xlsx×1) e.g. detailed_agreed_procurement_volu
+/Download/fifth_batch_national_procurement_renewal_drug_list.xlsx/ (1: .xlsx×1) e.g. fifth_batch_national_procurement
+/Download/guangdong_base_agreed_procurement_volume_ninth_batch_national_drug_procurement.xlsx/ (1: .xlsx×1) e.g. guangdong_base_agreed_procuremen
+/Download/guangdong_ninth_batch_national_drug_procurement_backup_supplier_supply_list.xlsx/ (1: .xlsx×1) e.g. guangdong_ninth_batch_national_d
+/Download/guangdong_ninth_batch_national_drug_procurement_winning_product_supply_list_incomplete_specs.xlsx/ (1: .xlsx×1) e.g. guangdong_ninth_batch_national_d
+/Download/guangdong_second_procurement_year_agreed_volume_for_cefoxitin_injection_eighth_batch_national_vbp.xlsx/ (1: .xlsx×1) e.g. guangdong_second_procurement_yea
+/Download/restricted_shares_unlock_Langzi.xlsx/ (1: .xlsx×1) e.g. restricted_shares_unlock_Langzi.
+/Download/share_capital_structure_Langzi.xlsx/ (1: .xlsx×1) e.g. share_capital_structure_Langzi.x
+/Download/top_100_wholesalers_by_main_business_revenue_2016.xlsx/ (1: .xlsx×1) e.g. top_100_wholesalers_by_main_busi
+/accounts_receivable_management/raw_data/ (1: .xlsx×1) e.g. accounts_receivable_management_s
+/annual_reports/2024/ (1: .docx×1) e.g. shengye_electric_2024_annual_rep
+/compensation_management/fy2019/ (1: .xlsx×1) e.g. full_year_salary_management_syst
+/double_11_research_analysis/client_data/ (1: .xlsx×1) e.g. _double_11_double_11_activity_sp
+/double_11_research_analysis/event_planning/ (1: .xls×1) e.g. _double_11_double_11_store_plann
+/double_11_research_analysis/execution_specification/ (1: .xlsx×1) e.g. _double_11_preparation_manual_ke
+/double_11_research_analysis/goods_data/ (1: .xlsx×1) e.g. _double_11_campaign_products.xls
+/double_11_research_analysis/user_s_feedback/ (1: .xlsx×1) e.g. _double_11_double_11_issue_respo
+/enterprise_human_resources/employee_compensation_management/ (1: .xlsx×1) e.g. 2021_yearemployee_production_and
+/financial_analysis/raw_data/ (1: .xlsx×1) e.g. bank_deposit_journal_full_versio
+/logistics/Budget_Management/ (1: .csv×1) e.g. acquisition_request_1765.csv
+/logistics/README.txt/ (1: .txt×1) e.g. README.txt
+/logistics/complete_file_list.txt/ (1: .txt×1) e.g. complete_file_list.txt
+/logistics/directory_structure_guide.txt/ (1: .txt×1) e.g. directory_structure_guide.txt
+/logistics/fleet/ (1: .py×1) e.g. fleet_management.py
+/logistics/procurement/ (1: .py×1) e.g. purchase_tracker.py
+/logistics/quick_navigation_index.txt/ (1: .txt×1) e.g. quick_navigation_index.txt
+/logistics/system_statistics_summary.txt/ (1: .txt×1) e.g. system_statistics_summary.txt
+/procurement_management/basic_data/ (1: .xlsx×1) e.g. enterprise_procurement_and_accou
+/production_management/payroll/ (1: .xlsx×1) e.g. manufacturing_enterprise_piece_r
+/production_management/raw_data/ (1: .xlsx×1) e.g. employee_production_management_s
+/projects/Project_1/ (1: .txt×1) e.g. operation_record_7299.txt
+/projects/hairdresser_raw_data/ (1: .xlsx×1) e.g. membership_management_systemdata
+/warehouse_management/raw_data/ (1: .xlsx×1) e.g. inventory_management_system_mate
+
+## TOPIC CLUSTERS (label · key entities)
+C0 (268f) /logistics/meeting_records/ · February Procurement Plan, Weekly Report, company policy, headcount statistics
+C1 (165f) /Desktop/Downloads/ · company leaders, finance manager, travel expenses, State Council
+C2 (110f) /logistics/contracts/ · 中国制造业企业500强, 物流, 房地产, 新材料
+C3 (109f) /logistics/meeting_materials/ · Q&Q, QUARTZ, WATER RESIST, U.S. POLO ASSN.
+C4 (104f) /logistics/meeting_minutes/ · unauthorized_access_governance, input assumptions, integration steps, permissions
+C5 (91f) /logistics/office_supplies/ · Guangdong province, specialized hospitals, community health centers, Insurance Industry
+C6 (80f) /logistics/reports_for_finance/ · Budgeted Amounts, logistics operations, safety checks, Budget Amount
+C7 (75f) /logistics/meeting_minutes/ · canary release, configuration flags, data model, workflow configuration
+C8 (74f) /logistics/office_supplies/ · intangible assets, pharmaceuticals, Technology, Jiangsu province
+C9 (69f) /logistics/office_supplies/ · 研发部, 赵敏, 技术部, 陈静
+C10 (66f) /logistics/reports_for_finance/ · operational efficiency, energy efficiency, Procurement Efficiency, compliance
+C11 (66f) /logistics/meeting_minutes/ · implementation cost, user value, internal evaluation, comparison baselines
+C12 (61f) /logistics/meeting_materials/ · Wang Jie, Li Qiang, Chen Lin, Zhao Liang
+C13 (53f) /logistics/temporary_files/ · Fiscal special account funds, Fiscal Year 2024, Government Procurement Budget, nickel
+C14 (45f) /Desktop/Logistics_Management/ · Employee 17, Insufficient inventory, Employee 23, Employee 18
+C15 (42f) /logistics/warehouse/ · elevators, boilers, pressure vessels, Special Equipment
+C16 (33f) /logistics/meeting_minutes/ · Canary UIDs, Algorithm-Generated Minutes, Cross-Domain Topic Review, Cross-Domain Trend Review
+C17 (26f) /logistics/office_supplies/ · candidates, job positions, government departments, Tax Bureaus
+C18 (25f) /Desktop/Logistics_Management/ · SAFE-001, SAFE-010, SAFE-011, SAFE-012
+C19 (24f) /logistics/meeting_minutes/ · SaaS Industry, AI Era, AI notes, ai_technical_meeting
+C20 (23f) /logistics/meeting_minutes/ · internal report, English summary, meeting draft, application_report
+C23 (22f) /logistics/suppliers/ · Metals, Chemicals, Tianjin, Peking University
+C21 (22f) /Desktop/Vendor_Settlement/ · Supplier 2, Supplier 3, Supplier 5, Supplier 6
+C22 (22f) /logistics/meeting_minutes/ · Standard Procedure, English operating guide, audit trail, production behavior
+C25 (21f) /logistics/year_end_summaries/ · 员工福利申请, 采购订单, 仓库, 部门会议
+C24 (21f) /logistics/data_for_engineer_liu/ · Average Repair Response Time, courier parcel counts, Anhui Province, fixed asset investment
+C26 (20f) /logistics/meeting_minutes/ · Minutes 001, Minutes 002, Minutes 003, Minutes 004
+C27 (19f) /logistics/warehouse/ · D区, 2024-03_三月份温湿度监测日志.xlsx, 除湿机组, 温湿度传感器WSD-201
+C28 (17f) /Desktop/Logistics_Management/ · Item Collection Form, Work Handover Form, Pending Processing, Administrative Notice
+C30 (17f) /logistics/business_trips/ · main
+C29 (17f) /logistics/business_trips/ · non-normal taxpayers, abnormal taxpayer cases, Taxpayers, urban maintenance tax
+C31 (16f) /logistics/warehouse/ · block_idx, block_map, block_to_markdown, blocks
+C33 (14f) /logistics/kpi_dashboard_for_general_manager_chen/ · 数据分析员, 质量管理体系, 成本指标, 月度业务分析报告
+C32 (14f) /logistics/meeting_minutes/ · AgentBench, AgentBench v0.1, AgentOutput, AgentOutputStatus
+C34 (14f) /logistics/meeting_records/ · Acceptance Form, Training Plan
+C35 (13f) /administrative_finance/marketing_budget_review/ · inquiry conversion rate, number of customers served, PPC, ROI

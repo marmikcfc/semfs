@@ -1,0 +1,2671 @@
+"""Modal environment for semfs Workspace-Bench testing.
+
+Design (see README.md):
+- MOUNTLESS semfs arm: Modal's gVisor sandbox has no FUSE, but under
+  SEARCH_ONLY=off the mount's agent-visible surface is exactly
+  {real corpus tree + AGENTS.md hint + `semfs grep`} — all replicable
+  without a mount. FUSE-fidelity runs stay on the EC2 box.
+- The semfs binary is compiled INTO the image from a pinned git ref →
+  every run is versioned and reproducible.
+- Data (seeds, corpus, models, judge harness, codex config) lives on a
+  Volume, seeded once from the EC2 box by `pull_from_box`.
+- Parallel reps via .starmap — the box serializes; Modal does n=10 in one wave.
+
+Quickstart:
+  modal secret create openrouter OPENROUTER_API_KEY=sk-or-...
+  modal secret create semfs-box-ssh SSH_KEY="$(cat ~/.ssh/semfs-benchmark)"   # for pull_from_box only
+  modal volume create semfs-bench-data
+  modal run benchmarks/modal/semfs_modal.py::verify_image          # builds image, checks binary
+  modal run benchmarks/modal/semfs_modal.py::pull_from_box         # seeds the volume (~1.5GB)
+  modal run benchmarks/modal/semfs_modal.py::smoke_grep            # mountless grep + render modes
+  modal run benchmarks/modal/semfs_modal.py::e9w2_smoke           # one case-289 end-to-end smoke
+  modal run benchmarks/modal/semfs_modal.py::run_batch --case 289 --reps 4
+"""
+
+import json
+import os
+import shutil
+import socket
+import subprocess
+import time
+import tarfile
+import tempfile
+from pathlib import Path
+
+import modal
+
+BOX = "ubuntu@13.201.35.159"  # the EC2 benchmark box (data source for pull_from_box)
+_THIS_FILE = Path(__file__).resolve()
+REPO_ROOT = (
+    _THIS_FILE.parents[2]
+    if len(_THIS_FILE.parents) > 2 and (_THIS_FILE.parents[2] / "Cargo.toml").exists()
+    else Path("/opt/semfs-src")
+)
+SEMFS_LOCAL_REF = (
+    subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    if (REPO_ROOT / ".git").exists()
+    else "unknown"
+) or "unknown"
+
+app = modal.App("semfs-bench")
+
+# Modal hydrates EVERY function's secrets when the app loads, so the agent-run
+# functions' `claude`/`codex-auth` secrets must exist even to run an unrelated
+# function (e.g. build_kaifa_seed). `SEMFS_SEED_ONLY=1` drops the agent secrets
+# at load time so the seed build runs in an environment that only has
+# `openrouter`. Real agent runs leave it unset and require the real secrets.
+_SEED_ONLY = os.environ.get("SEMFS_SEED_ONLY") == "1"
+
+
+def _agent_secrets(*names: str) -> list:
+    """openrouter + the named agent secrets, unless SEMFS_SEED_ONLY drops them."""
+    secrets = [modal.Secret.from_name("openrouter")]
+    if not _SEED_ONLY:
+        secrets += [modal.Secret.from_name(n) for n in names]
+    return secrets
+
+data_volume = modal.Volume.from_name("semfs-bench-data", create_if_missing=True)
+VOL = "/data"  # volume mountpoint: /data/{seeds,corpus,models,wb,codex}
+CANONICAL_SEED_DB = "chanpin-gemma-q4.db"
+DEFAULT_CORPUS = "chanpin_standard"
+
+def _ignore_source(path: Path) -> bool:
+    path = Path(path)
+    rel = path.relative_to(REPO_ROOT) if path.is_absolute() else path
+    skip_roots = {
+        ".git",
+        ".agents",
+        ".claude",
+        ".codex",
+        ".fastembed_cache",
+        "node_modules",
+        "target",
+    }
+    if rel.parts and rel.parts[0] in skip_roots:
+        return True
+    # Skip ANY ticket's artifacts/ — large + live-changing (a running benchmark writes
+    # results.jsonl mid-build → Modal "modified during build" abort).
+    if len(rel.parts) >= 3 and rel.parts[0] == "tickets" and rel.parts[2] == "artifacts":
+        return True
+    # Skip the live PPR-experiment dir entirely: its run scripts are edited mid-run, which
+    # churns the source layer → cargo recompiles on EVERY modal run. Not needed for seed builds.
+    if rel.parts[:2] == ("tickets", "wblite-ppr-ab"):
+        return True
+    # NOTE: do NOT blanket-exclude benchmarks/ — the image build npm-installs
+    # benchmarks/vendor/Workspace-Bench/evaluation, so excluding it breaks the build. Exclude
+    # only the churning, build-irrelevant Python (compression POC + e2b harness) so the source
+    # layer is stable enough to cache, while keeping benchmarks/vendor for the npm step.
+    if rel.parts[:2] == ("benchmarks", "e2b"):
+        return True
+    if rel.parts[:2] == ("benchmarks", "modal") and rel.name in (
+        "generate_compress_glm.py", "gate_embeddings.py", "probe_glm_reasoning.py",
+    ):
+        return True
+    if rel.parts and rel.parts[0] in {"rcas", "research"}:
+        return True
+    # Transient editor/lock/swap files (e.g. .codex_auth.json.swp) get written or
+    # removed mid-build → Modal's "modified during build" abort. Never copy them.
+    name = rel.name
+    if name.endswith((".swp", ".swo", ".tmp", "~")) or name.startswith(".#") or name.endswith(".lock"):
+        return True
+    # Secrets must NEVER enter a shareable image layer (e.g. a stray codex_auth.json
+    # at the repo root). Inject credentials into the running sandbox at runtime instead.
+    if name in {"auth.json", "codex_auth.json", ".codex_auth.json", ".env",
+                "claude_auth_config.json", ".claude_auth_config.json"} or name.endswith((".pem", ".key")):
+        return True
+    return False
+
+
+# Ubuntu 24.04 (glibc 2.39): the prebuilt ONNX-runtime static lib linked by
+# fastembed/ort needs glibc >= 2.38 (__isoc23_* symbols) — debian bullseye's
+# 2.31 fails at link time.
+image = (
+    modal.Image.from_registry("ubuntu:24.04", add_python="3.11")
+    .apt_install("git", "curl", "build-essential", "pkg-config", "libssl-dev",
+                 "rsync", "openssh-client", "ca-certificates", "sqlite3")
+    .add_local_dir(REPO_ROOT, "/opt/semfs-src", copy=True, ignore=_ignore_source)
+    # Rust toolchain + semfs build from the current local worktree.
+    .run_commands(
+        "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal",
+        ". $HOME/.cargo/env && cd /opt/semfs-src && cargo build --release --bin semfs",
+        "cp /opt/semfs-src/target/release/semfs /usr/local/bin/semfs",
+        # Seed-build examples (dir→seed indexer + dual-lane KG builder). These
+        # compile the 14 tree-sitter C grammars (cc from build-essential).
+        ". $HOME/.cargo/env && cd /opt/semfs-src && "
+        "cargo build --release -p semfs-core --example seed_dir --example build_kg "
+        "--example materialize_kg --example surface_clean_seed --example merge_seeds "
+        "--example materialize_fs --example push_seed",
+        "cp /opt/semfs-src/target/release/examples/seed_dir /usr/local/bin/seed_dir",
+        "cp /opt/semfs-src/target/release/examples/build_kg /usr/local/bin/build_kg",
+        "cp /opt/semfs-src/target/release/examples/materialize_kg /usr/local/bin/materialize_kg",
+        "cp /opt/semfs-src/target/release/examples/surface_clean_seed /usr/local/bin/surface_clean_seed",
+        "cp /opt/semfs-src/target/release/examples/merge_seeds /usr/local/bin/merge_seeds",
+        "cp /opt/semfs-src/target/release/examples/materialize_fs /usr/local/bin/materialize_fs",
+        "cp /opt/semfs-src/target/release/examples/push_seed /usr/local/bin/push_seed",
+        f"printf '%s\\n' '{SEMFS_LOCAL_REF}+local' > /usr/local/share/semfs-git-sha",
+    )
+    # Node 20 + codex CLI (the agent under test).
+    .run_commands(
+        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
+        "apt-get install -y nodejs",
+        "npm install -g @openai/codex",
+    )
+    # Claude Code (2nd agent): ClaudeCode.js imports @anthropic-ai/claude-agent-sdk
+    # from evaluation/node_modules (hardcoded ../../evaluation/node_modules path), so
+    # the SDK + office-doc deps (docx/exceljs/pdfkit) must be installed in that dir.
+    .run_commands(
+        "cd /opt/semfs-src/benchmarks/vendor/Workspace-Bench/evaluation && "
+        "npm install --no-audit --no-fund",
+        "test -f /opt/semfs-src/benchmarks/vendor/Workspace-Bench/evaluation/"
+        "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs && echo CLAUDE_SDK_OK",
+    )
+    .pip_install("pyyaml", "tqdm", "requests", "e2b")
+)
+
+
+def _sh(cmd: str, env: dict | None = None, timeout: int = 1800) -> subprocess.CompletedProcess:
+    e = os.environ.copy()
+    if env:
+        e.update(env)
+    return subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True,
+                          env=e, timeout=timeout)
+
+
+def _local_modal_preflight() -> None:
+    """Fail before a remote Modal call when the local network cannot reach Modal."""
+    try:
+        socket.getaddrinfo("api.modal.com", 443, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        raise RuntimeError(
+            "local DNS cannot resolve api.modal.com; run this from a network-enabled shell"
+        ) from exc
+
+
+def _clean_surface_artifacts(db_path: str) -> dict:
+    """Remove KG surface artifacts from fs_dentry/fs_inode/fs_data in-place.
+
+    Deletes /AGENTS.md, /CLAUDE.md, and the entire /kg/ subtree from the
+    filesystem layer of the seed so the mount shows no surface contamination.
+    The edges/graph_community/graph_god_node tables are untouched — only the
+    agent-visible filesystem entries are removed.
+
+    Returns counts of what was deleted for verification.
+    """
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    deleted = {
+        "agents_md": 0,
+        "claude_md": 0,
+        "kg_children": 0,
+        "kg_dir": 0,
+        "chunks": 0,
+        "ffts": 0,
+        "vchunks": 0,
+        "vchunks_code": 0,
+    }
+    try:
+        # /kg/ children: fs_data + fs_inode + fs_dentry
+        kg_row = conn.execute(
+            "SELECT ino FROM fs_dentry WHERE parent_ino = 1 AND name = 'kg'"
+        ).fetchone()
+        if kg_row:
+            kg_ino = kg_row[0]
+            child_inodes = [r[0] for r in conn.execute(
+                "SELECT ino FROM fs_dentry WHERE parent_ino = ?", [kg_ino]
+            ).fetchall()]
+            for ino in child_inodes:
+                conn.execute("DELETE FROM fs_data WHERE ino = ?", [ino])
+                conn.execute("DELETE FROM fs_inode WHERE ino = ?", [ino])
+                deleted["kg_children"] += 1
+            conn.execute("DELETE FROM fs_dentry WHERE parent_ino = ?", [kg_ino])
+            conn.execute("DELETE FROM fs_inode WHERE ino = ?", [kg_ino])
+            conn.execute("DELETE FROM fs_dentry WHERE parent_ino = 1 AND name = 'kg'")
+            deleted["kg_dir"] = 1
+
+        # /AGENTS.md and /CLAUDE.md
+        for name, key in [("AGENTS.md", "agents_md"), ("CLAUDE.md", "claude_md")]:
+            row = conn.execute(
+                "SELECT d.ino FROM fs_dentry d JOIN fs_inode i ON d.ino = i.ino "
+                "WHERE d.parent_ino = 1 AND d.name = ? AND i.derived = 1", [name]
+            ).fetchone()
+            if row:
+                conn.execute("DELETE FROM fs_data WHERE ino = ?", [row[0]])
+                conn.execute("DELETE FROM fs_inode WHERE ino = ?", [row[0]])
+                conn.execute("DELETE FROM fs_dentry WHERE parent_ino = 1 AND name = ?", [name])
+                deleted[key] = 1
+
+        # Safety sweep: delete any indexed rows tied to surface-only paths. We
+        # must remove vec0/fts rows by the same chunk ids or the local index
+        # becomes count-inconsistent and grep disables local search.
+        chunk_ids = [
+            r[0]
+            for r in conn.execute(
+                "SELECT id FROM chunks WHERE filepath LIKE '/kg/%' "
+                "OR filepath IN ('/AGENTS.md', '/CLAUDE.md')"
+            ).fetchall()
+        ]
+        if chunk_ids:
+            marks = ",".join("?" for _ in chunk_ids)
+            c = conn.execute(
+                f"DELETE FROM chunks WHERE id IN ({marks})",
+                chunk_ids,
+            )
+            deleted["chunks"] = c.rowcount
+            try:
+                c = conn.execute(f"DELETE FROM ffts WHERE rowid IN ({marks})", chunk_ids)
+                deleted["ffts"] = c.rowcount
+            except Exception:
+                deleted["ffts"] = "MISSING"
+            try:
+                c = conn.execute(f"DELETE FROM vchunks WHERE rowid IN ({marks})", chunk_ids)
+                deleted["vchunks"] = c.rowcount
+            except Exception:
+                deleted["vchunks"] = "MISSING"
+            try:
+                c = conn.execute(f"DELETE FROM vchunks_code WHERE rowid IN ({marks})", chunk_ids)
+                deleted["vchunks_code"] = c.rowcount
+            except Exception:
+                deleted["vchunks_code"] = "MISSING"
+
+        conn.commit()
+    finally:
+        conn.close()
+    return deleted
+
+
+def _verify_surface_clean(db_path: str) -> bool:
+    """Return True if no surface artifacts remain in fs_dentry."""
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT name FROM fs_dentry WHERE parent_ino = 1 AND name IN ('AGENTS.md', 'CLAUDE.md', 'kg')"
+        ).fetchall()
+        return len(rows) == 0
+    finally:
+        conn.close()
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    timeout=1800,
+    cpu=2,
+    memory=4096,
+)
+def build_4arm_seed(
+    source: str = "chanpin-leanhint3.db",
+    dest: str = "chanpin-4arm.db",
+) -> dict:
+    """Build the single shared seed for all 4 hidden-KG experiment arms.
+
+    Takes an existing seed that already has chunks + vchunks + edges
+    (chanpin-leanhint3.db), rebuilds graph_community + graph_god_node using
+    the current Leiden code (materialize_kg), then SQL-cleans all surface
+    artifacts so the mount shows no /kg/, AGENTS.md, or CLAUDE.md.
+
+    The output seed is usable for all four semfs arms by varying env flags:
+      best             SEMFS_COMENTION=off  (edges/communities ignored)
+      hiddenkg_edges   SEMFS_COMENTION=on   (edges-based L7 boost)
+      hiddenkg_leiden  SEMFS_COMENTION=leiden (graph_community-based L7 boost, new)
+      hiddenkg_routing SEMFS_KG_ROUTING=on  (community-scoped retrieval, new)
+    """
+    import shutil, sqlite3
+    src = Path(f"{VOL}/seeds/{source}")
+    dst = Path(f"{VOL}/seeds/{dest}")
+
+    if not src.exists():
+        raise RuntimeError(f"source seed not found: {src}")
+    print(f"[build_4arm_seed] copying {src} → {dst}  ({src.stat().st_size // (1024*1024)} MB)", flush=True)
+    shutil.copy2(src, dst)
+
+    # Rebuild graph_community + graph_god_node using the current Leiden code.
+    # materialize_kg reads existing edges, runs Leiden, writes back — no LLM needed.
+    print("[build_4arm_seed] running materialize_kg (Leiden community rebuild)…", flush=True)
+    r = _sh(f"materialize_kg {dst}")
+    print(r.stdout.strip(), flush=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"materialize_kg failed:\n{r.stderr[:800]}")
+
+    # Clean surface artifacts through the Rust/sqlite-vec path so vec0 rows stay
+    # aligned with chunks. Python's sqlite3 cannot operate on the vec0 vtabs.
+    print("[build_4arm_seed] cleaning surface artifacts through surface_clean_seed…", flush=True)
+    r = _sh(f"surface_clean_seed {dst}")
+    print(r.stdout.strip(), flush=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"surface_clean_seed failed:\n{r.stderr[:800]}")
+    clean_info = json.loads(r.stdout.strip())
+    deleted = clean_info["deleted"]
+    stats = clean_info["table_counts"]
+    clean = bool(clean_info.get("surface_clean"))
+
+    if stats.get("edges", 0) == 0:
+        raise RuntimeError("edges table is empty — co-mention and routing arms will be no-ops")
+    if stats.get("graph_community", 0) == 0:
+        raise RuntimeError("graph_community is empty — Leiden rebuild produced no communities")
+    data_volume.commit()
+    print(f"[build_4arm_seed] committed {dest} to Modal volume", flush=True)
+    return {"source": source, "dest": dest, "size_mb": dst.stat().st_size // (1024*1024),
+            "table_counts": stats, "surface_clean": clean, "deleted": deleted}
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    secrets=[modal.Secret.from_name("e2b")],
+    timeout=7200,
+    cpu=4,
+    memory=8192,
+)
+def build_e2b_template_v2_modal(template_name: str = "semfs-baked-v2") -> dict:
+    """Build the E2B template entirely from Modal volume assets.
+
+    This avoids staging multi-GB seed files on the local machine. Required on
+    the Modal volume:
+      - /data/seeds/chanpin-gemma-q4.db
+      - /data/seeds/chanpin-clean.db
+      - /data/seeds/chanpin-leanhint3.db
+      - /data/seeds/chanpin-4arm.db
+      - /data/corpus/chanpin_standard/
+
+    Required Modal secret:
+      - e2b with E2B_API_KEY=...
+    """
+    from e2b import Template
+
+    print(f"[build_e2b_template_v2_modal] template_name={template_name}", flush=True)
+    corpus = Path(f"{VOL}/corpus/chanpin_standard")
+    seeds = {
+        "chanpin-gemma-q4.db": Path(f"{VOL}/seeds/chanpin-gemma-q4.db"),
+        "chanpin-clean.db": Path(f"{VOL}/seeds/chanpin-clean.db"),
+        "chanpin-leanhint3.db": Path(f"{VOL}/seeds/chanpin-leanhint3.db"),
+        "chanpin-4arm.db": Path(f"{VOL}/seeds/chanpin-4arm.db"),
+    }
+
+    missing = [str(p) for p in [corpus, *seeds.values()] if not p.exists()]
+    if missing:
+        raise RuntimeError(f"missing Modal volume assets for E2B template build: {missing}")
+    print("[build_e2b_template_v2_modal] volume assets present", flush=True)
+    print(f"  corpus={corpus}", flush=True)
+    for name, src in seeds.items():
+        print(f"  seed={name} size={src.stat().st_size}", flush=True)
+
+    with tempfile.TemporaryDirectory(prefix="e2b_ctx_") as td:
+        ctx = Path(td)
+        print(f"[build_e2b_template_v2_modal] ctx={ctx}", flush=True)
+        corpus_tgz = ctx / "corpus.tgz"
+        print("[build_e2b_template_v2_modal] creating corpus.tgz", flush=True)
+        with tarfile.open(corpus_tgz, "w:gz") as tar:
+            tar.add(corpus, arcname="chanpin_standard")
+        print(f"[build_e2b_template_v2_modal] corpus.tgz size={corpus_tgz.stat().st_size}", flush=True)
+        for name, src in seeds.items():
+            print(f"[build_e2b_template_v2_modal] copying {name}", flush=True)
+            shutil.copy2(src, ctx / name)
+            print(f"  copied {name} size={(ctx / name).stat().st_size}", flush=True)
+
+        t = Template(file_context_path=str(ctx))
+        b = (
+            t.from_template("semfs-baked")
+             .copy("corpus.tgz", "/opt/corpus.tgz", user="root")
+             .copy("chanpin-gemma-q4.db", "/opt/chanpin-gemma-q4.db", user="root")
+             .copy("chanpin-clean.db", "/opt/chanpin-clean.db", user="root")
+             .copy("chanpin-leanhint3.db", "/opt/chanpin-leanhint3.db", user="root")
+             .copy("chanpin-4arm.db", "/opt/chanpin-4arm.db", user="root")
+        )
+        print("[build_e2b_template_v2_modal] calling E2B Template.build", flush=True)
+        try:
+            info = Template.build(
+                b,
+                name=template_name,
+                cpu_count=4,
+                memory_mb=8192,
+                request_timeout=1800.0,
+                on_build_logs=lambda e: print("  >", getattr(e, "message", str(e))[:400], flush=True),
+            )
+        except Exception as exc:
+            print(f"[build_e2b_template_v2_modal] E2B build failed: {repr(exc)}", flush=True)
+            raise
+        out = {"template": template_name, "build_info": info}
+        print("[build_e2b_template_v2_modal] build finished", flush=True)
+        print(json.dumps(out, default=str), flush=True)
+        return out
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    secrets=[modal.Secret.from_name("e2b")],
+    timeout=7200,
+    cpu=4,
+    memory=8192,
+)
+def build_e2b_template_kaifa(template_name: str = "semfs-baked-kaifa") -> dict:
+    """Bake the kaifa (Backend Developer) E2B template from Modal volume assets.
+
+    Mirrors build_e2b_template_v2_modal but for the kaifa persona, and bases off
+    semfs-baked-v3 (office writer libs already installed — kaifa cases 91/92/94 emit
+    .doc, 266 .docx, 242 .xlsx). Overlays three thin layers:
+      - /opt/corpus.tgz        ← /data/corpus/kaifa_standard   (plain-arm tree)
+      - /opt/kaifa-gemma-q4.db ← /data/seeds/kaifa-gemma-q4.db (semfs-arm seed; KG-complete)
+      - /opt/cases/<id>.task   ← `task` field from /data/wb/lite_all/.../<id>/metadata.json (x11)
+    The FUSE mount label stays "chanpin" at run time (cosmetic daemon label); the run
+    sets WB_E2B_SEED_DEFAULT=/opt/kaifa-gemma-q4.db so the semfs arms mount the kaifa seed.
+    """
+    from e2b import Template
+
+    KAIFA_CASES = ["3", "7", "91", "92", "94", "226", "242", "266", "286", "300", "311"]
+    print(f"[build_kaifa] template_name={template_name}", flush=True)
+    corpus = Path(f"{VOL}/corpus/kaifa_standard")
+    seed = Path(f"{VOL}/seeds/kaifa-gemma-q4.db")
+    meta_root = Path(f"{VOL}/wb/lite_all/task_lite_clean_en")
+    missing = [str(p) for p in [corpus, seed, meta_root] if not p.exists()]
+    if missing:
+        raise RuntimeError(f"missing Modal volume assets for kaifa template: {missing}")
+    print(f"  corpus={corpus} seed_size={seed.stat().st_size}", flush=True)
+
+    with tempfile.TemporaryDirectory(prefix="e2b_kaifa_") as td:
+        ctx = Path(td)
+        corpus_tgz = ctx / "corpus.tgz"
+        print("[build_kaifa] creating corpus.tgz (pruned to match seed_dir's walk)", flush=True)
+        # The plain arm extracts this tree. Prune the SAME paths seed_dir skips when
+        # indexing (hidden dirs, node_modules, target, __pycache__) so (a) the plain
+        # corpus == the files the seed actually indexed (fair), and (b) it isn't bloated
+        # by build artifacts/binaries that blow past the E2B sandbox disk. Raw kaifa
+        # corpus is ~1.9 GB tarred mostly from junk dirs; pruned it matches the 229 MB seed.
+        SKIP = {"node_modules", "target", "__pycache__"}
+
+        def _prune(ti):
+            for comp in ti.name.split("/")[1:]:  # skip the "kaifa_standard" root component
+                if comp in SKIP or comp.startswith("."):
+                    return None
+            return ti
+
+        with tarfile.open(corpus_tgz, "w:gz") as tar:
+            tar.add(corpus, arcname="kaifa_standard", filter=_prune)
+        print(f"  corpus.tgz size={corpus_tgz.stat().st_size}", flush=True)
+        shutil.copy2(seed, ctx / "kaifa-gemma-q4.db")
+
+        # Generate the 11 .task files (raw task instruction) from the volume metadata.
+        tasks = {}
+        for c in KAIFA_CASES:
+            mp = meta_root / c / "metadata.json"
+            if not mp.exists():
+                raise RuntimeError(f"missing case metadata: {mp}")
+            task = json.loads(mp.read_text())["task"].strip()
+            (ctx / f"{c}.task").write_text(task + "\n")
+            tasks[c] = len(task)
+        print(f"  generated {len(tasks)} .task files (case->chars): {tasks}", flush=True)
+
+        t = Template(file_context_path=str(ctx))
+        b = (
+            t.from_template("semfs-baked-v3")
+             .copy("corpus.tgz", "/opt/corpus.tgz", user="root")
+             .copy("kaifa-gemma-q4.db", "/opt/kaifa-gemma-q4.db", user="root")
+        )
+        for c in KAIFA_CASES:
+            b = b.copy(f"{c}.task", f"/opt/cases/{c}.task", user="root")
+        print("[build_kaifa] calling E2B Template.build", flush=True)
+        info = Template.build(
+            b, name=template_name, cpu_count=4, memory_mb=8192, request_timeout=1800.0,
+            on_build_logs=lambda e: print("  >", getattr(e, "message", str(e))[:400], flush=True),
+        )
+        out = {"template": template_name, "build_info": info, "cases": KAIFA_CASES}
+        print("[build_kaifa] build finished", flush=True)
+        print(json.dumps(out, default=str), flush=True)
+        return out
+
+
+@app.local_entrypoint()
+def build_kaifa_template(name: str = "semfs-baked-kaifa"):
+    """Bake the kaifa (Backend Developer) E2B template from Modal volume assets."""
+    _local_modal_preflight()
+    print(json.dumps(build_e2b_template_kaifa.remote(name), default=str, indent=2))
+
+
+@app.function(image=image, volumes={VOL: data_volume}, timeout=120)
+def inspect_seed_tables(seed: str = "chanpin-4arm.db") -> dict:
+    """Query table row counts for a seed DB on the Modal volume."""
+    import sqlite3
+    path = f"{VOL}/seeds/{seed}"
+    if not os.path.exists(path):
+        raise RuntimeError(f"seed not found: {path}")
+    conn = sqlite3.connect(path)
+    tables = [
+        "chunks", "vchunks", "vchunks_rowids", "vchunks_code", "vchunks_code_rowids",
+        "edges", "graph_entity", "graph_relation",
+        "graph_community", "graph_god_node",
+        # fs tree (mountability) + push state (supermemory-seeding readiness)
+        "fs_dentry", "fs_inode", "fs_data", "push_queue", "sync_meta",
+    ]
+    counts = {}
+    for t in tables:
+        try:
+            counts[t] = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        except Exception as e:
+            counts[t] = f"ERROR: {e}"
+    # entity kind breakdown if graph_entity has rows
+    if isinstance(counts.get("graph_entity"), int) and counts["graph_entity"] > 0:
+        try:
+            rows = conn.execute(
+                "SELECT kind, COUNT(*) FROM graph_entity GROUP BY kind ORDER BY 2 DESC"
+            ).fetchall()
+            counts["graph_entity_by_kind"] = {k: n for k, n in rows}
+        except Exception:
+            pass
+    # SEM-38 diagnostics: contamination (stale-master merge duplicates the same
+    # (filepath, ord) chunk) + the code-lane fs_config stamp state (a lane stamped
+    # without dims is the corrupt state SqliteVecStore::new BAILS on).
+    diag = {}
+    try:
+        dup_groups, dup_rows = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(c-1),0) FROM "
+            "(SELECT COUNT(*) c FROM chunks GROUP BY filepath, ord HAVING c > 1)"
+        ).fetchone()
+        distinct_files = conn.execute("SELECT COUNT(DISTINCT filepath) FROM chunks").fetchone()[0]
+        total_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        diag["duplicate_chunk_groups"] = dup_groups          # >0 ⇒ contaminated
+        diag["duplicate_extra_rows"] = dup_rows
+        diag["distinct_files"] = distinct_files
+        diag["chunks_per_file"] = round(total_chunks / distinct_files, 2) if distinct_files else 0
+    except Exception as e:
+        diag["contamination_check"] = f"ERROR: {e}"
+    try:
+        cfg = dict(conn.execute(
+            "SELECT key, value FROM fs_config WHERE key IN "
+            "('text_embed_model','text_embed_dims','code_embed_model','code_embed_dims')"
+        ).fetchall())
+        diag["fs_config"] = cfg
+        # The corrupt state: stamped code model but no dims → daemon open bails.
+        diag["code_lane_corrupt_stamp"] = (
+            "code_embed_model" in cfg and "code_embed_dims" not in cfg
+        )
+    except Exception as e:
+        diag["fs_config"] = f"ERROR: {e}"
+    counts["_diag"] = diag
+    conn.close()
+    print(json.dumps({"seed": seed, "counts": counts}, indent=2))
+    return {"seed": seed, "counts": counts}
+
+
+@app.local_entrypoint()
+def inspect_seed(seed: str = "chanpin-4arm.db"):
+    """Print table row counts for a seed DB stored on the Modal volume."""
+    _local_modal_preflight()
+    result = inspect_seed_tables.remote(seed)
+    print(json.dumps(result, indent=2))
+
+
+@app.function(image=image, timeout=600)
+def verify_image() -> dict:
+    """Prove the environment exists: binary built from the pinned ref, codex present."""
+    semfs_v = _sh("semfs --help | head -2").stdout
+    sha = _sh("cat /usr/local/share/semfs-git-sha").stdout.strip()
+    knobs = _sh("strings /usr/local/bin/semfs | grep -m1 SEMFS_GREP_RENDER_MODE").stdout.strip()
+    codex_v = _sh("codex --version").stdout.strip()
+    out = {"semfs_git_sha": sha, "render_mode_knob_present": bool(knobs),
+           "codex": codex_v, "semfs_help_head": semfs_v.strip()[:120]}
+    print(json.dumps(out, indent=2))
+    assert sha and knobs and codex_v, "image incomplete"
+    return out
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    secrets=[modal.Secret.from_name("semfs-box-ssh")],
+    timeout=3600,
+)
+def pull_from_box() -> dict:
+    """Seed the volume from the EC2 box (run once; idempotent rsync).
+
+    Pulls: the canonical q4 seed, gemma-q4 ONNX dir, both the clean extract
+    source corpus and the benchmark materialized corpus, the Workspace-Bench
+    evaluation harness, and the box's codex config.
+    Requires secret `semfs-box-ssh` with SSH_KEY = the box private key.
+    """
+    key_path = "/root/.ssh/box"
+    os.makedirs("/root/.ssh", exist_ok=True)
+    with open(key_path, "w") as f:
+        f.write(os.environ["SSH_KEY"].rstrip() + "\n")
+    os.chmod(key_path, 0o600)
+    ssh = f"ssh -i {key_path} -o StrictHostKeyChecking=no -o ConnectTimeout=20"
+
+    pulls = [
+        # (remote, local-volume-dest)
+        ("~/.semfs/chanpin-gemma-q4.db", f"{VOL}/seeds/"),
+        ("~/gemma_q4/", f"{VOL}/models/gemma_q4/"),
+        ("/srv/semfs-benchmark/extract-test/chanpin_seed/",
+         f"{VOL}/corpus/chanpin_seed/"),
+        ("/srv/semfs-benchmark/Workspace-Bench/evaluation/filesys/chanpin_standard/",
+         f"{VOL}/corpus/chanpin_standard/"),
+        ("/srv/semfs-benchmark/Workspace-Bench/evaluation/", f"{VOL}/wb/evaluation/"),
+        ("~/.codex/config.toml", f"{VOL}/codex/"),
+    ]
+    report = {}
+    for remote, dest in pulls:
+        os.makedirs(dest, exist_ok=True)
+        r = _sh(f'rsync -az -e "{ssh}" {BOX}:{remote} {dest}', timeout=3000)
+        report[remote] = "ok" if r.returncode == 0 else f"FAIL: {r.stderr[-200:]}"
+        print(remote, "->", report[remote])
+    data_volume.commit()
+    return report
+
+
+def _prep_workdir(case_corpus: str, seed: str, tag: str = "chanpin-modal") -> str:
+    """Materialize the MOUNTLESS semfs workspace: corpus copy + hint + seed registered.
+
+    Equivalence to the EC2 mount (SEARCH_ONLY=off): the agent sees the real tree,
+    reads the same AGENTS.md, and `semfs grep --tag` answers from the same index.
+    Differences (accepted): no FUSE latency; agent writes land on local disk only.
+    """
+    wd = "/tmp/workdir"
+    _sh(f"rm -rf {wd} && mkdir -p {wd}")
+    _sh(f"cp -r {case_corpus}/. {wd}/")
+    # seed db under ~/.semfs/<tag>.db so grep's --tag path resolves it
+    _sh("mkdir -p ~/.semfs")
+    _sh(f"cp {seed} ~/.semfs/{tag}.db")
+    marker = "\n".join([
+        f"container_tag={tag}",
+        "api_url=https://api.supermemory.ai",
+        f"mount_path={wd}",
+        f"db_path=/root/.semfs/{tag}.db",
+        "backend=sqlite",
+        "",
+    ])
+    Path(f"{wd}/.semfs").write_text(marker)
+    # hint: extract the seed's baked AGENTS.md; fall back to a discovery hint if absent
+    extract = _sh(
+        "python3 - <<'PY'\n"
+        "import sqlite3, sys\n"
+        f"db = sqlite3.connect('/root/.semfs/{tag}.db')\n"
+        "row = db.execute(\"SELECT d.ino FROM fs_dentry d WHERE d.name='AGENTS.md'\").fetchone()\n"
+        "if row is None:\n"
+        "    fallback = ('# Workspace Search\\n'\n"
+        "                'Use semantic search to find relevant files across the workspace:\\n'\n"
+        "                '  semfs grep \"your query\"\\n'\n"
+        "                'The workspace has many similar-looking files.'\n"
+        "                ' Search is faster than reading each file individually.\\n')\n"
+        "    open('/tmp/workdir/AGENTS.md','w').write(fallback)\n"
+        "    print('no AGENTS.md in seed; wrote fallback discovery hint')\n"
+        "    sys.exit(0)\n"
+        "data = b''.join(r[0] for r in db.execute(\n"
+        "    'SELECT data FROM fs_data WHERE ino=? ORDER BY chunk_index', (row[0],)))\n"
+        "open('/tmp/workdir/AGENTS.md','wb').write(data)\n"
+        "print('hint bytes:', len(data))\n"
+        "PY"
+    )
+    print(extract.stdout, extract.stderr[-200:] if extract.returncode else "")
+    # E16 task-awareness: the baked seed hint predates `--all`; append the guidance so
+    # the agent knows it can ask for the full set on synthesis/report tasks. (The grep
+    # output also nudges `--all` just-in-time when adaptive-K collapses the result.)
+    _sh(
+        "cat >> /tmp/workdir/AGENTS.md <<'EOF'\n"
+        "\n## How many search results\n"
+        "By default `semfs grep` returns only the most confident few results (often one) — "
+        "ideal for a single-answer lookup. If your task must cover MANY files (write a report, "
+        "summarize/compare across files, list all X), add `--all` (or `-n <count>`) to "
+        "`semfs grep` to get the full set in one call instead of re-searching.\n"
+        "EOF"
+    )
+    return wd
+
+
+def _prep_workdir_plain(case_corpus: str) -> str:
+    """Corpus-only workspace for the plain arm (no semfs seed, no AGENTS.md injection).
+
+    The agent sees the raw corpus tree — same files, same 403-trapped entries — but
+    has no retrieval affordance (no .semfs marker → grep falls back to cloud/fails,
+    no baked AGENTS.md hint → no instruction to use semfs grep).
+    """
+    wd = "/tmp/workdir"
+    _sh(f"rm -rf {wd} && mkdir -p {wd}")
+    _sh(f"cp -r {case_corpus}/. {wd}/")
+    # no .semfs marker → semfs grep won't resolve any local index
+    # no AGENTS.md injection → agent uses whatever the corpus already has (or nothing)
+    agents_in_corpus = os.path.join(wd, "AGENTS.md")
+    if os.path.isfile(agents_in_corpus):
+        print(f"plain arm: corpus AGENTS.md present ({os.path.getsize(agents_in_corpus)} bytes), leaving as-is")
+    else:
+        print("plain arm: no AGENTS.md in corpus")
+    return wd
+
+
+def _metadata_paths(task_root: str) -> list[Path]:
+    root = Path(task_root)
+    if not root.exists():
+        return []
+    if root.is_file() and root.name == "metadata.json":
+        return [root]
+    if root.is_file():
+        return []
+    return [p for p in sorted(root.rglob("metadata.json")) if p.is_file()]
+
+
+def _load_case_meta(case: str, task_roots: list[str]) -> tuple[dict | None, str | None]:
+    needle = str(case).strip()
+    for task_root in task_roots:
+        for meta_path in _metadata_paths(task_root):
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(meta, dict):
+                continue
+            exact_ids = {
+                str(meta.get("id") or "").strip(),
+                str(meta.get("absolute_id") or "").strip(),
+                str(meta.get("case_id") or "").strip(),
+                str(meta.get("caseId") or "").strip(),
+                str(meta.get("task_id") or "").strip(),
+                str(meta.get("taskId") or "").strip(),
+                meta_path.parent.name.strip(),
+            }
+            exact_ids.discard("")
+            if needle in exact_ids:
+                return meta, str(meta_path)
+    return None, None
+
+
+SEMFS_ENV = {
+    "SEMFS_EMBED_MODEL": "gemma-q4",
+    "SEMFS_EMBED_ONNX_DIR": f"{VOL}/models/gemma_q4",
+    "SEMFS_NO_PUSH": "1",
+    "SEMFS_NO_SYNC": "1",
+    "SEMFS_SEARCH_ONLY": "off",
+    "SUPERMEMORY_API_KEY": "dummy-local",
+    "SEMFS_RESULT_LIMIT": "5",
+    "SEMFS_GREP_RESULT_CAP": "6144",
+    "SEMFS_GREP_TOTAL_CAP": "10240",
+    "SEMFS_REWRITE": "0",  # keep smoke deterministic; enable for agent runs
+}
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=[modal.Secret.from_name("openrouter")], timeout=1800)
+def smoke_grep() -> dict:
+    """Phase-A verification: mountless `semfs grep --tag` against the seed,
+    across all three render modes. THE feasibility gate for this environment —
+    confirms the daemonless direct-open path serves the index without FUSE.
+    Needs only /data/seeds + /data/models on the volume (corpus optional —
+    `--tag` resolution is cwd-independent)."""
+    seed = f"{VOL}/seeds/{CANONICAL_SEED_DB}"
+    assert os.path.exists(seed), "volume not seeded — run pull_from_box first"
+    corpus = f"{VOL}/corpus/{DEFAULT_CORPUS}"
+    if os.path.isdir(corpus):
+        wd = _prep_workdir(corpus, seed)
+    else:
+        _sh("mkdir -p ~/.semfs")
+        _sh(f"cp {seed} ~/.semfs/chanpin-modal.db")
+        wd = "/tmp"
+
+    results = {}
+    for mode in ("inline", "two-tier", "paths"):
+        env = dict(SEMFS_ENV, SEMFS_GREP_RENDER_MODE=mode)
+        r = _sh(
+            f'cd {wd} && semfs grep --tag chanpin-modal '
+            f'"best selling product transaction amount conversion rate" 2>&1',
+            env=env, timeout=600,
+        )
+        out = r.stdout + r.stderr
+        results[mode] = {
+            "rc": r.returncode,
+            "bytes": len(out),
+            "has_hits": "best_selling" in out,
+            "marker": ("# confidence:" in out) if mode == "two-tier" else None,
+            "head": out[:200],
+        }
+        print(f"[{mode}] rc={r.returncode} bytes={len(out)} hits={'best_selling' in out} | out: {out[:300]!r}")
+    return results
+
+
+@app.function(image=image, volumes={VOL: data_volume}, timeout=300)
+def inspect_corpora() -> dict:
+    """Diagnostic: file counts for candidate corpus roots + box reachability,
+    to locate the kaifa workspace (volume dirs may be empty placeholders)."""
+    import glob
+    roots = sorted(
+        glob.glob(f"{VOL}/wb/evaluation/filesys/*")
+        + glob.glob(f"{VOL}/corpus/*")
+    )
+    counts = {}
+    for r in roots:
+        if os.path.isdir(r):
+            n = int(_sh(f"find {r} -type f 2>/dev/null | wc -l").stdout.strip() or "0")
+            counts[r.replace(VOL, "")] = n
+    out = {"file_counts": counts}
+    print(json.dumps(out, indent=2))
+    return out
+
+
+@app.function(image=image, volumes={VOL: data_volume}, timeout=300)
+def volume_status() -> dict:
+    """Check whether the shared volume has the assets needed for the smoke."""
+    paths = {
+        "seed": f"{VOL}/seeds/{CANONICAL_SEED_DB}",
+        "model_dir": f"{VOL}/models/gemma_q4",
+        "benchmark_corpus": f"{VOL}/corpus/{DEFAULT_CORPUS}",
+        "wb_eval": f"{VOL}/wb/evaluation",
+        "codex_config": f"{VOL}/codex/config.toml",
+    }
+    status = {name: os.path.exists(path) for name, path in paths.items()}
+    status["ready_for_smoke_grep"] = status["seed"] and status["model_dir"]
+    status["ready_for_e9w2"] = all(status.values())
+    print(json.dumps(status, indent=2))
+    return status
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=[modal.Secret.from_name("openrouter")],
+              cpu=8.0, timeout=3600)
+def build_kaifa_seed(corpus_name: str = "kaifa_standard", out_name: str = "kaifa-gemma-q4.db") -> dict:
+    """Build the gemma-q4 `kaifa` (BackendDeveloper) seed + dual-lane KG.
+
+    Orchestration ONLY — all semfs logic is in the core binaries (`seed_dir`,
+    `build_kg`), which this just shells out to:
+      1. `seed_dir`  : index the kaifa corpus with gemma-q4 ONNX → chunks/vchunks
+                       (the dir→seed engine the mount daemon runs online).
+      2. coverage    : assert ~every file landed in `chunks` (no <50% warm bug —
+                       seed_dir indexes synchronously, so this is a sanity gate).
+      3. `build_kg`  : dual lane — AST code lane (tree-sitter, 14 langs) for
+                       source files + LLM `extract_graph` for docs.
+      4. commit      : persist `kaifa-gemma-q4.db` to /data/seeds.
+    """
+    # Resolve the corpus under the known roots (WB filesys workspaces or the
+    # pulled /corpus seeds). Accepts a bare name or an absolute path.
+    candidates = (
+        [corpus_name]
+        if corpus_name.startswith("/")
+        else [f"{VOL}/corpus/{corpus_name}", f"{VOL}/wb/evaluation/filesys/{corpus_name}"]
+    )
+    # Prefer a NON-EMPTY dir (the WB filesys placeholders exist but are empty).
+    def _nonempty(d: str) -> bool:
+        return os.path.isdir(d) and int(_sh(f"find {d} -type f 2>/dev/null | head -1 | wc -l").stdout.strip() or "0") > 0
+    corpus = next((c for c in candidates if _nonempty(c)), candidates[0])
+    assert os.path.isdir(corpus), f"corpus not staged on volume: {corpus}"
+    assert os.path.isdir(f"{VOL}/models/gemma_q4"), "gemma_q4 ONNX missing on volume"
+    out_db = f"{VOL}/seeds/{out_name}"
+    _sh(f"rm -f {out_db} {out_db}-shm {out_db}-wal")  # fresh, idempotent rebuild
+
+    env = dict(
+        SEMFS_EMBED_MODEL="gemma-q4",
+        SEMFS_EMBED_ONNX_DIR=f"{VOL}/models/gemma_q4",
+        OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
+    )
+
+    n_corpus = int(_sh(f"find {corpus} -type f | wc -l").stdout.strip() or "0")
+    assert n_corpus > 0, f"corpus {corpus} has no files (try corpus_name=kaifa_raw)"
+    print(f"== seed_dir: indexing {n_corpus} files from {corpus} ==")
+    r_seed = _sh(f"seed_dir {out_db} {corpus} 2>&1", env=env, timeout=3000)
+    print(r_seed.stdout[-2000:])
+    assert r_seed.returncode == 0 and os.path.exists(out_db), "seed_dir failed"
+
+    indexed = int(_sh(
+        f'sqlite3 {out_db} "SELECT COUNT(DISTINCT filepath) FROM chunks;"'
+    ).stdout.strip() or "0")
+    coverage = indexed / n_corpus if n_corpus else 0.0
+    print(f"== coverage: {indexed}/{n_corpus} files indexed ({coverage:.0%}) ==")
+
+    print("== build_kg: dual-lane KG (AST code + LLM docs) ==")
+    r_kg = _sh(f"build_kg {out_db} {corpus} 2>&1", env=env, timeout=3000)
+    print(r_kg.stdout[-3000:])
+    assert r_kg.returncode == 0, "build_kg failed"
+
+    q = lambda sql: _sh(f'sqlite3 {out_db} "{sql}"').stdout.strip()
+    stats = {
+        "corpus": corpus,
+        "out_db": out_db,
+        "files_corpus": n_corpus,
+        "files_indexed": indexed,
+        "coverage": round(coverage, 3),
+        "entities_total": int(q("SELECT COUNT(*) FROM graph_entity;") or 0),
+        "entities_code": int(q("SELECT COUNT(*) FROM graph_entity WHERE file_type='code';") or 0),
+        "relations_total": int(q("SELECT COUNT(*) FROM graph_relation;") or 0),
+        "relations_by_type": q(
+            "SELECT relation||':'||COUNT(*) FROM graph_relation GROUP BY relation ORDER BY 1;"
+        ).replace("\n", ", "),
+        "confidence_breakdown": q(
+            "SELECT confidence||':'||COUNT(*) FROM graph_relation GROUP BY confidence;"
+        ).replace("\n", ", "),
+        "entity_kinds": q(
+            "SELECT kind||':'||COUNT(*) FROM graph_entity GROUP BY kind ORDER BY 2 DESC;"
+        ).replace("\n", ", "),
+    }
+    data_volume.commit()
+    print(json.dumps(stats, indent=2))
+    return stats
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=_agent_secrets() + [modal.Secret.from_name("glm-vllm-key")],
+              cpu=8.0, timeout=86400)
+def build_corpus_seed(corpus_name: str, out_name: str, phase: str = "all") -> dict:
+    """Generic seed builder (SEM-38 recipe), PHASE-GATED so the KG GPU is fenced to its
+    own window. gemma-q4 text + code lanes + woven summaries (gemma-4-31b-it via OpenRouter)
+    + image captions (gemma-4-31b-it vision) → build_kg (gemma-4-31b on the Modal vLLM,
+    AST-for-code + kNN/Leiden) → materialize_kg → materialize_fs (full-content POSIX tree).
+    Per-file failure ledger at <out_db>.failures.jsonl.
+
+    phase: "embed"    = seed_dir only (extract+summarize+embed; NO GPU — OpenRouter + ONNX)
+           "kg"       = build_kg only (needs the gemma-4-31b vLLM UP)
+           "finalize" = materialize_kg + materialize_fs (NO GPU; CPU)
+           "all"      = all four in order (default)
+    The orchestration (build_fresh_seeds.sh) runs embed(both) → deploy gemma vLLM →
+    kg(both) → stop vLLM → finalize(both), so the B200s are live ONLY for the KG window.
+
+    corpus_name: corpus dir name under /data/corpus/ (e.g. "kaifa_standard")
+    out_name:    output seed filename under /data/seeds/ (e.g. "kaifa-gemma-q4.db")
+    Requires the corpus already staged on the volume.
+    """
+    import sqlite3
+
+    corpus = f"{VOL}/corpus/{corpus_name}"
+    out_db  = f"{VOL}/seeds/{out_name}"
+
+    assert os.path.isdir(corpus), f"corpus not staged: {corpus}"
+    assert os.path.isdir(f"{VOL}/models/gemma_q4"), "gemma_q4 ONNX missing on volume"
+
+    n_corpus = int(_sh(f"find {corpus} -type f 2>/dev/null | wc -l").stdout.strip() or "0")
+    assert n_corpus > 0, f"corpus {corpus} is empty"
+
+    # --- SEM-38 recipe: gemma-4-31b-it everywhere; only KG touches the GPU ------------
+    # KG entity extraction + summaries → self-hosted gemma-4-31b-nvfp4 vLLM on Modal (RTX-PRO-6000).
+    # Deployed with GEMMA_MIN=1 (min_containers=1) so it stays warm and does NOT idle-die mid-build
+    # (the earlier min_containers=0 deploy self-scaled to 0 and produced empty KGs). Batched GPU
+    # inference is far faster than serialized OpenRouter calls for the big personas (dp_012/013).
+    GEMMA_KG_ENDPOINT = "https://ada-diffusion-llm--gemma4-31b-nvfp4-vllm-serve.modal.run/v1"
+    GEMMA_KG_MODEL = "gemma-4-31b-nvfp4"
+    env = dict(
+        SEMFS_EMBED_MODEL="gemma-q4",
+        SEMFS_EMBED_ONNX_DIR=f"{VOL}/models/gemma_q4",
+        SEMFS_CODE_EMBED_MODEL="gemma-q4",  # uniform gemma CODE lane (vchunks_code)
+        OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
+        SEMFS_VLM_DESCRIBE="1",  # route images through the vision summary
+        SEMFS_EMBED_LEDGER=f"{out_db}.failures.jsonl",  # R7 per-file failure ledger
+        # summaries + images → self-hosted gemma vLLM (fast batched GPU; key from glm-vllm-key)
+        SEMFS_SUMMARY_LLM_BASE_URL=GEMMA_KG_ENDPOINT,
+        SEMFS_SUMMARY_LLM_MODEL=GEMMA_KG_MODEL,
+        SEMFS_SUMMARY_LLM_KEY=os.environ.get("MODAL_VLLM_API_KEY", ""),
+        SEMFS_VISION_LLM_BASE_URL=GEMMA_KG_ENDPOINT,
+        SEMFS_VISION_LLM_MODEL=GEMMA_KG_MODEL,
+        # KG → self-hosted gemma-4-31b-nvfp4 vLLM (batched GPU; key from glm-vllm-key secret)
+        SEMFS_GRAPH_LLM_BASE_URL=GEMMA_KG_ENDPOINT,
+        SEMFS_GRAPH_LLM_MODEL=GEMMA_KG_MODEL,
+        SEMFS_GRAPH_LLM_KEY=os.environ.get("MODAL_VLLM_API_KEY", ""),
+        # Doc-lane KG concurrency (default 8); 32 keeps the GPU batch full.
+        SEMFS_KG_WORKERS=os.environ.get("SEMFS_KG_WORKERS", "32"),
+    )
+    # Env overrides win (ad-hoc model/endpoint swaps).
+    for k in (
+        "SEMFS_SUMMARY_LLM_BASE_URL", "SEMFS_SUMMARY_LLM_MODEL", "SEMFS_SUMMARY_LLM_KEY",
+        "SEMFS_VISION_LLM_BASE_URL", "SEMFS_VISION_LLM_MODEL",
+        # SEMFS_GRAPH_LLM_* deliberately NOT overridable here — pinned to OpenRouter above
+        # so a secret-injected GPU endpoint can't clobber it back (the vLLM idle-dies).
+    ):
+        if os.environ.get(k):
+            env[k] = os.environ[k]
+
+    if phase not in ("all", "embed", "kg", "finalize", "fs"):
+        raise ValueError(f"unknown phase: {phase!r} (embed|kg|finalize|fs|all)")
+    do_embed = phase in ("all", "embed")
+    do_kg = phase in ("all", "kg")
+    do_finalize = phase in ("all", "finalize")
+    do_fs = phase in ("all", "finalize", "fs")   # "fs" = materialize_fs ONLY (KG already built)
+
+    # ---- PHASE: embed (NO GPU — OpenRouter summaries + gemma ONNX embed) -------------
+    if do_embed:
+        # Resume-aware: keep a partial DB (spot preemption) → SEMFS_SEED_RESUME=1 skips
+        # already-indexed files. Wipe only if empty/missing.
+        resume_seed = False
+        if os.path.exists(out_db) and os.path.getsize(out_db) > 100_000:
+            try:
+                conn = sqlite3.connect(out_db)
+                already = conn.execute("SELECT COUNT(DISTINCT filepath) FROM chunks").fetchone()[0]
+                conn.close()
+                if already > 0:
+                    print(f"  Resuming: {already}/{n_corpus} already in DB → SEMFS_SEED_RESUME=1", flush=True)
+                    resume_seed = True
+                    env["SEMFS_SEED_RESUME"] = "1"
+            except Exception as ex:
+                print(f"  WARNING: could not read existing DB ({ex}); starting fresh", flush=True)
+        if not resume_seed:
+            _sh(f"rm -f {out_db} {out_db}-shm {out_db}-wal")
+
+        print(f"[embed] seed_dir: {n_corpus} files → {out_db}", flush=True)
+        r = _sh(f"seed_dir {out_db} {corpus} 2>&1", env=env, timeout=82800)
+        print(r.stdout[-3000:])
+        assert r.returncode == 0 and os.path.exists(out_db), f"seed_dir failed rc={r.returncode}"
+        conn = sqlite3.connect(out_db)
+        indexed = conn.execute("SELECT COUNT(DISTINCT filepath) FROM chunks").fetchone()[0]
+        conn.close()
+        print(f"  coverage: {indexed}/{n_corpus} ({(indexed / n_corpus if n_corpus else 0):.1%})")
+    else:
+        assert os.path.exists(out_db), (
+            f"phase={phase} needs an embedded seed; run phase=embed first ({out_db} missing)"
+        )
+
+    # ---- PHASE: kg (gemma-4-31b vLLM must be UP) -------------------------------------
+    if do_kg:
+        print(f"[kg] build_kg → {GEMMA_KG_MODEL} @ {GEMMA_KG_ENDPOINT}", flush=True)
+        r = _sh(f"build_kg {out_db} {corpus} 2>&1", env=env, timeout=14400)
+        print(r.stdout[-3000:])
+        if r.returncode != 0:
+            print(f"  WARNING: build_kg rc={r.returncode} — continuing")
+        conn = sqlite3.connect(out_db)
+        ent = conn.execute("SELECT COUNT(*) FROM graph_entity").fetchone()[0]
+        rel = conn.execute("SELECT COUNT(*) FROM graph_relation").fetchone()[0]
+        edg = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        conn.close()
+        print(f"  KG: entities={ent} relations={rel} edges={edg}")
+
+    # ---- PHASE: finalize KG (NO GPU — Leiden over the kNN graph) ---------------------
+    if do_finalize:
+        print(f"[finalize] materialize_kg (Leiden over the kNN graph) ...", flush=True)
+        # big KGs (xafs: 57K entities / 134K relations) take >10 min → 1h ceiling.
+        r = _sh(f"materialize_kg {out_db} 2>&1", env=env, timeout=3600)
+        print(r.stdout[-2000:])
+        if r.returncode != 0:
+            print(f"  WARNING: materialize_kg rc={r.returncode}")
+    # ---- PHASE: fs (NO GPU — full-content POSIX tree; "fs" runs ONLY this) -----------
+    if do_fs:
+        import subprocess as _sp, threading as _th
+        env_fs = dict(env)
+        env_fs["SEMFS_FS_RESUME"] = "1"   # skip already-materialized files → converge across preemption
+        print(f"[fs] materialize_fs {out_db} {corpus} (resume + STREAMING; watch `modal app logs`)", flush=True)
+        # Periodic volume commit so a worker preemption keeps the fs_data written so far → the
+        # resume restart skips it. Without this, uncommitted volume writes are lost on preemption.
+        _stop = _th.Event()
+        def _committer():
+            while not _stop.wait(60):
+                try:
+                    data_volume.commit()
+                except Exception as e:
+                    print(f"  [fs] periodic commit warn: {e}", flush=True)
+        _ct = _th.Thread(target=_committer, daemon=True)
+        _ct.start()
+        # Stream stdout+stderr line-by-line → Modal app logs show live N/total (the tight leash).
+        p = _sp.Popen(["bash", "-lc", f"materialize_fs {out_db} {corpus}"], env=env_fs,
+                      stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True, bufsize=1)
+        for line in p.stdout:
+            print(line.rstrip(), flush=True)
+        rc = p.wait()
+        _stop.set()
+        try:
+            data_volume.commit()  # final commit
+        except Exception:
+            pass
+        if rc != 0:
+            print(f"  WARNING: materialize_fs rc={rc}")
+
+    # ---- stats (gathered fresh from the DB; robust to phases not yet run) ------------
+    conn = sqlite3.connect(out_db)
+
+    def _q(sql, default=0):
+        try:
+            return conn.execute(sql).fetchone()[0]
+        except Exception:
+            return default
+
+    stats = {
+        "corpus": corpus_name, "out_seed": out_name, "phase": phase,
+        "files_corpus": n_corpus,
+        "files_indexed": _q("SELECT COUNT(DISTINCT filepath) FROM chunks"),
+        "chunks_total": _q("SELECT COUNT(*) FROM chunks"),
+        # vchunks/vchunks_code are sqlite-vec vec0 VIRTUAL tables — Python's sqlite3 has no
+        # vec0 module, so COUNT(*) on them errors. Count their vec0 SHADOW table (_rowids,
+        # one row per stored vector) instead, which is a plain table.
+        "text_lane_chunks": _q("SELECT COUNT(*) FROM vchunks_rowids"),
+        "code_lane_chunks": _q("SELECT COUNT(*) FROM vchunks_code_rowids"),
+        "graph_entities": _q("SELECT COUNT(*) FROM graph_entity"),
+        "graph_relations": _q("SELECT COUNT(*) FROM graph_relation"),
+        "graph_edges": _q("SELECT COUNT(*) FROM edges"),
+        "leiden_communities": _q("SELECT COUNT(DISTINCT community_id) FROM graph_community"),
+        "god_nodes": _q("SELECT COUNT(*) FROM graph_god_node"),
+        "fs_dentries": _q("SELECT COUNT(*) FROM fs_dentry"),
+        "fs_files": _q("SELECT COUNT(*) FROM fs_inode WHERE (mode & 61440) = 32768"),
+        "failure_ledger": f"{out_db}.failures.jsonl",
+    }
+    conn.close()
+    data_volume.commit()
+    print(json.dumps(stats, indent=2))
+    return stats
+
+
+@app.local_entrypoint()
+def index_corpus(corpus_name: str = "xafs", out_name: str = "", phase: str = "all"):
+    """Index a pre-staged corpus on the volume into a semfs seed (SEM-38 recipe).
+
+    phase = embed | kg | finalize | all (default). The orchestration build_fresh_seeds.sh
+    sequences embed(both) → deploy gemma vLLM → kg(both) → stop → finalize(both) so the
+    B200 is up only for the KG window.
+
+    Usage:
+      SEMFS_SEED_ONLY=1 modal run benchmarks/modal/semfs_modal.py::index_corpus \\
+        --corpus-name kaifa_standard --out-name kaifa-gemma-q4.db --phase embed
+    """
+    if not out_name:
+        out_name = f"{corpus_name.replace('_standard', '')}-gemma-q4.db"
+    print(f"\n=== INDEX CORPUS [{phase}]: {corpus_name} → {out_name} ===")
+    result = build_corpus_seed.remote(corpus_name, out_name, phase)
+    print(json.dumps(result, indent=2))
+
+
+@app.local_entrypoint()
+def build_per_dp_seeds(dps: str = "dp_001,dp_002,dp_003,dp_004,dp_005,dp_006,dp_007,"
+                                  "dp_008,dp_009,dp_010,dp_011,dp_012,dp_013"):
+    """Build per-dp xAFS SEARCH seeds (embed + fs, NO KG → NO GPU) in parallel.
+    Each /data/corpus/xafs/dp_XXX → /data/seeds/dp_XXX-gemma-q4.db (scoped, mountable)."""
+    dp_list = [d.strip() for d in dps.split(",") if d.strip()]
+    print(f"=== EMBED {len(dp_list)} per-dp seeds (parallel) ===", flush=True)
+    hs = [(dp, build_corpus_seed.spawn(f"xafs/{dp}", f"{dp}-gemma-q4.db", "embed")) for dp in dp_list]
+    for dp, h in hs:
+        try:
+            r = h.get()
+            print(f"  embed {dp}: files={r.get('files_indexed')} chunks={r.get('chunks_total')}", flush=True)
+        except Exception as e:
+            print(f"  embed {dp}: FAILED {repr(e)[:120]}", flush=True)
+    print(f"=== FS materialize {len(dp_list)} per-dp seeds (parallel) ===", flush=True)
+    hs = [(dp, build_corpus_seed.spawn(f"xafs/{dp}", f"{dp}-gemma-q4.db", "fs")) for dp in dp_list]
+    for dp, h in hs:
+        try:
+            r = h.get()
+            print(f"  fs {dp}: fs_files={r.get('fs_files')} dentries={r.get('fs_dentries')}", flush=True)
+        except Exception as e:
+            print(f"  fs {dp}: FAILED {repr(e)[:120]}", flush=True)
+    print("=== DONE: per-dp search seeds (embed+fs) ===", flush=True)
+
+
+@app.local_entrypoint()
+def build_per_dp_kg(existing: str = "dp_001,dp_002,dp_003,dp_004,dp_005,dp_006,dp_007,dp_008,dp_009",
+                    fresh: str = "dp_010,dp_011,dp_012,dp_013"):
+    """Make per-dp seeds ppr-ready (add the hidden KG via the gemma GPU). `existing` already have
+    embed+fs → phase=kg only (fast). `fresh` are unbuilt → phase=all (embed+kg+fs). All parallel."""
+    ex = [d.strip() for d in existing.split(",") if d.strip()]
+    fr = [d.strip() for d in fresh.split(",") if d.strip()]
+    jobs = [(dp, "kg", build_corpus_seed.spawn(f"xafs/{dp}", f"{dp}-gemma-q4.db", "kg")) for dp in ex]
+    jobs += [(dp, "all", build_corpus_seed.spawn(f"xafs/{dp}", f"{dp}-gemma-q4.db", "all")) for dp in fr]
+    print(f"=== building KG for {len(ex)} existing + {len(fr)} fresh (parallel) ===", flush=True)
+    for dp, ph, h in jobs:
+        try:
+            r = h.get()
+            print(f"  [{ph}] {dp}: entities={r.get('graph_entities')} relations={r.get('graph_relations')} "
+                  f"communities={r.get('leiden_communities')} fs={r.get('fs_files')}", flush=True)
+        except Exception as e:
+            print(f"  [{ph}] {dp}: FAILED {repr(e)[:140]}", flush=True)
+    print("=== DONE: per-dp KG seeds ===", flush=True)
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=[modal.Secret.from_name("supermemory")], timeout=14400)
+def _push_seed_remote(seed: str, container: str, backfill: bool, prefix: str = "") -> dict:
+    """MOUNTLESS push of a seed's documents to the Supermemory CLOUD backend, via the
+    `push_seed` tool (CacheFs::with_api + run_push_worker — no FUSE). `--backfill` enqueues the
+    whole corpus first (indexer/materialize_fs-built seeds have an empty push_queue); `prefix`
+    (e.g. /dp_001) scopes it for a smoke. After this the SAME seed serves BOTH backends:
+    sqlite (local) and supermemory (cloud)."""
+    import subprocess as sp
+    out_db = f"{VOL}/seeds/{seed}"
+    if not os.path.exists(out_db):
+        raise RuntimeError(f"seed not found: {out_db}")
+    env = dict(os.environ)  # SUPERMEMORY_API_KEY injected by the secret
+    if prefix:
+        env["SEMFS_PUSH_PREFIX"] = prefix
+    cmd = f"push_seed {out_db} {container}{' --backfill' if backfill else ''} 2>&1"
+    print(f"== {cmd} == (prefix={prefix or '-'}, key set: {bool(env.get('SUPERMEMORY_API_KEY'))})", flush=True)
+    r = sp.run(["bash", "-lc", cmd], capture_output=True, text=True, env=env, timeout=14000)
+    print(r.stdout[-8000:])
+    data_volume.commit()
+    return {"rc": r.returncode, "tail": r.stdout[-1500:]}
+
+
+@app.local_entrypoint()
+def seed_supermemory(seed: str = "xafs-gemma-q4.db", container: str = "xafs",
+                     backfill: bool = True, prefix: str = ""):
+    """Push a completed seed → the Supermemory cloud backend (one seed → both backends).
+    `--prefix /dp_001` scopes a smoke before the full push.
+
+      SEMFS_SEED_ONLY=1 modal run benchmarks/modal/semfs_modal.py::seed_supermemory \\
+        --seed xafs-gemma-q4.db --container xafs --prefix /dp_001     # smoke
+      SEMFS_SEED_ONLY=1 modal run benchmarks/modal/semfs_modal.py::seed_supermemory \\
+        --seed xafs-gemma-q4.db --container xafs                       # full
+    """
+    print(f"\n=== SEED SUPERMEMORY: {seed} → container '{container}' (backfill={backfill}, prefix={prefix or '-'}) ===")
+    print(json.dumps(_push_seed_remote.remote(seed, container, backfill, prefix), indent=2))
+
+
+@app.local_entrypoint()
+def embed_sharded(corpus_name: str = "kaifa_standard", out_name: str = "", n_shards: int = 12):
+    """SEM-38 EMBED phase, PARALLELIZED: fan out n_shards seed_dir workers — each indexes its
+    SEMFS_SHARD=k/N slice, so the embeds AND the OpenRouter summary calls run N-wide — then
+    merge the partials (chunks + text/code vectors + fts) into the master. NO KG/finalize
+    (those are the later phases) and NO GPU (OpenRouter summaries + gemma-q4 ONNX embed).
+
+      SEMFS_SEED_ONLY=1 modal run benchmarks/modal/semfs_modal.py::embed_sharded \\
+        --corpus-name kaifa_standard --out-name kaifa-gemma-q4.db --n-shards 12
+    """
+    if not out_name:
+        out_name = f"{corpus_name.replace('_standard', '')}-gemma-q4.db"
+    partials = [f"{out_name}.shard{k}of{n_shards}" for k in range(n_shards)]
+    print(f"\n=== EMBED (sharded x{n_shards}): {corpus_name} → {out_name} ===")
+    args = [(corpus_name, partials[k], k, n_shards, "") for k in range(n_shards)]
+    for r in shard_seed.starmap(args):  # Modal runs them concurrently; .starmap collects
+        print(json.dumps(r))
+    print(f"--- merging {n_shards} partials → {out_name} (no KG; that's the GPU phase) ---")
+    merged = merge_and_finalize.remote(out_name, partials, corpus_name, run_kg=False)
+    print(json.dumps(merged, indent=2))
+
+
+# ── Parallel (sharded) seed build ───────────────────────────────────────────────
+# A large seed_dir is single-process CPU-bound on the embedder. Split it across N
+# workers: each indexes its SEMFS_SHARD=k/N slice into a partial DB (skipping files
+# already in the master via SEMFS_RESUME_DB), then merge_seeds folds the partials
+# into the master, and build_kg/materialize_kg run once on the merged whole.
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=_agent_secrets(),
+              cpu=8.0, timeout=86400)
+def shard_seed(corpus_name: str, out_name: str, shard_k: int, shard_n: int,
+               resume_db: str = "") -> dict:
+    """Index ONE shard (k of N) of a corpus into a partial seed DB (seed_dir only).
+
+    resume_db: master seed filename under /data/seeds/ — files already in it are
+               skipped, preserving prior single-worker progress.
+    """
+    import sqlite3
+    corpus = f"{VOL}/corpus/{corpus_name}"
+    out_db = f"{VOL}/seeds/{out_name}"
+    assert os.path.isdir(corpus), f"corpus not staged: {corpus}"
+    assert os.path.isdir(f"{VOL}/models/gemma_q4"), "gemma_q4 ONNX missing on volume"
+
+    env = dict(
+        SEMFS_EMBED_MODEL="gemma-q4",
+        SEMFS_EMBED_ONNX_DIR=f"{VOL}/models/gemma_q4",
+        SEMFS_CODE_EMBED_MODEL="gemma-q4",  # SEM-38: gemma code lane (vchunks_code) per shard
+        OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
+        SEMFS_VLM_DESCRIBE="1",  # SEM-38: image captions during the shard's extract
+        SEMFS_EMBED_LEDGER=f"{out_db}.failures.jsonl",  # seed_dir appends .shard{k}of{n}
+        # SEM-38: summaries + image captions → gemma-4-31b-it via OpenRouter (per-shard,
+        # so the OpenRouter summary calls fan out N-wide). No KG here (that's the GPU phase).
+        SEMFS_SUMMARY_LLM_MODEL="google/gemma-4-31b-it",
+        SEMFS_VISION_LLM_MODEL="google/gemma-4-31b-it",
+        SEMFS_SHARD=f"{shard_k}/{shard_n}",
+        SEMFS_SEED_RESUME="1",  # also resume the partial itself on preemption restart
+    )
+    if resume_db:
+        env["SEMFS_RESUME_DB"] = f"{VOL}/seeds/{resume_db}"
+
+    print(f"[shard {shard_k}/{shard_n}] {corpus_name} → {out_db} (resume_db={resume_db or '-'})", flush=True)
+    r = _sh(f"seed_dir {out_db} {corpus} 2>&1", env=env, timeout=82800)
+    print(r.stdout[-2500:])
+    assert r.returncode == 0 and os.path.exists(out_db), f"shard seed_dir failed rc={r.returncode}"
+
+    conn = sqlite3.connect(out_db)
+    indexed = conn.execute("SELECT COUNT(DISTINCT filepath) FROM chunks").fetchone()[0]
+    chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    conn.close()
+    data_volume.commit()
+    stats = {"shard": f"{shard_k}/{shard_n}", "partial": out_name,
+             "files_in_partial": indexed, "chunks_in_partial": chunks}
+    print(json.dumps(stats))
+    return stats
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=_agent_secrets(),
+              cpu=8.0, timeout=86400)
+def merge_and_finalize(master_name: str, partial_names: list, corpus_name: str,
+                       run_kg: bool = True, fresh_master: bool = True) -> dict:
+    """Merge partial seeds into the master, then build_kg + materialize_kg once.
+
+    master_name:   existing master seed filename under /data/seeds/
+    partial_names: list of partial seed filenames under /data/seeds/
+    corpus_name:   corpus dir under /data/corpus/ (for build_kg + coverage)
+    fresh_master:  from-scratch sharded build (the embed_sharded case). When True
+                   a PRE-EXISTING master is deleted so the master is rebuilt from
+                   shard0. SEM-38 bug fix: merging into a stale text-only master
+                   (no `vchunks_code`) makes merge_seeds' `has_code_m` false, which
+                   SILENTLY DROPS every code vector AND mixes the stale seed's
+                   content into the "fresh" build. Set False only to incrementally
+                   add partials to a real existing master (resume).
+    """
+    import sqlite3
+    master = f"{VOL}/seeds/{master_name}"
+    corpus = f"{VOL}/corpus/{corpus_name}"
+    partials = [f"{VOL}/seeds/{p}" for p in partial_names]
+    for p in partials:
+        assert os.path.exists(p), f"partial not found: {p}"
+
+    env = dict(
+        SEMFS_EMBED_MODEL="gemma-q4",
+        SEMFS_EMBED_ONNX_DIR=f"{VOL}/models/gemma_q4",
+        OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
+    )
+
+    # SEM-38 bug fix: a from-scratch sharded build must NOT reuse a stale master.
+    # A prior text-only seed at this path has no `vchunks_code`, so merge_seeds'
+    # `has_code_m` is false and every code vector is dropped — and its old chunks
+    # contaminate the "fresh" seed. Delete it (incl. WAL sidecars) so the master is
+    # rebuilt cleanly from shard0 (which carries the code lane).
+    if fresh_master and os.path.exists(master):
+        for sfx in ("", "-wal", "-shm"):
+            if os.path.exists(master + sfx):
+                os.remove(master + sfx)
+        print(f"[merge] removed stale master {master_name} (fresh sharded build)", flush=True)
+
+    # From-scratch sharded build (no pre-existing master): seed the master from the
+    # first partial, then merge the rest into it. (Existing-master path: merge all.)
+    if not os.path.exists(master):
+        assert partials, "no partials to seed the master from"
+        shutil.copyfile(partials[0], master)
+        print(f"[merge] created master {master_name} from {partial_names[0]}", flush=True)
+        partials = partials[1:]
+
+    if partials:
+        print(f"[merge] {len(partials)} partials → {master}", flush=True)
+        r = _sh(f"merge_seeds {master} {' '.join(partials)} 2>&1", env=env, timeout=14400)
+        print(r.stdout[-4000:])
+        assert r.returncode == 0, f"merge_seeds failed rc={r.returncode}"
+    else:
+        print(f"[merge] single partial already copied to master; no merge needed", flush=True)
+
+    conn = sqlite3.connect(master)
+    indexed = conn.execute("SELECT COUNT(DISTINCT filepath) FROM chunks").fetchone()[0]
+    chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    conn.close()
+    n_corpus = int(_sh(f"find {corpus} -type f 2>/dev/null | wc -l").stdout.strip() or "0")
+    coverage = indexed / n_corpus if n_corpus else 0.0
+    print(f"  merged coverage: {indexed}/{n_corpus} ({coverage:.1%}) chunks={chunks}", flush=True)
+    data_volume.commit()
+
+    stats = {"master": master_name, "files_indexed": indexed, "files_corpus": n_corpus,
+             "coverage": round(coverage, 3), "chunks_total": chunks}
+
+    if run_kg:
+        print(f"[2/3] build_kg ...", flush=True)
+        r = _sh(f"build_kg {master} {corpus} 2>&1", env=env, timeout=14400)
+        print(r.stdout[-2500:])
+        if r.returncode != 0:
+            print(f"  WARNING: build_kg rc={r.returncode}")
+        print(f"[3/3] materialize_kg ...", flush=True)
+        r = _sh(f"materialize_kg {master} 2>&1", env=env, timeout=1200)
+        print(r.stdout[-1500:])
+        conn = sqlite3.connect(master)
+        stats["graph_entities"] = conn.execute("SELECT COUNT(*) FROM graph_entity").fetchone()[0]
+        stats["graph_relations"] = conn.execute("SELECT COUNT(*) FROM graph_relation").fetchone()[0]
+        stats["leiden_communities"] = conn.execute("SELECT COUNT(DISTINCT community_id) FROM graph_community").fetchone()[0]
+        conn.close()
+        data_volume.commit()
+
+    print(json.dumps(stats, indent=2))
+    return stats
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=[modal.Secret.from_name("openrouter")], timeout=600)
+def grep_seed(seed_name: str, query: str) -> dict:
+    """Run a mountless `semfs grep` against an arbitrary seed (KNN smoke test).
+
+    Writes the `.semfs` marker (backend=sqlite) so grep answers from the local
+    seed instead of trying to authenticate against the remote API (else 401)."""
+    seed = f"{VOL}/seeds/{seed_name}"
+    assert os.path.exists(seed), f"seed not found: {seed}"
+    tag = "grepcheck"
+    wd = "/tmp/grepwd"
+    _sh(f"rm -rf {wd} && mkdir -p {wd} && mkdir -p ~/.semfs")
+    _sh(f"cp {seed} ~/.semfs/{tag}.db")
+    marker = "\n".join([
+        f"container_tag={tag}",
+        "api_url=https://api.supermemory.ai",
+        f"mount_path={wd}",
+        f"db_path=/root/.semfs/{tag}.db",
+        "backend=sqlite",
+        "",
+    ])
+    Path(f"{wd}/.semfs").write_text(marker)
+    r = _sh(f'cd {wd} && semfs grep --tag {tag} "{query}" 2>&1', env=SEMFS_ENV, timeout=300)
+    out = (r.stdout + r.stderr)
+    print(out[-2000:])
+    return {"seed": seed_name, "rc": r.returncode, "has_output": bool(out.strip()),
+            "output_tail": out[-1200:]}
+
+
+@app.local_entrypoint()
+def grep_one(seed_name: str = "_toy_a.db", query: str = "what is in this workspace"):
+    """One-shot mountless grep against a seed (KNN smoke check)."""
+    g = grep_seed.remote(seed_name, query)
+    print(f"rc={g['rc']} has_output={g['has_output']}")
+    print(g["output_tail"])
+
+
+@app.local_entrypoint()
+def validate_merge():
+    """Toy E2E: shard dp_001 → 2 partials → merge → grep. Proves the sharded
+    build + vec0 merge yields a SEARCHABLE seed before the real fan-out."""
+    print("\n=== VALIDATE MERGE (xafs/dp_001, 2 shards) ===")
+    a = shard_seed.remote("xafs/dp_001", "_toy_a.db", 0, 2, "")
+    b = shard_seed.remote("xafs/dp_001", "_toy_b.db", 1, 2, "")
+    print("shard A:", json.dumps(a))
+    print("shard B:", json.dumps(b))
+    # Merge B into A (A acts as master), no KG.
+    stats = merge_and_finalize.remote("_toy_a.db", ["_toy_b.db"], "xafs/dp_001", False)
+    print("merge:", json.dumps(stats, indent=2))
+    # KNN smoke: search the merged seed.
+    g = grep_seed.remote("_toy_a.db", "what is in this workspace")
+    print("grep rc:", g["rc"], "| has_output:", g["has_output"])
+    print(g["output_tail"])
+    ok = (stats["files_indexed"] == a["files_in_partial"] + b["files_in_partial"]
+          and g["rc"] == 0 and g["has_output"])
+    print(f"\n=== VALIDATION {'PASSED' if ok else 'FAILED'} ===")
+
+
+@app.local_entrypoint()
+def parallel_index(corpus_name: str = "xafs", master_name: str = "",
+                   shards: int = 12, resume_from_master: bool = True,
+                   run_kg: bool = False):
+    """Fan out N shard workers over a corpus, then merge into the master.
+
+    Preserves any progress already in the master (shards skip its files).
+    run_kg=False by default: merge the vector seed first, run build_kg separately.
+    Usage:
+      SEMFS_SEED_ONLY=1 modal run benchmarks/modal/semfs_modal.py::parallel_index \\
+        --corpus-name xafs --master-name xafs-gemma-q4.db --shards 12
+    """
+    if not master_name:
+        master_name = f"{corpus_name.replace('_standard', '')}-gemma-q4.db"
+    resume_db = master_name if resume_from_master else ""
+    partial_names = [f"_shard_{corpus_name}_{k}of{shards}.db" for k in range(shards)]
+
+    print(f"\n=== PARALLEL INDEX: {corpus_name} → {master_name} ({shards} shards) ===")
+    # Fan out all shards concurrently (.starmap serializes the local driver, Modal
+    # runs them in parallel as separate containers).
+    args = [(corpus_name, partial_names[k], k, shards, resume_db) for k in range(shards)]
+    results = list(shard_seed.starmap(args))
+    print("\n=== SHARD RESULTS ===")
+    total_new = 0
+    for r in results:
+        print(json.dumps(r))
+        total_new += r.get("files_in_partial", 0)
+    print(f"shards added {total_new} files across {shards} workers")
+
+    print(f"\n=== MERGE (run_kg={run_kg}) ===")
+    stats = merge_and_finalize.remote(master_name, partial_names, corpus_name, run_kg)
+    print(json.dumps(stats, indent=2))
+
+
+# ── KG rebuild via a configurable LLM endpoint (GLM / Gemma) ─────────────────────
+# build_kg wipes + re-extracts ONLY the graph tables (entities/relations/communities).
+# Embeddings (chunks/vchunks) are untouched. The doc lane LLM is pointed at a custom
+# OpenAI-compatible endpoint via SEMFS_GRAPH_LLM_*; AST code lane stays local.
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=[modal.Secret.from_name("openrouter"),
+                       modal.Secret.from_name("glm-vllm-key")],
+              cpu=4.0, timeout=21600)
+def build_kg_seed(seed_name: str, corpus_name: str, llm_base_url: str = "",
+                  llm_model: str = "", workers: int = 30, max_tokens: int = 4096,
+                  smoke: bool = False) -> dict:
+    """Rebuild ONE seed's KG via a configurable LLM endpoint. Embeddings untouched."""
+    import sqlite3
+    seed = f"{VOL}/seeds/{seed_name}"
+    corpus = f"{VOL}/corpus/{corpus_name}"
+    assert os.path.exists(seed), f"seed not found: {seed}"
+    assert os.path.isdir(corpus), f"corpus not found: {corpus}"
+    env = dict(
+        SEMFS_EMBED_MODEL="gemma-q4",
+        SEMFS_EMBED_ONNX_DIR=f"{VOL}/models/gemma_q4",
+        SEMFS_KG_WORKERS=str(workers),
+        SEMFS_KG_MAX_TOKENS=str(max_tokens),
+        SEMFS_KG_RESUME="1",          # preemption-safe: skip files already extracted
+        SEMFS_LLM_READ_TIMEOUT="300",  # KG generations run 30-90s under load; 30s would drop them
+    )
+    if llm_base_url and llm_model:
+        env["SEMFS_GRAPH_LLM_BASE_URL"] = llm_base_url
+        env["SEMFS_GRAPH_LLM_MODEL"] = llm_model
+        # OpenRouter endpoints authenticate with OPENROUTER_API_KEY; self-hosted
+        # vLLM/LiteLLM proxies (GLM/Gemma on Modal) use MODAL_VLLM_API_KEY.
+        if "openrouter" in llm_base_url:
+            env["SEMFS_GRAPH_LLM_KEY"] = os.environ.get("OPENROUTER_API_KEY", "")
+        else:
+            env["SEMFS_GRAPH_LLM_KEY"] = os.environ.get("MODAL_VLLM_API_KEY", "")
+    else:
+        env["OPENROUTER_API_KEY"] = os.environ.get("OPENROUTER_API_KEY", "")
+
+    if smoke:
+        print(f"[KG smoke] {seed_name} via {llm_model or 'openrouter'} (5 docs)…", flush=True)
+        r = _sh(f"build_kg {seed} smoke 2>&1", env=env, timeout=900)
+        print(r.stdout[-3000:])
+        return {"smoke": True, "rc": r.returncode, "tail": r.stdout[-1800:]}
+
+    print(f"[KG] {seed_name} via {llm_model or 'openrouter'} ({workers}w, {max_tokens}tok)…", flush=True)
+    r = _sh(f"build_kg {seed} {corpus} 2>&1", env=env, timeout=21600)
+    print(r.stdout[-4000:])
+    assert r.returncode == 0, f"build_kg failed rc={r.returncode}"
+    conn = sqlite3.connect(seed)
+    ent = conn.execute("SELECT COUNT(*) FROM graph_entity").fetchone()[0]
+    rel = conn.execute("SELECT COUNT(*) FROM graph_relation").fetchone()[0]
+    try:
+        com = conn.execute("SELECT COUNT(DISTINCT community_id) FROM graph_community").fetchone()[0]
+    except Exception:
+        com = 0
+    kinds = conn.execute(
+        "SELECT kind, COUNT(*) FROM graph_entity GROUP BY kind ORDER BY 2 DESC LIMIT 12"
+    ).fetchall()
+    conn.close()
+    data_volume.commit()
+    stats = {"seed": seed_name, "graph_entities": ent, "graph_relations": rel,
+             "leiden_communities": com, "entity_kinds": {k: n for k, n in kinds}}
+    print(json.dumps(stats, indent=2))
+    return stats
+
+
+# Known LLM endpoints for KG extraction (OpenAI-compatible LiteLLM proxies).
+_KG_LLM = {
+    "glm": ("https://ada-diffusion-llm--glm51-nvfp4-litellm-serve.modal.run/v1", "glm-5.1-nvfp4"),
+    "gemma": ("https://ada-diffusion-llm--gemma4-31b-nvfp4-vllm-serve.modal.run/v1", "gemma-4-31b-nvfp4"),
+    "gemma-free": ("https://openrouter.ai/api/v1", "google/gemma-4-31b-it:free"),
+    "openrouter": ("", ""),  # build_kg default: openai/gpt-4.1-nano
+}
+
+
+_KG_SEED_MAP = {
+    "chanpin":  ("chanpin-gemma-q4.db",  "chanpin_standard"),
+    "kaifa":    ("kaifa-gemma-q4.db",    "kaifa_standard"),
+    "houqin":   ("houqin-gemma-q4.db",   "houqin_standard"),
+    "yunying":  ("yunying-gemma-q4.db",  "yunying_standard"),
+    "xafs":     ("xafs-gemma-q4.db",     "xafs"),
+    "research": ("research-gemma-q4.db", "research_standard"),
+}
+
+
+@app.local_entrypoint()
+def parallel_kg(model: str = "gemma-free", workers: int = 30, max_tokens: int = 4096,
+                seeds: str = "chanpin,kaifa,houqin,yunying,xafs", include_research: bool = False):
+    """Fan out build_kg across multiple seeds concurrently (one container per seed).
+
+    On OpenRouter all containers share the ACCOUNT rate budget, so total time ≈
+    total_docs / account_req_per_min — parallelism fills the budget, doesn't exceed it.
+    On a self-hosted endpoint (B200) there's no shared cap, so it scales.
+
+      SEMFS_SEED_ONLY=1 modal run benchmarks/modal/semfs_modal.py::parallel_kg \\
+        --model gemma-free --seeds chanpin,kaifa,houqin,yunying,xafs --workers 30
+    """
+    base, mdl = _KG_LLM.get(model, ("", ""))
+    chosen = [s.strip() for s in seeds.split(",") if s.strip()]
+    if include_research and "research" not in chosen:
+        chosen.append("research")
+    args = [(_KG_SEED_MAP[s][0], _KG_SEED_MAP[s][1], base, mdl, workers, max_tokens, False)
+            for s in chosen]
+    print(f"\n=== PARALLEL KG: {chosen} via {model} ({workers}w/seed, {max_tokens}tok) ===")
+    results = list(build_kg_seed.starmap(args))
+    print("\n=== KG RESULTS ===")
+    for s, r in zip(chosen, results):
+        print(s, json.dumps(r))
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=[modal.Secret.from_name("openrouter")], cpu=8.0, timeout=14400)
+def materialize_seed(seed_name: str) -> dict:
+    """Run ONLY the Leiden + embedding-kNN community projection on a seed that
+    already has entities/relations (no LLM, no GPU). Sole writer — use when a
+    build_kg's in-process materialize stalled (e.g. the slow O(N²) kNN on a big
+    graph) and we need to (re)compute graph_community/graph_god_node cleanly."""
+    import sqlite3
+    seed = f"{VOL}/seeds/{seed_name}"
+    assert os.path.exists(seed), f"seed not found: {seed}"
+    env = dict(SEMFS_EMBED_MODEL="gemma-q4", SEMFS_EMBED_ONNX_DIR=f"{VOL}/models/gemma_q4")
+    print(f"[materialize] {seed_name} (Leiden + embedding-kNN)…", flush=True)
+    r = _sh(f"materialize_kg {seed} 2>&1", env=env, timeout=14400)
+    print(r.stdout[-3000:])
+    assert r.returncode == 0, f"materialize_kg failed rc={r.returncode}"
+    conn = sqlite3.connect(seed)
+    comm = conn.execute("SELECT COUNT(DISTINCT community_id) FROM graph_community").fetchone()[0]
+    god = conn.execute("SELECT COUNT(*) FROM graph_god_node").fetchone()[0]
+    conn.close()
+    data_volume.commit()
+    stats = {"seed": seed_name, "leiden_communities": comm, "god_nodes": god}
+    print(json.dumps(stats))
+    return stats
+
+
+@app.local_entrypoint()
+def materialize_one(seed_name: str = "xafs-gemma-q4.db"):
+    """Standalone community materialize (CPU, no GPU). For a seed whose build_kg
+    materialize stalled — entities/relations already committed."""
+    print(json.dumps(materialize_seed.remote(seed_name), indent=2))
+
+
+@app.local_entrypoint()
+def build_kg_one(seed_name: str = "houqin-gemma-q4.db", corpus_name: str = "houqin_standard",
+                 model: str = "glm", workers: int = 30, max_tokens: int = 4096,
+                 smoke: bool = False):
+    """Rebuild one seed's KG. model: glm | gemma | openrouter.
+
+      SEMFS_SEED_ONLY=1 modal run benchmarks/modal/semfs_modal.py::build_kg_one \\
+        --seed-name houqin-gemma-q4.db --corpus-name houqin_standard --model glm --smoke true
+    """
+    base, mdl = _KG_LLM.get(model, ("", ""))
+    print(f"\n=== KG REBUILD: {seed_name} via {model} (smoke={smoke}, {workers}w, {max_tokens}tok) ===")
+    r = build_kg_seed.remote(seed_name, corpus_name, base, mdl, workers, max_tokens, smoke)
+    print(json.dumps(r, indent=2))
+
+
+_WB_PROMPT_TAIL = (
+    "[Note] Save all task deliverables to the required location inside the working "
+    "directory. When you finish, provide the final output file paths as a list. "
+    "The paths must be relative to the working directory, for example "
+    "['model_output/a.xlsx', 'model_output/b.docx']."
+)
+
+
+def _wrap_prompt_wb(task: str, work_dir: str,
+                    task_target_output_dir: str = "model_output") -> str:
+    """Replicate agent_runner.py::_wrap_prompt() + build_run_config.py::PROMPT_TAIL.
+
+    Without this wrapping the agent has no instruction to write to model_output/
+    and no instruction to output a Python list of paths — both of which the WB
+    harness and judge depend on to collect deliverables.
+    """
+    path_req = (
+        f"请你无视任务要求中的输出文件保存路径要求，将所有输出文件放置在目录："
+        f"{task_target_output_dir}下\n"
+    ) if task_target_output_dir else ""
+    head = (
+        "【重要要求 1：工作目录】\n"
+        f"本轮测试允许访问的工作目录是：{os.path.abspath(work_dir)}\n"
+        "你只能在该目录下使用相对路径读写文件；禁止访问工作目录以外的位置。\n"
+        "如果你看到其他工作区路径提示，请忽略，以本提示的工作目录为准。\n"
+        + path_req
+    )
+    tail = (
+        "\n【重要要求 2：输出路径列表】\n"
+        "完成所有文件创建并确认文件已实际写入磁盘后，在最后一步输出一个 Python 列表（list[str]），"
+        "里面是你生成的所有输出文件路径。\n"
+        "路径请使用相对工作目录的相对路径（不要以 / 开头）。示例：['model_output/a.txt','report.md']\n"
+    )
+    body = (task.strip() + "\n" + _WB_PROMPT_TAIL).strip()
+    return head + "\n" + body + "\n" + tail
+
+
+def _run_judge(
+    *,
+    case: str,
+    label: str,
+    meta_path: str,
+    workdir: str,
+    or_key: str,
+    sandbox_dir: str,
+) -> dict:
+    """Run the WB Seed-2.0-Lite judge on the agent's deliverables.
+
+    Sets up a minimal task_dir structure, writes a judge YAML from the
+    OpenRouter key, calls agent_eval.py, and returns the parsed rubric scores.
+    """
+    judge_dir = f"/tmp/judgetask_{case}_{label}"
+    os.makedirs(judge_dir, exist_ok=True)
+    shutil.copy(meta_path, os.path.join(judge_dir, "metadata.json"))
+
+    # Copy ONLY model_output/ into judge_dir/output/ so the judge's 50-file cap is
+    # not hit by fastembed cache blobs in the full workdir.
+    output_dir = os.path.join(judge_dir, "output")
+    os.makedirs(output_dir, exist_ok=True)
+    mo_src = os.path.join(workdir, "model_output")
+    if os.path.isdir(mo_src):
+        for fn in os.listdir(mo_src):
+            src = os.path.join(mo_src, fn)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(output_dir, fn))
+
+    judge_yaml = f"/tmp/judge_{case}_{label}.yaml"
+    Path(judge_yaml).write_text(
+        f'model_name: "seed-2.0-lite-judge"\n'
+        f'baseUrl: "https://openrouter.ai/api/v1"\n'
+        f'model: "bytedance-seed/seed-2.0-lite"\n'
+        f'apiKey: "{or_key}"\n',
+        encoding="utf-8",
+    )
+
+    agent_eval = "/opt/semfs-src/benchmarks/vendor/Workspace-Bench/evaluation/src/agent_eval.py"
+    r = _sh(
+        f"python3 {agent_eval} --task-dir {judge_dir} --eval-yaml {judge_yaml} --overwrite",
+        timeout=600,
+    )
+    print(f"judge rc={r.returncode} stderr_tail={r.stderr[-400:]!r}")
+
+    rubric_file = next(
+        (os.path.join(judge_dir, f) for f in os.listdir(judge_dir)
+         if f.startswith("rubrics_judge--")),
+        None,
+    )
+    if rubric_file and os.path.isfile(rubric_file):
+        try:
+            rubrics = json.loads(Path(rubric_file).read_text(encoding="utf-8"))
+            summary = rubrics.get("summary") or {}
+            return {
+                "passed": summary.get("passed"),
+                "total": summary.get("total"),
+                "score": round(summary.get("passed", 0) / max(summary.get("total", 1), 1), 3),
+                "per_rubric": [
+                    {"id": rb.get("id"), "passed": rb.get("passed"), "evidence": str(rb.get("evidence") or "")[:200]}
+                    for rb in (rubrics.get("rubrics") or [])
+                ],
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+    return {"error": f"judge rc={r.returncode}: {r.stderr[-300:]}"}
+
+
+def _check_confidence_high(sandbox_dir: str) -> bool:
+    """Scan the codex execution trace for any CONFIDENCE: HIGH grep output."""
+    trace_path = os.path.join(sandbox_dir, "raw", "codex_stdout.jsonl")
+    if not os.path.isfile(trace_path):
+        return False
+    try:
+        text = Path(trace_path).read_text(encoding="utf-8", errors="ignore")
+        return "CONFIDENCE: HIGH" in text or "confidence: HIGH" in text
+    except Exception:
+        return False
+
+
+def _load_codex_harness():
+    """Import codex.py harness from the image copy of the repo.
+
+    The harness contains a local Python HTTP chat-adapter that translates
+    the OpenAI Responses-API format (what the codex CLI speaks) into
+    REST /chat/completions calls (what OpenRouter accepts). Importing it
+    here means Modal runs use the same provider wiring as the EC2 box
+    without needing a ripbench proxy or a native OpenAI key.
+    """
+    import importlib.util
+    harness_path = (
+        "/opt/semfs-src/benchmarks/vendor/Workspace-Bench/evaluation/src/agents/codex.py"
+    )
+    spec = importlib.util.spec_from_file_location("codex_harness", harness_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_claude_harness():
+    """Import claudecode.py harness from the image copy of the repo.
+
+    It shells out to `node ClaudeCode.js <cfg> -o <report>` (ESM via the
+    baselines/package.json type:module), which drives @anthropic-ai/claude-agent-sdk.
+    Auth: OAuth subscription token (USE_CLAUDE_LONG_RUNNING_TOKEN + CLAUDE_CODE_OAUTH_TOKEN)
+    talks to api.anthropic.com directly with the canonical model id. Return shape
+    mirrors the codex harness (status / trace.usageTotal / executionTrace).
+    """
+    import importlib.util
+    harness_path = (
+        "/opt/semfs-src/benchmarks/vendor/Workspace-Bench/evaluation/src/agents/claudecode.py"
+    )
+    spec = importlib.util.spec_from_file_location("claude_harness", harness_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=_agent_secrets("codex-auth"),
+              timeout=3600, cpu=4, memory=8192)
+def run_case(case: str = "289", label: str = "modal1",
+             render_mode: str = "inline", extra_env: str = "",
+             corpus_name: str = DEFAULT_CORPUS,
+             model: str = "openai/gpt-5.4",
+             arm: str = "nokg",
+             seed_name: str = CANONICAL_SEED_DB) -> dict:
+    """One full mountless agent run: codex in the materialized workspace.
+
+    arm: 'nokg' (semfs corpus + AGENTS.md hint + grep index) or
+         'plain' (raw corpus only, no retrieval affordances).
+
+    Provider wiring: the codex.py harness starts a local Python HTTP server
+    (the chat adapter) that accepts the OpenAI Responses API from the codex
+    CLI and forwards REST /chat/completions calls to OpenRouter. Model names
+    that do NOT start with 'gpt-' (e.g. 'openai/gpt-5.4') trigger the
+    adapter automatically; 'gpt-*' names would skip it and hit OpenAI
+    directly → 401. Always use the 'openai/…' prefix for Modal runs.
+
+    extra_env: 'K=V,K=V' environment overrides applied on top of SEMFS_ENV.
+    """
+    harness = _load_codex_harness()
+
+    seed = f"{VOL}/seeds/{seed_name}"
+    corpus_dir = f"{VOL}/corpus/{corpus_name}"
+    if arm == "plain":
+        wd = _prep_workdir_plain(corpus_dir)
+    else:
+        wd = _prep_workdir(corpus_dir, seed)
+
+    # task prompt from the WB harness metadata
+    meta, meta_path = _load_case_meta(
+        case,
+        [
+            f"{VOL}/wb/evaluation/tasks_local",   # local E11+ cases (not in upstream WB)
+            f"{VOL}/wb/evaluation/tasks_lite",
+            f"{VOL}/wb/evaluation/tasks",
+            f"{VOL}/wb/evaluation/tasks_lite.full",
+            f"{VOL}/wb/evaluation",
+        ],
+    )
+    if not meta or not meta_path:
+        out = {"label": label, "error": f"no metadata.json found for case {case} on volume"}
+        print(json.dumps(out, indent=2))
+        return out
+    print(f"case metadata: {meta_path}")
+    task = str(meta.get("task") or "")
+    or_key = os.environ.get("OPENROUTER_API_KEY", "")
+    print(f"task_len={len(task)} openrouter_present={bool(or_key)} model={model}")
+
+    # Apply SEMFS env vars so grep uses the right render mode / limits.
+    # plain arm skips these — it has no semfs index and any accidental grep call
+    # should fail cleanly rather than fall back to cloud.
+    if arm != "plain":
+        for k, v in dict(SEMFS_ENV, SEMFS_REWRITE="1", SEMFS_GREP_RENDER_MODE=render_mode).items():
+            os.environ[k] = v
+    for kv in filter(None, extra_env.split(",")):
+        k, v = kv.split("=", 1)
+        os.environ[k] = v
+
+    # The harness reads CODEX_API_KEY; the chat adapter forwards it to OpenRouter.
+    os.environ["CODEX_API_KEY"] = or_key
+    # /tmp/workdir has no .git — workspace-write sandbox uses git boundary to scope
+    # writes, so all agent writes are blocked. danger-full-access removes that gate.
+    os.environ["CODEX_SANDBOX_MODE"] = "danger-full-access"
+
+    # Pre-create model_output/ so agent can write there without mkdir.
+    os.makedirs(f"{wd}/model_output", exist_ok=True)
+
+    # Wrap task with WB prompt conventions (workdir anchor + model_output/ rule +
+    # path-list tail). Without this the agent doesn't know where to write and
+    # deliverables stay empty.
+    wrapped_task = _wrap_prompt_wb(task, wd)
+    print(f"wrapped_task_len={len(wrapped_task)}")
+
+    sandbox_dir = f"/tmp/sandbox_{case}_{label}"
+    os.makedirs(sandbox_dir, exist_ok=True)
+
+    import base64 as _b64
+    t0 = time.time()
+
+    def _run_agent(use_chatgpt, sbx_dir):
+        os.makedirs(sbx_dir, exist_ok=True)
+        if use_chatgpt:
+            os.environ["CODEX_USE_CHATGPT"] = "1"
+            b64 = os.environ.get("CODEX_AUTH_B64", "")
+            if b64:
+                cdir = os.path.expanduser("~/.codex")
+                os.makedirs(cdir, exist_ok=True)
+                with open(os.path.join(cdir, "auth.json"), "wb") as fh:
+                    fh.write(_b64.b64decode(b64))
+            ap = {"model": "gpt-5.5"}  # bare id; native OpenAI provider via the ChatGPT OAuth
+        else:
+            os.environ.pop("CODEX_USE_CHATGPT", None)
+            ap = {"baseUrl": "https://openrouter.ai/api/v1", "apiKey": or_key, "model": model}
+        return harness.run(prompt=wrapped_task, work_dir=wd, sandbox_dir=sbx_dir,
+                           timeout_s=2400, api_provider=ap)
+
+    # Auth: try the user's ChatGPT subscription first ($0 OpenRouter); fall back to
+    # OpenRouter per-run if it fails (auth error / no successful call / non-ok status).
+    have_chatgpt = bool(os.environ.get("CODEX_AUTH_B64"))
+    auth_used = "chatgpt" if have_chatgpt else "openrouter"
+    result = _run_agent(have_chatgpt, sandbox_dir)
+    if have_chatgpt:
+        _ut = (result.get("trace", {}) or {}).get("usageTotal", {}) or {}
+        _toks = _ut.get("prompt_tokens") or 0
+        _err = str(result.get("errorMessage") or "").lower()
+        _authfail = any(s in _err for s in ("401", "403", "unauthorized", "invalid_grant"))
+        if result.get("status") != "ok" or _toks == 0 or _authfail:
+            print(f"native ChatGPT auth failed (status={result.get('status')} toks={_toks}); falling back to OpenRouter")
+            os.makedirs(f"{wd}/model_output", exist_ok=True)
+            sandbox_dir = sandbox_dir + "_or"
+            result = _run_agent(False, sandbox_dir)
+            auth_used = "openrouter(fallback)"
+    wall = int(time.time() - t0)
+
+    trace = result.get("trace", {}) or {}
+    usage_total = trace.get("usageTotal", {}) or {}
+    exec_trace = trace.get("executionTrace", []) or []
+    calls = sum(
+        1 for e in exec_trace
+        if e.get("type") == "tool" and e.get("status") == "completed"
+    )
+
+    # Slice-adoption instrumentation: capture the exact bash commands the agent
+    # ran (input.command) + a sample of grep outputs, so adoption (did the agent
+    # sed/cat a CITED path instead of re-grepping?) is measurable from the
+    # returned JSON without pulling the raw trace off the container.
+    tool_commands = []
+    grep_output_samples = []
+    for e in exec_trace:
+        if e.get("type") != "tool":
+            continue
+        cmd = str((e.get("input") or {}).get("command") or "")
+        if not cmd:
+            continue
+        if e.get("status") == "completed":
+            tool_commands.append(cmd[:400])
+        if "grep" in cmd and e.get("output"):
+            grep_output_samples.append(str(e.get("output"))[:900])
+
+    # Check if E9w2 confidence signal fired
+    high_fired = _check_confidence_high(sandbox_dir)
+    last_text = trace.get("lastText", "")[:500]
+
+    deliverable_paths = [
+        f for f in _sh(
+            f"find {wd}/model_output -maxdepth 2 -type f 2>/dev/null"
+        ).stdout.splitlines() if f.strip()
+    ]
+
+    # Read deliverable content (usually <1KB for these tasks)
+    deliverable_content = {}
+    for dp in deliverable_paths[:3]:
+        try:
+            deliverable_content[os.path.basename(dp)] = Path(dp).read_text(
+                encoding="utf-8", errors="replace"
+            )[:4000]
+        except Exception:
+            pass
+
+    # Run the WB rubric judge
+    judge_result = _run_judge(
+        case=case,
+        label=label,
+        meta_path=meta_path,
+        workdir=wd,
+        or_key=or_key,
+        sandbox_dir=sandbox_dir,
+    )
+    print(f"judge: {json.dumps(judge_result)}")
+
+    out = {
+        "label": label, "case": case, "render_mode": render_mode,
+        "arm": arm, "model": model, "wall_s": wall,
+        "rc": 0 if result.get("status") == "ok" else 1,
+        "status": result.get("status"),
+        "calls": calls,
+        "tokens": (usage_total.get("prompt_tokens") or 0) + (usage_total.get("completion_tokens") or 0),
+        "usage": usage_total,
+        "deliverables": deliverable_paths,
+        "deliverable_content": deliverable_content,
+        "confidence_high_fired": high_fired,
+        "last_text": last_text,
+        "judge": judge_result,
+        "tool_commands": tool_commands,
+        "grep_output_samples": grep_output_samples[:3],
+        "auth_used": auth_used,
+        "semfs_sha": _sh("cat /usr/local/share/semfs-git-sha").stdout.strip()[:12],
+    }
+    if result.get("errorMessage"):
+        out["runner_err_head"] = str(result["errorMessage"])[:4000]
+    # Persist the raw codex trace to the volume so all artifacts can be pulled local.
+    try:
+        os.makedirs(f"{VOL}/e2e_traces", exist_ok=True)
+        _sh(f"cp {sandbox_dir}/raw/codex_stdout.jsonl {VOL}/e2e_traces/{label}.jsonl 2>/dev/null")
+        Path(f"{VOL}/e2e_traces/{label}.result.json").write_text(json.dumps(out), encoding="utf-8")
+        data_volume.commit()
+    except Exception as exc:
+        print(f"trace-save skipped: {exc}")
+    print(json.dumps(out, indent=2))
+    return out
+
+
+@app.function(image=image, volumes={VOL: data_volume},
+              secrets=_agent_secrets("claude"),
+              timeout=3600, cpu=4, memory=8192)
+def run_claude_case(case: str = "289", label: str = "claude1",
+                    render_mode: str = "inline", extra_env: str = "",
+                    corpus_name: str = DEFAULT_CORPUS,
+                    model: str = "anthropic/claude-sonnet-4.6",
+                    arm: str = "nokg",
+                    seed_name: str = CANONICAL_SEED_DB) -> dict:
+    """One full mountless agent run with Claude Code (sonnet-4.6) as the agent.
+
+    Same arms/seed/corpus/judge as run_case; only the agent differs. Auth:
+    Claude subscription OAuth (CLAUDE_CODE_OAUTH_TOKEN via the 'claude' secret)
+    first; on failure (auth error / rate-limit / no successful call) fall back
+    to OpenRouter per-run. Identical SEMFS env so the nokg/adaptive-K arms
+    behave exactly as in the codex matrix.
+    """
+    harness = _load_claude_harness()
+
+    seed = f"{VOL}/seeds/{seed_name}"
+    corpus_dir = f"{VOL}/corpus/{corpus_name}"
+    if arm == "plain":
+        wd = _prep_workdir_plain(corpus_dir)
+    else:
+        wd = _prep_workdir(corpus_dir, seed)
+
+    meta, meta_path = _load_case_meta(
+        case,
+        [
+            f"{VOL}/wb/evaluation/tasks_local",
+            f"{VOL}/wb/evaluation/tasks_lite",
+            f"{VOL}/wb/evaluation/tasks",
+            f"{VOL}/wb/evaluation/tasks_lite.full",
+            f"{VOL}/wb/evaluation",
+        ],
+    )
+    if not meta or not meta_path:
+        out = {"label": label, "error": f"no metadata.json found for case {case} on volume"}
+        print(json.dumps(out, indent=2))
+        return out
+    print(f"case metadata: {meta_path}")
+    task = str(meta.get("task") or "")
+    or_key = os.environ.get("OPENROUTER_API_KEY", "")
+    have_oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+    print(f"task_len={len(task)} oauth_present={have_oauth} openrouter_present={bool(or_key)} model={model}")
+
+    if arm != "plain":
+        for k, v in dict(SEMFS_ENV, SEMFS_REWRITE="1", SEMFS_GREP_RENDER_MODE=render_mode).items():
+            os.environ[k] = v
+    for kv in filter(None, extra_env.split(",")):
+        k, v = kv.split("=", 1)
+        os.environ[k] = v
+
+    os.makedirs(f"{wd}/model_output", exist_ok=True)
+    wrapped_task = _wrap_prompt_wb(task, wd)
+    print(f"wrapped_task_len={len(wrapped_task)}")
+
+    sandbox_dir = f"/tmp/sandbox_{case}_{label}"
+    os.makedirs(sandbox_dir, exist_ok=True)
+    t0 = time.time()
+
+    def _run_agent(use_oauth, sbx_dir):
+        os.makedirs(sbx_dir, exist_ok=True)
+        if use_oauth:
+            os.environ["USE_CLAUDE_LONG_RUNNING_TOKEN"] = "1"
+            os.environ["CLAUDE_OAUTH_MODEL"] = "claude-sonnet-4-6"
+            ap = {"model": model}  # harness normalizes to claude-sonnet-4-6 for OAuth
+        else:
+            os.environ.pop("USE_CLAUDE_LONG_RUNNING_TOKEN", None)
+            ap = {"provider_type": "anthropic", "baseUrl": "https://openrouter.ai/api/v1",
+                  "apiKey": or_key, "model": model}
+        return harness.run(prompt=wrapped_task, work_dir=wd, sandbox_dir=sbx_dir,
+                           timeout_s=2400, api_provider=ap)
+
+    auth_used = "claude_oauth" if have_oauth else "openrouter"
+    result = _run_agent(have_oauth, sandbox_dir)
+    if have_oauth:
+        _ut = (result.get("trace", {}) or {}).get("usageTotal", {}) or {}
+        _toks = _ut.get("prompt_tokens") or 0
+        _err = str(result.get("errorMessage") or "").lower()
+        _authfail = any(s in _err for s in ("401", "403", "unauthorized", "invalid_grant",
+                                            "429", "rate", "limit", "overloaded", "quota"))
+        if result.get("status") != "ok" or _toks == 0 or _authfail:
+            print(f"native Claude OAuth failed (status={result.get('status')} toks={_toks} err={_err[:120]}); falling back to OpenRouter")
+            os.makedirs(f"{wd}/model_output", exist_ok=True)
+            sandbox_dir = sandbox_dir + "_or"
+            result = _run_agent(False, sandbox_dir)
+            auth_used = "openrouter(fallback)"
+    wall = int(time.time() - t0)
+
+    trace = result.get("trace", {}) or {}
+    usage_total = trace.get("usageTotal", {}) or {}
+    exec_trace = trace.get("executionTrace", []) or []
+    calls = sum(1 for e in exec_trace if e.get("type") == "tool")
+
+    tool_commands = []
+    grep_output_samples = []
+    for e in exec_trace:
+        if e.get("type") != "tool":
+            continue
+        inp = e.get("input") or {}
+        cmd = str(inp.get("command") or inp.get("cmd") or inp.get("file_path") or inp)
+        if cmd:
+            tool_commands.append(cmd[:400])
+        if "grep" in cmd and e.get("output"):
+            grep_output_samples.append(str(e.get("output"))[:900])
+
+    high_fired = _check_confidence_high(sandbox_dir)
+    last_text = trace.get("lastText", "")[:500]
+
+    deliverable_paths = [
+        f for f in _sh(
+            f"find {wd}/model_output -maxdepth 2 -type f 2>/dev/null"
+        ).stdout.splitlines() if f.strip()
+    ]
+    deliverable_content = {}
+    for dp in deliverable_paths[:3]:
+        try:
+            deliverable_content[os.path.basename(dp)] = Path(dp).read_text(
+                encoding="utf-8", errors="replace"
+            )[:4000]
+        except Exception:
+            pass
+
+    judge_result = _run_judge(
+        case=case, label=label, meta_path=meta_path,
+        workdir=wd, or_key=or_key, sandbox_dir=sandbox_dir,
+    )
+    print(f"judge: {json.dumps(judge_result)}")
+
+    out = {
+        "label": label, "case": case, "render_mode": render_mode,
+        "arm": arm, "agent": "claude", "model": model, "wall_s": wall,
+        "rc": 0 if result.get("status") == "ok" else 1,
+        "status": result.get("status"),
+        "calls": calls,
+        "tokens": (usage_total.get("prompt_tokens") or 0) + (usage_total.get("completion_tokens") or 0),
+        "usage": usage_total,
+        "deliverables": deliverable_paths,
+        "deliverable_content": deliverable_content,
+        "confidence_high_fired": high_fired,
+        "last_text": last_text,
+        "judge": judge_result,
+        "tool_commands": tool_commands,
+        "grep_output_samples": grep_output_samples[:3],
+        "auth_used": auth_used,
+        "semfs_sha": _sh("cat /usr/local/share/semfs-git-sha").stdout.strip()[:12],
+    }
+    if result.get("errorMessage"):
+        out["runner_err_head"] = str(result["errorMessage"])[:4000]
+    try:
+        os.makedirs(f"{VOL}/e2e_traces", exist_ok=True)
+        _sh(f"cp {sandbox_dir}/raw/runner_stdout.txt {VOL}/e2e_traces/{label}.stdout.txt 2>/dev/null")
+        _sh(f"cp {sandbox_dir}/raw/claudecode_report.json {VOL}/e2e_traces/{label}.report.json 2>/dev/null")
+        Path(f"{VOL}/e2e_traces/{label}.result.json").write_text(json.dumps(out), encoding="utf-8")
+        data_volume.commit()
+    except Exception as exc:
+        print(f"trace-save skipped: {exc}")
+    print(json.dumps(out, indent=2))
+    return out
+
+
+@app.local_entrypoint()
+def e9w2_smoke(seed_if_missing: bool = True, model: str = "openai/gpt-5.4"):
+    """Single end-to-end smoke mirroring the planned E9w2 shape.
+
+    Parity target:
+    - case 289, chanpin_standard corpus
+    - SEARCH_ONLY=off, RESULT_LIMIT=5, GREP_RESULT_CAP=6144
+    - GREP_TOTAL_CAP=10240, RENDER_MODE=two-tier
+
+    Provider path (no ripbench / no OpenAI key needed):
+      codex CLI → local Python chat-adapter (port on 127.0.0.1)
+              → OpenRouter /chat/completions → model
+    The model name MUST contain a '/' (e.g. 'openai/gpt-5.4') so the
+    harness's _should_use_chat_adapter() returns True. A bare 'gpt-*'
+    name would bypass the adapter and hit api.openai.com → 401.
+    """
+    _local_modal_preflight()
+    verify_image.remote()
+    status = volume_status.remote()
+    if seed_if_missing and not status["ready_for_e9w2"]:
+        pull_from_box.remote()
+        status = volume_status.remote()
+    if not status["ready_for_smoke_grep"]:
+        raise RuntimeError("Modal volume is missing seed/model assets; run pull_from_box first")
+    smoke = smoke_grep.remote()
+    if not any(v.get("rc") == 0 and v.get("has_hits") for v in smoke.values()):
+        raise RuntimeError(f"smoke_grep did not return usable hits: {smoke}")
+    print(json.dumps(run_case.remote(
+        case="289",
+        label="e9w2-modal-smoke",
+        render_mode="two-tier",
+        extra_env="",
+        corpus_name=DEFAULT_CORPUS,
+        model=model,
+    )))
+
+
+@app.local_entrypoint()
+def run_batch(case: str = "289", reps: int = 4, render_mode: str = "inline",
+              corpus_name: str = DEFAULT_CORPUS, model: str = "openai/gpt-5.4",
+              arm: str = "nokg"):
+    """Parallel reps — the thing the EC2 box cannot do."""
+    args = [(case, f"m{i+1}", render_mode, "", corpus_name, model, arm, CANONICAL_SEED_DB) for i in range(reps)]
+    for res in run_case.starmap(args):
+        print(json.dumps(res))
+
+
+@app.local_entrypoint()
+def run_slice_pilot(reps: int = 3, case: str = "289", model: str = "openai/gpt-5.4"):
+    """Slice-adoption pilot (the gate for the whole cite-the-path / Option-A direction).
+
+    THE question: when the grep response is SMALL and cites `path:line_start-line_end`,
+    does the agent read just those lines (sed/cat the cited path) instead of re-grepping
+    or dumping the whole file? Adoption is agent-context, so this is Modal-valid.
+
+    Arms (both nokg, same seed/binary/model — only the render differs):
+      A0 inline      — current default: full chunk inline (control)
+      A1 cite-path   — two-tier render + SEMFS_GREP_RESULT_CAP=1536 (small top excerpt
+                       + path:line-range for the rest → exact rows need a slice)
+
+    Kill (Modal-valid): adoption < 1/3 → agent won't slice → direction is a UX dead-end.
+    Success: adoption >= 2/3 AND turns <= A0 AND accuracy >= A0 - tol → greenlight EC2 gate.
+    Adoption/tokens/accuracy are parsed locally from the printed JSON (tool_commands field).
+    """
+    _local_modal_preflight()
+    args = []
+    for i in range(reps):
+        args.append((case, f"a0_inline_r{i+1}", "inline", "",
+                     DEFAULT_CORPUS, model, "nokg", CANONICAL_SEED_DB))
+        args.append((case, f"a1_cite_r{i+1}", "two-tier", "SEMFS_GREP_RESULT_CAP=1536",
+                     DEFAULT_CORPUS, model, "nokg", CANONICAL_SEED_DB))
+    results = []
+    for res in run_case.starmap(args):
+        print(json.dumps(res))
+        results.append(res)
+    # Single machine-parseable line for the local adoption parser.
+    print("SLICE_PILOT_RESULTS=" + json.dumps(results))
+
+
+@app.local_entrypoint()
+def run_e2e(reps: int = 3, model: str = "openai/gpt-5.4"):
+    """Full E2E matrix: 5 WB cases × 3 arms (plain / nokg / nokg+adaptive-K) × n reps.
+    Auth: ChatGPT subscription first, per-run OpenRouter fallback (run_case handles it).
+    Raw traces + per-run result JSON are persisted to the volume (e2e_traces/) for pull.
+    """
+    _local_modal_preflight()
+    cases = ["95", "289", "175", "44", "15"]
+    arms = [("plain",  "plain", ""),
+            ("nokg",   "nokg",  ""),                       # standard nokg (SEMFS_ENV defaults)
+            ("nokgAK", "nokg",  "SEMFS_ADAPTIVE_K=on")]    # standard nokg + adaptive-K only
+    args = []
+    for case in cases:
+        for aname, arm, aenv in arms:
+            for i in range(reps):
+                args.append((case, f"e2e_{case}_{aname}_r{i+1}", "inline", aenv,
+                             DEFAULT_CORPUS, model, arm, CANONICAL_SEED_DB))
+    results = []
+    for res in run_case.starmap(args):
+        print(json.dumps(res))
+        results.append(res)
+    print("E2E_RESULTS=" + json.dumps(results))
+
+
+# All 11 WB-Lite Product-Manager (chanpin / 产品人员) cases — derived by reading
+# every task_lite_clean_en/<case>/metadata.json persona from the HF dataset.
+PM_LITE_CASES = "15,44,45,53,55,95,171,175,289,386,388"
+
+
+@app.local_entrypoint()
+def run_pm_matrix(reps: int = 2, agents: str = "claude,codex",
+                  claude_model: str = "anthropic/claude-sonnet-4.6",
+                  codex_model: str = "openai/gpt-5.4",
+                  cases: str = PM_LITE_CASES):
+    """The /goal matrix: all 11 PM-lite cases × 3 arms × 2 agents × reps.
+
+    Arms (identical to run_e2e): plain / nokg / nokg+adaptive-K — same seed
+    (chanpin-gemma-q4) and SEMFS env; only SEMFS_ADAPTIVE_K differs.
+    Agents run in order (Claude first, then codex per the /goal). Each agent is
+    native-auth-first (Claude OAuth / codex ChatGPT subscription) with a per-run
+    OpenRouter fallback. All per-run result JSON + raw traces persist to
+    /data/e2e_traces for `modal volume get`.
+
+    Cost note: at reps=2 this is 2×3×11×2 = 132 agentic runs. Claude cells fan
+    out concurrently and may hit the subscription rate limit → those fall back to
+    OpenRouter (per the /goal). Run with `--agents claude` or a smaller `--cases`
+    list first if you want to pace the subscription.
+    """
+    _local_modal_preflight()
+    case_list = [c.strip() for c in cases.split(",") if c.strip()]
+    agent_list = [a.strip() for a in agents.split(",") if a.strip()]
+    arms = [("plain",  "plain", ""),
+            ("nokg",   "nokg",  ""),
+            ("nokgAK", "nokg",  "SEMFS_ADAPTIVE_K=on")]
+
+    results = []
+    for agent in agent_list:  # claude first, then codex
+        model = claude_model if agent == "claude" else codex_model
+        fn = run_claude_case if agent == "claude" else run_case
+        args = []
+        for case in case_list:
+            for aname, arm, aenv in arms:
+                for i in range(reps):
+                    args.append((case, f"pm_{agent}_{case}_{aname}_r{i+1}", "inline",
+                                 aenv, DEFAULT_CORPUS, model, arm, CANONICAL_SEED_DB))
+        print(f"=== {agent}: {len(args)} cells "
+              f"({len(case_list)} cases × {len(arms)} arms × {reps} reps) ===")
+        for res in fn.starmap(args):
+            print(json.dumps(res))
+            results.append(res)
+    print("PM_MATRIX_RESULTS=" + json.dumps(results))
+
+
+@app.local_entrypoint()
+def run_e16(reps: int = 5, model: str = "openai/gpt-5.4", cases: str = "95,289"):
+    """E16 — confidence-adaptive-K A/B (cases via --cases, default 95,289).
+
+    arm A (fixed):    SEMFS_RESULT_LIMIT=10 → today's behaviour (up to 10 ranked hits).
+    arm B (adaptive): + SEMFS_ADAPTIVE_K=on → grep returns 1 (dominant) … up to 10 (flat).
+    Same seed/binary/model, nokg arm, inline render. Only difference = adaptive-K on/off.
+    Metrics parsed from the JSON: tokens, calls, judge accuracy, tool_commands,
+    grep_output_samples (to read the HIGH/Cluster verdict + the false-HIGH guard).
+    """
+    _local_modal_preflight()
+    case_list = [c.strip() for c in cases.split(",") if c.strip()]
+    arms = [("Afix", "SEMFS_RESULT_LIMIT=10"),
+            ("Badpt", "SEMFS_RESULT_LIMIT=10,SEMFS_ADAPTIVE_K=on")]
+    args = []
+    for case in case_list:
+        for aname, aenv in arms:
+            for i in range(reps):
+                args.append((case, f"e16_{case}_{aname}_r{i+1}", "inline", aenv,
+                             DEFAULT_CORPUS, model, "nokg", CANONICAL_SEED_DB))
+    results = []
+    for res in run_case.starmap(args):
+        print(json.dumps(res))
+        results.append(res)
+    print("E16_RESULTS=" + json.dumps(results))
+
+
+@app.local_entrypoint()
+def run_e8(reps: int = 3, model: str = "openai/gpt-5.4"):
+    """E8 honest headline run: all discriminating cases × both arms × n reps in parallel.
+
+    Pre-registered condition: ≥3 of 5 cases where semfs (nokg) mean_tokens < plain
+    AND accuracy ≥ plain−1 → 'semfs delivers' headline. <3 → declare wrong arena.
+
+    Cases: 95/175/289 (discriminating), 15/44 (structural ceiling — completeness only).
+    Arms: plain (baseline), nokg (two-tier render, leanhint3-class seed, v4.1 hint).
+    Render mode: two-tier for both (consistent render surface).
+    """
+    _local_modal_preflight()
+    cases = ["289", "175", "95", "15", "44"]
+    arms = ["plain", "nokg"]
+    render_mode = "two-tier"
+
+    # fan out: all (case, arm, rep) cells in parallel
+    arg_tuples = []
+    for case in cases:
+        for arm in arms:
+            for i in range(reps):
+                label = f"e8_{case}_{arm}_r{i+1}"
+                arg_tuples.append((case, label, render_mode, "", DEFAULT_CORPUS, model, arm, CANONICAL_SEED_DB))
+
+    print(f"Launching {len(arg_tuples)} cells: {len(cases)} cases × {len(arms)} arms × {reps} reps")
+    results = []
+    for res in run_case.starmap(arg_tuples):
+        results.append(res)
+        print(json.dumps(res))
+
+    # Print summary table
+    print("\n=== E8 SUMMARY ===")
+    from collections import defaultdict
+    cells: dict = defaultdict(list)
+    for r in results:
+        cells[(r["case"], r.get("arm", "?"))].append(r)
+    print(f"{'case':>6} {'arm':>6} {'reps':>4} {'mean_acc':>9} {'mean_tok':>10} {'verdict'}")
+    print("-" * 60)
+    plain_acc: dict = {}
+    for case in cases:
+        for arm in arms:
+            cell = cells[(case, arm)]
+            if not cell:
+                print(f"{case:>6} {arm:>6} {'0':>4}   {'N/A':>9} {'N/A':>10}")
+                continue
+            acc = [r["judge"]["score"] for r in cell if r.get("judge")]
+            tok = [r["tokens"] for r in cell]
+            mean_acc = sum(acc) / len(acc) if acc else 0
+            mean_tok = int(sum(tok) / len(tok)) if tok else 0
+            if arm == "plain":
+                plain_acc[case] = mean_acc
+            verdict = ""
+            if arm == "nokg" and case in plain_acc:
+                tok_win = mean_tok < (sum(r["tokens"] for r in cells[(case, "plain")]) / len(cells[(case, "plain")]))
+                acc_ok = mean_acc >= plain_acc[case] - (1 / 15)
+                verdict = "WIN" if (tok_win and acc_ok) else ("ACC_ONLY" if acc_ok else "LOSS")
+            print(f"{case:>6} {arm:>6} {len(cell):>4} {mean_acc:>9.3f} {mean_tok:>10,}  {verdict}")
+    wins = sum(1 for case in cases if cells.get((case, "nokg"))
+               and any(r["judge"]["score"] for r in cells[(case, "nokg")] if r.get("judge")))
+    print(f"\nHeadline condition: ≥3/5 cases semfs wins → check table above")
+
+
+# ─── E11: Discovery-stressed + cross-lingual cases ────────────────────────────
+
+E11_SEED_DB = "e11_seed.db"
+E11_CORPUS = "e11_discovery_corpus"
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    secrets=[modal.Secret.from_name("semfs-box-ssh")],
+    timeout=3600,
+)
+def build_e11_seed_via_box() -> dict:
+    """Build the E11 discovery semfs seed on the EC2 box (has FUSE) and pull back.
+
+    The E11 corpus is 400 plain text files (200 product reports, 200 region summaries).
+    Modal's gVisor has no FUSE, so indexing must happen on the EC2 box.
+
+    Steps:
+    1. Rsync e11 corpus from Modal volume to EC2 /tmp/e11_corpus/
+    2. Run `semfs mount` with no-sync/no-push flags on EC2
+    3. Wait for indexing to finish
+    4. Pull the seed DB back to Modal volume at /data/seeds/e11_seed.db
+    """
+    key_path = "/root/.ssh/box"
+    os.makedirs("/root/.ssh", exist_ok=True)
+    with open(key_path, "w") as f:
+        f.write(os.environ["SSH_KEY"].rstrip() + "\n")
+    os.chmod(key_path, 0o600)
+    box = "ubuntu@13.201.35.159"
+    ssh = f"ssh -i {key_path} -o StrictHostKeyChecking=no -o ConnectTimeout=30"
+
+    e11_corpus = f"{VOL}/corpus/{E11_CORPUS}"
+    e11_seed = f"{VOL}/seeds/{E11_SEED_DB}"
+
+    if os.path.exists(e11_seed):
+        print(f"E11 seed already exists at {e11_seed}: {os.path.getsize(e11_seed)} bytes")
+        return {"status": "already_exists", "path": e11_seed}
+
+    # 1. rsync corpus to EC2
+    r = _sh(
+        f'rsync -az -e "{ssh}" {e11_corpus}/ {box}:/tmp/e11_corpus/',
+        timeout=600,
+    )
+    print(f"rsync corpus to box: rc={r.returncode} err={r.stderr[-200:]!r}")
+    if r.returncode != 0:
+        return {"status": "error", "step": "rsync_corpus", "stderr": r.stderr[-500:]}
+
+    # 2. Build the index on box (semfs mount + wait for completion)
+    build_cmd = (
+        "SEMFS_EMBED_MODEL=gemma-q4 "
+        "SEMFS_EMBED_ONNX_DIR=~/gemma_q4 "
+        "SEMFS_NO_PUSH=1 "
+        "SEMFS_NO_SYNC=1 "
+        "SEMFS_STARTUP_TIMEOUT_SEC=600 "
+        "SEMFS_MOUNT_TIMEOUT_SEC=900 "
+        "/home/ubuntu/.local/bin/semfs mount /tmp/e11_corpus "
+        "--tag e11-discovery "
+        "&& /home/ubuntu/.local/bin/semfs status --tag e11-discovery "
+        "&& /home/ubuntu/.local/bin/semfs unmount e11-discovery"
+    )
+    r = _sh(f'{ssh} {box} \'{build_cmd}\'', timeout=1200)
+    print(f"build index on box: rc={r.returncode}")
+    print(r.stdout[-500:])
+    if r.returncode != 0:
+        print(f"stderr: {r.stderr[-500:]}")
+        return {"status": "error", "step": "build_index", "rc": r.returncode, "stderr": r.stderr[-400:]}
+
+    # 3. Pull seed back from box to Modal volume
+    os.makedirs(f"{VOL}/seeds", exist_ok=True)
+    r = _sh(
+        f'rsync -az -e "{ssh}" {box}:~/.semfs/e11-discovery.db {e11_seed}',
+        timeout=300,
+    )
+    print(f"rsync seed from box: rc={r.returncode} err={r.stderr[-200:]!r}")
+    if r.returncode != 0:
+        return {"status": "error", "step": "rsync_seed", "stderr": r.stderr[-500:]}
+
+    if not os.path.exists(e11_seed):
+        return {"status": "error", "step": "verify", "error": "seed file missing after rsync"}
+
+    size = os.path.getsize(e11_seed)
+    data_volume.commit()
+    print(f"E11 seed saved: {e11_seed} ({size} bytes)")
+    return {"status": "ok", "path": e11_seed, "size": size}
+
+
+@app.local_entrypoint()
+def run_e11(reps: int = 3, model: str = "openai/gpt-5.4"):
+    """E11 discovery-stressed + cross-lingual runs.
+
+    Cases: e11-001 (product Q4-2023 return rate), e11-002 (region H1-2024 growth).
+    Corpus: e11_discovery_corpus (200 files per case directory).
+    Arms: plain only (nokg pending E11 semfs seed build via build_e11_seed_via_box).
+    """
+    _local_modal_preflight()
+    cases = ["e11-001", "e11-002"]
+    render_mode = "two-tier"
+
+    # nokg arm requires the e11 seed — check if it exists first
+    e11_seed_ready = volume_status_e11.remote()
+    arms = ["plain"]
+    if e11_seed_ready:
+        arms.append("nokg")
+        print(f"E11 seed ready — running both arms: {arms}")
+    else:
+        print("E11 seed NOT ready — running plain arm only. "
+              "Run build_e11_seed_via_box() first for nokg arm.")
+
+    arg_tuples = []
+    for case in cases:
+        for arm in arms:
+            seed = E11_SEED_DB if arm == "nokg" else CANONICAL_SEED_DB
+            for i in range(reps):
+                label = f"e11_{case}_{arm}_r{i+1}"
+                arg_tuples.append(
+                    (case, label, render_mode, "", E11_CORPUS, model, arm, seed)
+                )
+
+    print(f"Launching {len(arg_tuples)} E11 cells: {len(cases)} cases × {len(arms)} arms × {reps} reps")
+    results = []
+    for res in run_case.starmap(arg_tuples):
+        results.append(res)
+        print(json.dumps(res))
+
+    print("\n=== E11 SUMMARY ===")
+    from collections import defaultdict
+    cells: dict = defaultdict(list)
+    for r in results:
+        cells[(r["case"], r.get("arm", "?"))].append(r)
+    for case in cases:
+        for arm in arms:
+            cell = cells[(case, arm)]
+            if not cell:
+                continue
+            acc = [r["judge"]["score"] for r in cell if r.get("judge")]
+            tok = [r["tokens"] for r in cell]
+            mean_acc = sum(acc) / len(acc) if acc else 0
+            mean_tok = int(sum(tok) / len(tok)) if tok else 0
+            print(f"  {case} arm={arm:<6} n={len(cell)} mean_acc={mean_acc:.3f} mean_tok={mean_tok:,}")
+
+
+@app.function(image=image, volumes={VOL: data_volume}, timeout=120)
+def volume_status_e11() -> bool:
+    """Check whether the E11 seed is ready on the volume."""
+    seed = f"{VOL}/seeds/{E11_SEED_DB}"
+    corpus = f"{VOL}/corpus/{E11_CORPUS}"
+    ready = os.path.exists(seed) and os.path.exists(corpus)
+    print(f"E11 seed: {'ok' if os.path.exists(seed) else 'MISSING'} | corpus: {'ok' if os.path.exists(corpus) else 'MISSING'}")
+    return ready
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    timeout=3600, cpu=4, memory=8192,
+)
+def build_e11_seed_modal() -> dict:
+    """Build the E11 discovery semfs seed directly in Modal using SEMFS_INDEX_ONLY=1.
+
+    SEMFS_INDEX_ONLY=1 makes daemon-inner skip the FUSE mount and exit after indexing.
+    Modal's gVisor has no FUSE, so this is the Modal-native indexing path.
+    The DB is written to ~/.semfs/e11-discovery.db, then committed to the volume.
+
+    The semfs binary must be built from a commit that includes the SEMFS_INDEX_ONLY
+    feature (added 2026-06-12 in daemon_runtime.rs).
+    """
+    e11_corpus = f"{VOL}/corpus/{E11_CORPUS}"
+    e11_seed = f"{VOL}/seeds/{E11_SEED_DB}"
+
+    if os.path.exists(e11_seed):
+        size = os.path.getsize(e11_seed)
+        print(f"E11 seed already exists at {e11_seed}: {size} bytes")
+        return {"status": "already_exists", "path": e11_seed, "size": size}
+
+    if not os.path.isdir(e11_corpus):
+        return {"status": "error", "error": f"E11 corpus missing at {e11_corpus}"}
+
+    # Count corpus files for sanity check
+    corpus_files = []
+    for root, _, files in os.walk(e11_corpus):
+        corpus_files.extend(os.path.join(root, f) for f in files)
+    print(f"E11 corpus: {len(corpus_files)} files in {e11_corpus}")
+
+    # Set up semfs config directory
+    _sh("mkdir -p ~/.semfs")
+
+    # Run daemon-inner with SEMFS_INDEX_ONLY=1: index corpus, write DB, exit without FUSE
+    # daemon-inner args: --container-tag, --mount, --backend, --key, --api-url,
+    #                    --no-sync, --no-push
+    index_env = {
+        "SEMFS_EMBED_MODEL": "gemma-q4",
+        "SEMFS_EMBED_ONNX_DIR": f"{VOL}/models/gemma_q4",
+        "SEMFS_NO_PUSH": "1",
+        "SEMFS_NO_SYNC": "1",
+        "SEMFS_INDEX_ONLY": "1",       # skip FUSE; exit after indexing
+        "SEMFS_KG": "0",               # skip KG build to save time/space
+        "SUPERMEMORY_API_KEY": "dummy-local-e11",
+    }
+    cmd = (
+        "semfs daemon-inner "
+        "--container-tag e11-discovery "
+        f"--mount {e11_corpus} "
+        "--backend fuse "              # backend field (ignored when INDEX_ONLY)
+        "--key dummy-local-e11 "
+        "--api-url https://api.supermemory.ai "
+        "--no-sync --no-push "
+        "2>&1"
+    )
+    print(f"Starting indexer: {cmd}")
+    r = _sh(cmd, env=index_env, timeout=2700)
+    print(f"daemon-inner rc={r.returncode}")
+    print(r.stdout[-800:])
+    if r.returncode != 0:
+        return {"status": "error", "step": "index", "rc": r.returncode,
+                "stderr": r.stderr[-500:], "stdout_tail": r.stdout[-300:]}
+
+    # The DB is written to ~/.semfs/e11-discovery.db
+    local_db = os.path.expanduser("~/.semfs/e11-discovery.db")
+    if not os.path.exists(local_db):
+        return {"status": "error", "step": "verify_db",
+                "error": f"DB not found at {local_db} after indexing"}
+
+    db_size = os.path.getsize(local_db)
+    print(f"Indexed DB: {local_db} ({db_size} bytes)")
+
+    # Copy to volume
+    os.makedirs(f"{VOL}/seeds", exist_ok=True)
+    _sh(f"cp {local_db} {e11_seed}")
+    data_volume.commit()
+    print(f"E11 seed committed to volume: {e11_seed} ({db_size} bytes)")
+    return {"status": "ok", "path": e11_seed, "size": db_size, "corpus_files": len(corpus_files)}
+
+
+@app.local_entrypoint()
+def build_e11_seed():
+    """Build the E11 discovery semfs seed.
+
+    Tries Modal-native indexing first (SEMFS_INDEX_ONLY=1, no EC2 needed).
+    Falls back to EC2 box if Modal build fails (requires semfs-box-ssh secret).
+    """
+    _local_modal_preflight()
+    print("Building E11 seed via Modal-native SEMFS_INDEX_ONLY indexer...")
+    result = build_e11_seed_modal.remote()
+    print(json.dumps(result, indent=2))
+    if result.get("status") in ("ok", "already_exists"):
+        print("E11 seed ready.")
+    else:
+        print("Modal-native build failed. Trying EC2 box fallback...")
+        result = build_e11_seed_via_box.remote()
+        print(json.dumps(result, indent=2))

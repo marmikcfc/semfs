@@ -75,7 +75,8 @@ impl Reranker for CohereReranker {
             query,
             documents: docs,
         };
-        let resp: CohereResponse = ureq::post(&format!("{}/rerank", self.base_url))
+        let resp: CohereResponse = crate::http::timeout_agent()
+            .post(&format!("{}/rerank", self.base_url))
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json")
             .send_json(body)
@@ -162,7 +163,8 @@ impl Reranker for RelaceReranker {
             codebase,
             token_limit: self.token_limit,
         };
-        let resp: RelaceResponse = ureq::post(&format!("{}/v2/code/rank", self.base_url))
+        let resp: RelaceResponse = crate::http::timeout_agent()
+            .post(&format!("{}/v2/code/rank", self.base_url))
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json")
             .send_json(body)
@@ -187,7 +189,8 @@ mod tests {
 
     fn docs() -> Vec<String> {
         vec![
-            "To reset your password, click 'forgot password' and follow the email link.".to_string(),
+            "To reset your password, click 'forgot password' and follow the email link."
+                .to_string(),
             "Bananas are a good source of potassium and dietary fiber.".to_string(),
         ]
     }
@@ -204,7 +207,12 @@ mod tests {
             .rerank("how do I reset my account password", &docs())
             .unwrap();
         assert_eq!(scores.len(), 2);
-        assert!(scores[0] > scores[1], "password {} vs banana {}", scores[0], scores[1]);
+        assert!(
+            scores[0] > scores[1],
+            "password {} vs banana {}",
+            scores[0],
+            scores[1]
+        );
     }
 
     /// Gated live test: RELACE_API_KEY.
@@ -218,6 +226,11 @@ mod tests {
             .rerank("how do I reset my account password", &docs())
             .unwrap();
         assert_eq!(scores.len(), 2);
-        assert!(scores[0] > scores[1], "password {} vs banana {}", scores[0], scores[1]);
+        assert!(
+            scores[0] > scores[1],
+            "password {} vs banana {}",
+            scores[0],
+            scores[1]
+        );
     }
 }

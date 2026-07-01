@@ -17,6 +17,14 @@ pub enum Request {
     Status,
     Sync,
     Unmount,
+    /// Semantic search over the daemon's local index. This is how `grep` reaches
+    /// the index without opening its own DB connection — essential for embedded
+    /// single-connection backends (pglite) where the daemon owns the connection.
+    Search {
+        query: String,
+        #[serde(default)]
+        filepath: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,12 +44,52 @@ pub enum Response {
         user_name: Option<String>,
         #[serde(default)]
         org_name: Option<String>,
+        /// Storage backend the daemon actually mounted with (`sqlite`/`pgvector`/
+        /// `pglite`). Lets a client (`grep`) learn the AUTHORITATIVE backend from
+        /// the live daemon when its local marker doesn't carry it (e.g. an
+        /// explicit `--tag` run from outside the mount), so it can apply the right
+        /// fail-closed policy. `#[serde(default)]` → `None` from older daemons.
+        #[serde(default)]
+        backend: Option<String>,
+        /// Depth (queued + in-flight) of the L7 entity-graph extraction queue.
+        /// `Some(0)` once the background graph worker has fully drained; `None`
+        /// when no graph extractor is attached (or an older daemon). Lets a warm
+        /// wait for the graph to finish before unmounting.
+        #[serde(default)]
+        graph_queue_depth: Option<usize>,
+        /// Count of binary files whose content could not be extracted to
+        /// searchable text (unsupported format, parse failure, OCR key absent).
+        /// `Some(0)` when everything indexed; `None` from an older daemon. Makes
+        /// silent binary-document data loss visible (L1 parse accounting).
+        #[serde(default)]
+        unindexed_files: Option<usize>,
     },
     SyncDone {
         pulled: usize,
         pushed_pending: usize,
     },
     UnmountAck,
+    /// Ranked hits from a `Search` request. `searchable=false` means the daemon
+    /// has no usable local index (so the client should fall back to cloud).
+    /// `backend` is the daemon's AUTHORITATIVE storage backend, carried in the
+    /// SAME response so the client's fallback policy needs no second RPC.
+    SearchHits {
+        hits: Vec<crate::backend::SearchHit>,
+        searchable: bool,
+        #[serde(default)]
+        backend: Option<String>,
+    },
+    /// A `Search` that REACHED the daemon's index but FAILED (backend fault,
+    /// embedder outage, timeout). Distinct from the generic `Error` (which also
+    /// covers unparseable requests from an older daemon) so the client can tell a
+    /// genuine search fault from version skew — and it carries the authoritative
+    /// `backend` so a daemon-only backend (pglite) stays fail-closed without a
+    /// separate Status lookup that could flake independently.
+    SearchError {
+        message: String,
+        #[serde(default)]
+        backend: Option<String>,
+    },
     Error {
         message: String,
     },

@@ -1,0 +1,32 @@
+    #[test]
+    fn two_sheets_with_same_cells_but_different_names_produce_different_summaries() {
+        // Finding #2 regression test: the cache key includes sheet_name, so two
+        // sheets with identical cell text but different names do not reuse each
+        // others cached summaries (the prompt depends on the name as a domain
+        // hint). We prove this with a pre-warmed cache: two sheets with the same
+        // cells get different cache keys -> different cached summaries.
+        let dir = tempfile::tempdir().unwrap();
+        let cache = SummaryCache::new(dir.path().to_path_buf());
+        let fp = "/f.xlsx";
+        let table = "Widget\\t1978\\nGadget\\t1335\\n";
+
+        // Pre-warm the cache with two distinct summaries for the same cells but
+        // different sheet names.
+        let key_jan = cache_key(fp, "January", table);
+        let key_feb = cache_key(fp, "February", table);
+        assert_ne!(key_jan, key_feb, "different sheet names produce different cache keys");
+
+        cache.put(&key_jan, "January sales data");
+        cache.put(&key_feb, "February sales data");
+
+        // Index the workbook with two sheets with identical cells but different names.
+        let sheets = vec![sheet("January", table), sheet("February", table)];
+        let out = summarize_with_key(Some("bogus-key".into()), fp, &sheets, Some(&cache)).unwrap();
+
+        // The output must contain both distinct summaries (not one reused for both sheets).
+        assert!(
+            out.contains("January sales data") && out.contains("February sales data"),
+            "two sheets with same cells but different names should retrieve distinct summaries"
+        );
+    }
+

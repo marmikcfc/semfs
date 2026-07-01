@@ -1,0 +1,194 @@
+{
+  "model": "gpt-5.4-nano",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "ERROR:BadRequestError",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Error code: 400 - {'error': {'message': \"Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'none', 'low', "
+    }
+  ]
+}

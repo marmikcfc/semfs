@@ -1,0 +1,311 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed text is identical to the original text. All facts are preserved including: NASA Day of Remembrance, Jim Bridenstine's quote, the delay due to government shutdown, the three accidents (Apollo 1 on Jan 27, 1967 with Grissom, White, Chaffee; Challenger in Jan 1986 with 7 astronauts killed 73 seconds after takeoff; Columbia on Feb 1, 2003 with 7 astronauts), Reagan's and Bush's quotes, and the closing statement. No facts were dropped or added.",
+      "usage": {
+        "in": 2010,
+        "out": 1354,
+        "reasoning": 1327
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Half winners, half tackle tough questions",
+        "exact quote 'why do shower curtains below inwards?'",
+        "attribution 'especially from all of us with the Annals of Improbable Research'"
+      ],
+      "qwen_added": [
+        "Why do shower curtains billow inwards?",
+        "attribution 'on behalf of the Annals of Improbable Research'"
+      ],
+      "qwen_reason": "Dropped quantitative statement about half winners; changed exact quote from 'below inwards' to 'billow inwards'; altered speaker attribution from 'from all of us with the Annals' to 'on behalf of the Annals'.",
+      "usage": {
+        "in": 2097,
+        "out": 10660,
+        "reasoning": 10504
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version accurately captures all factual content from the multi-turn dialogue, including the user's personal reasons for wearing baggy clothes (comfort, freedom, style, rebellion, confidence, versatility) and the AI's responses (lack of personal feelings, understanding of comfort/freedom, trend information, societal rebellion analysis, confidence/well-being benefits, and list of current fashion trends). No facts are omitted or invented; the structure is simply reorganized into attributed bullet points.",
+      "usage": {
+        "in": 2285,
+        "out": 2144,
+        "reasoning": 2492
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual entries (entity names, roles, loan references, exhibit numbers, signatures, dates) are preserved. The initial fragment 'Association, as Primary Servicer...' is a chunk-boundary artifact (incomplete sentence at start) and not a fact. Formatting changes (em dashes, punctuation) and minor wording edits (e.g., 'the requirements of', 'duly') do not alter facts.",
+      "usage": {
+        "in": 2571,
+        "out": 3113,
+        "reasoning": 3005
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content (entity names, roles, loan references, exhibit numbers, regulatory citations, signatures, dates) is preserved. Only formatting, punctuation, and minor wording changes (e.g., 'see Exhibit' vs 'Exhibit', 'has duly caused' vs 'caused') were made, which do not alter any facts.",
+      "usage": {
+        "in": 2599,
+        "out": 4562,
+        "reasoning": 4468
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Industrial Designer's unfinished utterance 'Har how it works an'"
+      ],
+      "qwen_added": [
+        "Attributes '_V_I_D_N_M_E_ stand for?' to Project Manager (no speaker in original)",
+        "Completes Industrial Designer's unfinished 'Har how it works an' into 'How it works and—'"
+      ],
+      "qwen_reason": "The compression invents a speaker attribution for the initial question and turns an unfinished utterance into a completed claim, both not present in the original.",
+      "usage": {
+        "in": 1930,
+        "out": 6384,
+        "reasoning": 6949
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content preserved: speakers, decisions (plan/consensus, next meeting, individual preparation), technical details (text screen, bluetooth, one-way/multi-purpose, step further, individual components), action items (delete/edit obsolete details, fit pieces together, specific instructions, personal coach, thirty minutes), and closing remarks (be careful, damn, success, okay, cheers, sorry, yes, yeah, no, come up). Only disfluencies, filler words, repetition, and transcription markers ({disfmarker}, {vocalsound}) removed; structure reorganized but no fact added or dropped.",
+      "usage": {
+        "in": 2126,
+        "out": 2595,
+        "reasoning": 2572
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Removed filler words ('quite', 'pretty', 'real', 'I mean', 'But', 'And'), corrected a transcription typo ('are' to 'area'), adjusted punctuation and spacing. All factual content (names, numbers, charges, quotes, statements) preserved identically.",
+      "usage": {
+        "in": 2273,
+        "out": 3218,
+        "reasoning": 3137
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all factual content: the AI disclaimer, the explanation of intention's role, the five steps for setting a clear intention (including the quit-smoking example), and the answer about materialistic goals with the same reasoning and caveats. Only minor syntactic simplifications occur (e.g., 'helps to promote' → 'helps promote', 'provide an explanation' → 'explain'), which do not alter any facts.",
+      "usage": {
+        "in": 2432,
+        "out": 3172,
+        "reasoning": 3996
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved: leading brands list (7 brands), 8 feature categories with identical details, price ranges (under $100 entry-level, over $1,000 premium Apple/Samsung), and affordable-option advice (older models, lesser-known brands, quality/longevity trade-off, review/compare advice). Only stylistic reformatting (bullet points, concise phrasing) applied.",
+      "usage": {
+        "in": 2020,
+        "out": 524,
+        "reasoning": 485
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compression removed only the words 'duly' and 'thereunto' from the signature block, which are legal boilerplate and not facts. All factual content — entity names, roles, exhibit references, dates, signatures — is preserved identically.",
+      "usage": {
+        "in": 2600,
+        "out": 1724,
+        "reasoning": 1651
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Compression only removes line breaks and extra whitespace; all factual content including statutory references, enumerated purposes, amendments, and specific language preserved identically.",
+      "usage": {
+        "in": 2405,
+        "out": 1750,
+        "reasoning": 1697
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content preserved: percentages, dollar amounts, dates, business counts, growth rates, program details, and statutory purposes. Only formatting changes (numbering style, percent symbols, punctuation, minor rephrasing like 'creation of' to 'creating', and industry breakdown reformatted as a list) with no loss or addition of facts.",
+      "usage": {
+        "in": 2457,
+        "out": 1640,
+        "reasoning": 1547
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements preserved: sections 4, 5, 6 (implied), 7, 8, 9; 30-day and 15-day periods; Secretary review; public inspection; competitive bid; chapter 11 title 40; waiver conditions; emergency/specialty/intermittent nature; underutilization. Only wording and formatting changed, no fact loss or addition.",
+      "usage": {
+        "in": 1931,
+        "out": 1170,
+        "reasoning": 1340
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content (numbers, names, measurements, drug dose, percentages, references, figure references, anatomical descriptions) preserved exactly; only minor formatting and capitalization differences.",
+      "usage": {
+        "in": 2480,
+        "out": 1578,
+        "reasoning": 1521
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content (percentages, citations, study findings, mortality rates, survival comparisons, HPV subtypes, recommendations) is preserved. Formatting changes (prose to structured paragraphs), correction of typos (e.g., 'commen' to 'common', 'prevalance' to 'prevalence'), removal of OCR noise ('were n0 .'), and elimination of a duplicated final paragraph are lossless transformations. No facts are missing or added.",
+      "usage": {
+        "in": 2260,
+        "out": 3727,
+        "reasoning": 3985
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual content preserved: stress relates to three systems (healthcare, occupational, personal); authors' prior work identified two support frameworks; healthcare system policies, counselling/therapy services, ongoing PCP education; work-related management strategies (skill development, workload spreading, coworker relationships/support systems); personal/self-care strategies with full list and citations [4,52,53]; Elwood et al. caution and call for evidence-based policies; research limitations (high-income settings, unclear definitions, weak methods); recommendation for methodologically sound research; need for ongoing education at undergraduate, prevocational, practitioner levels; necessity of multi-level support as PCPs engage more with family violence; PCP awareness of own support needs. No facts added or dropped; structural reformatting and minor wording changes are lossless.",
+      "usage": {
+        "in": 2199,
+        "out": 1911,
+        "reasoning": 1723
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Only disfluencies, fillers, stutters, repetitions, and transcription markers ({disfmarker}, {vocalsound}) were removed. All substantive content, speaker attributions, and factual information preserved.",
+      "usage": {
+        "in": 2035,
+        "out": 1651,
+        "reasoning": 1499
+      }
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Only minor wording differences: removed 'Unfortunately,' and two instances of 'really' (hedge words), which are considered filler. All factual content including names, dates, technical details, code structure, design pattern question, and dialogue attribution preserved identically.",
+      "usage": {
+        "in": 2530,
+        "out": 2531,
+        "reasoning": 2563
+      }
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual specifications (model features, dimensions, weights, warranties, compatibility lists, cable requirements, supported devices, HDMI specifications, etc.) are preserved identically. Only formatting changes (bullet list to semicolon-separated list, paragraph restructuring) and minor wording adjustments that do not alter any fact.",
+      "usage": {
+        "in": 2511,
+        "out": 3516,
+        "reasoning": 3431
+      }
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual claims (prices, company name, property types, customer portfolio size, geographic descriptors, investment assertions) are preserved. Only opinions, hedges, marketing flourishes, and redundant phrasing were removed or reworded without altering any verifiable fact.",
+      "usage": {
+        "in": 2059,
+        "out": 5562,
+        "reasoning": 5487
+      }
+    }
+  ]
+}

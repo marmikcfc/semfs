@@ -148,7 +148,11 @@ async fn test_import_file_with_ownership_preserves_uid_gid_for_file_and_dirs() {
 
     let nested = fs.lookup(ROOT, "nested").await.unwrap().unwrap();
     let nested_path = fs.lookup(nested.ino, "path").await.unwrap().unwrap();
-    let imported_file = fs.lookup(nested_path.ino, "imported.txt").await.unwrap().unwrap();
+    let imported_file = fs
+        .lookup(nested_path.ino, "imported.txt")
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(nested.uid, UID);
     assert_eq!(nested.gid, GID);
@@ -617,6 +621,31 @@ async fn test_create_derived_sibling_writes_readonly_file() {
     assert_eq!(attr.mode & 0o777, 0o444);
     assert!(fs.db().is_derived(attr.ino));
     assert_eq!(attr.size as usize, "server said: unsupported".len());
+}
+
+// A corpus-provided AGENTS.md / CLAUDE.md must never be clobbered by the
+// workspace-root KG hint: create_derived_sibling on a non-derived file returns
+// AlreadyExists and leaves the user's content intact. refresh_knowledge_graph
+// relies on this to skip (not overwrite) such files.
+#[tokio::test]
+async fn test_derived_sibling_does_not_clobber_user_file() {
+    let fs = fs();
+    let (_, handle) = fs
+        .create_file(ROOT, "AGENTS.md", 0o644, UID, GID)
+        .await
+        .unwrap();
+    handle.write(0, b"# corpus AGENTS.md").await.unwrap();
+
+    let err = fs
+        .create_derived_sibling("/AGENTS.md", "semfs kg hint")
+        .unwrap_err();
+    assert!(matches!(err, VfsError::AlreadyExists));
+
+    // The user's file is untouched (content + non-derived status preserved).
+    let attr = fs.lookup(ROOT, "AGENTS.md").await.unwrap().unwrap();
+    assert!(!fs.db().is_derived(attr.ino));
+    let data = handle.read(0, 100).await.unwrap();
+    assert_eq!(data, b"# corpus AGENTS.md");
 }
 
 #[tokio::test]

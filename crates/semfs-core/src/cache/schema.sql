@@ -120,15 +120,84 @@ CREATE INDEX IF NOT EXISTS idx_chunks_filepath ON chunks(filepath);
 
 -- L7 entity/link graph: typed edges between files, re-derived on write and
 -- removed on delete (mutable-FS substrate — no temporal/versioning).
+-- `confidence` is categorical (EXTRACTED / INFERRED / AMBIGUOUS); today the LLM
+-- path writes INFERRED — see tickets/ls-kg-semantic-readdir/graphify_kg_architecture.md.
 CREATE TABLE IF NOT EXISTS edges (
     from_path  TEXT NOT NULL,
     to_path    TEXT NOT NULL,
     edge_kind  TEXT NOT NULL,
     created_at INTEGER NOT NULL,
+    confidence TEXT NOT NULL DEFAULT 'INFERRED',
     PRIMARY KEY (from_path, to_path, edge_kind)
 );
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_path);
 
+-- Graphify KG: recover an entity's original display name + type from its node
+-- path (`/memories/<slug>.md`). `slugify` is lossy (CJK → e-<hash>), so the raw
+-- name is stored here at extraction time for god-node labels in KNOWLEDGE_GRAPH.md.
+CREATE TABLE IF NOT EXISTS graph_entity (
+    path TEXT PRIMARY KEY,   -- = edges.to_path (the /memories/<slug>.md node)
+    name TEXT NOT NULL,      -- original entity name (CJK preserved)
+    kind TEXT NOT NULL,      -- ontology type (Person/Organization/Concept/…)
+    file_type TEXT,          -- graphify: code|document|paper|image (nullable)
+    source_file TEXT,        -- file the entity was first extracted from (nullable)
+    rationale TEXT           -- graphify: design-intent text on the node (nullable)
+);
+
+-- Graphify-parity entity↔entity relationship graph (typed, directed). Distinct
+-- from `edges` (which is the file→entity co-mention graph). source/target are
+-- `/memories/<slug>.md` node paths. Re-derived on rebuild; weight = strength.
+CREATE TABLE IF NOT EXISTS graph_relation (
+    source           TEXT NOT NULL,   -- /memories/<slug>.md
+    target           TEXT NOT NULL,   -- /memories/<slug>.md
+    relation         TEXT NOT NULL,   -- calls|cites|conceptually_related_to|… (RELATION_TYPES)
+    confidence       TEXT NOT NULL DEFAULT 'INFERRED',  -- EXTRACTED|INFERRED|AMBIGUOUS
+    confidence_score REAL NOT NULL DEFAULT 0.5,
+    source_file      TEXT,            -- file the relation was extracted from
+    source_location  TEXT,
+    weight           REAL NOT NULL DEFAULT 1.0,
+    created_at       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source, target, relation)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_src ON graph_relation(source);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_tgt ON graph_relation(target);
+
+-- Materialized Louvain projection (graph-as-filesystem). The community→god-node→
+-- member-file skeleton is otherwise recomputed ephemerally inside build_digest();
+-- the FS traversal ops (readdir/lookup) can't run Louvain per `ls`, so the
+-- projection is persisted here once at KG-refresh time and read cheaply.
+-- See tickets/ls-kg-semantic-readdir/graph-as-filesystem-traversal.md §4.4.
+-- Louvain is a hard partition, so each file maps to exactly one community
+-- (is_primary=1); the column reserves future multi-membership without churn.
+CREATE TABLE IF NOT EXISTS graph_community (
+    file_path    TEXT    NOT NULL,
+    community_id INTEGER NOT NULL,
+    is_primary   INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (file_path, community_id)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_community_cid ON graph_community(community_id);
+
+-- Ranked god-nodes (central entities) per community — labels the god-node dir
+-- and seeds cross-edge navigation. rank 0 = most central (the dir's display name).
+CREATE TABLE IF NOT EXISTS graph_god_node (
+    community_id INTEGER NOT NULL,
+    entity_path  TEXT    NOT NULL,   -- = graph_entity.path (/memories/<slug>.md)
+    rank         INTEGER NOT NULL,
+    PRIMARY KEY (community_id, entity_path)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_god_node_cid ON graph_god_node(community_id);
+
 -- BM25 keyword index over chunk text. rowid is kept equal to chunks.id so the
 -- vec0 KNN and fts5 BM25 result sets join back to the same chunk.
 CREATE VIRTUAL TABLE IF NOT EXISTS ffts USING fts5(text);
+
+-- L1 parse accounting: binary files whose content could not be extracted to
+-- searchable text (unsupported format, parse failure, OCR key absent). Keyed by
+-- inode so a later successful flush or an unlink clears the row. Surfaced as
+-- `unindexed_files` in `semfs status` — no binary is ever silently dropped.
+CREATE TABLE IF NOT EXISTS fs_unindexed (
+    ino       INTEGER PRIMARY KEY,
+    filepath  TEXT    NOT NULL,
+    format    TEXT    NOT NULL,
+    ts        INTEGER NOT NULL
+);

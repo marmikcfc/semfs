@@ -1,0 +1,22 @@
+# Build a published ref of semfs from source into a slim runtime image.
+# No prebuilt release binaries / hosted installer required.
+#
+#   docker build -f docker/Dockerfile.release --build-arg SEMFS_REF=main -t semfs .
+FROM rust:1.95-slim AS builder
+WORKDIR /src
+ARG SEMFS_REF=main
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${SEMFS_REF}" https://github.com/saralai/semfs.git . \
+    || git clone --depth 1 https://github.com/saralai/semfs.git .
+RUN cargo build --release --bin semfs
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates fuse3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /src/target/release/semfs /usr/local/bin/semfs
+
+ENTRYPOINT ["semfs"]
+CMD ["--help"]

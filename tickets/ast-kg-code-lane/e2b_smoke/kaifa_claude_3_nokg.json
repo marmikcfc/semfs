@@ -1,0 +1,39 @@
+{
+  "label": "kaifa_claude_3_nokg",
+  "agent": "claude",
+  "case": "3",
+  "arm": "nokg",
+  "work_dir": "/home/user/run/kaifa_claude_3_nokg",
+  "auth_used": "openrouter",
+  "status": "ok",
+  "wall_s": 167,
+  "calls": 10,
+  "used_semfs_grep": true,
+  "tokens": 372446,
+  "usage": {
+    "prompt_tokens": 17,
+    "completion_tokens": 2998,
+    "total_tokens": 372446,
+    "cache_read": 275112,
+    "cache_write": 94319
+  },
+  "deliverables": [
+    "project_dependency_deduplication_list.md"
+  ],
+  "deliverable_content": {
+    "project_dependency_deduplication_list.md": "# Project Dependency Deduplication List\n\n> **Sources consulted:**\n> - `/dependency-management/pom-parent.xml` — Maven parent POM\n> - `/dependency-management/maven_bom_config.xml` — BOM (Bill of Materials)\n> - `/project-code/pom.xml` — Main project POM\n> - `/development/project-code/project_object_model.xml` — Duplicate project POM\n> - `/build/build.gradle` — Gradle build file\n> - `/dependency-management/dependency-audit-2025Q1.md` — Q1 2025 audit (Java/Node.js/Python)\n> - `/dependency-management/npm_package_audit.json` — npm audit report\n\n---\n\n## Java / Spring Ecosystem\n\n| Library / Framework | Category |\n|---|---|\n| Spring Boot (`spring-boot-starter-parent`) | Core Framework |\n| Spring Cloud (`spring-cloud-dependencies`) | Microservices Framework |\n| Spring Security (`spring-boot-starter-security`) | Security |\n| Spring Data JPA (`spring-boot-starter-data-jpa`) | Data Access |\n| Spring Data Redis (`spring-boot-starter-data-redis`) | Caching / Data Store |\n| Spring Web (`spring-boot-starter-web`) | Web / REST API |\n| Spring Cache (`spring-boot-starter-cache`) | Caching |\n| Spring Validation (`spring-boot-starter-validation`) | Input Validation |\n| Spring Actuator (`spring-boot-starter-actuator`) | Monitoring / Health |\n| Spring Session Data Redis (`spring-session-data-redis`) | Session Management |\n| Spring Security Test (`spring-security-test`) | Testing |\n| Spring Boot Test (`spring-boot-starter-test`) | Testing |\n\n---\n\n## Data Layer\n\n| Library / Framework | Category |\n|---|---|\n| Hibernate (`hibernate-core`) | ORM / Data Persistence |\n| MySQL Connector (`mysql-connector-java` / `mysql-connector-j`) | Database Driver |\n| PostgreSQL Driver (`postgresql`) | Database Driver |\n| Flyway (`flyway-core`) | Database Migration |\n| Redisson (`redisson`) | Redis Client |\n| H2 Database (`h2`) | Embedded DB (Testing) |\n\n---\n\n## Security & Authentication\n\n| Library / Framework | Category |\n|---|---|\n| JJWT API (`jjwt-api`) | JWT Authentication |\n| JJWT Impl (`jjwt-impl`) | JWT Authentication |\n| JJWT Jackson (`jjwt-jackson`) | JWT Authentication |\n| Nimbus JOSE + JWT (`nimbus-jose-jwt`) | JWT / JOSE |\n| BCrypt (`bcrypt`) | Password Hashing |\n\n---\n\n## Observability & Resilience\n\n| Library / Framework | Category |\n|---|---|\n| Micrometer (`micrometer`) | Metrics |\n| OpenTelemetry (`opentelemetry`) | Distributed Tracing |\n| Resilience4j (`resilience4j`) | Circuit Breaker / Resilience |\n| Logback (`logback-classic`) | Logging |\n\n---\n\n## Utilities (Java)\n\n| Library / Framew"
+  },
+  "tool_commands": [
+    "semfs grep \"project dependencies libraries frameworks package requirements\" /home/user/ws/mnt/ 2>&1 | head -200",
+    "semfs grep \"package.json pom.xml requirements.txt build.gradle dependencies\" /home/user/ws/mnt/ 2>&1 | head -200",
+    "semfs grep \"Spring Boot Maven Gradle Java dependencies pom.xml\" /home/user/ws/mnt/ 2>&1 | head -150",
+    "semfs grep \"npm package.json Node.js frontend dependencies\" /home/user/ws/mnt/ 2>&1 | head -150",
+    "semfs grep \"Python pip requirements.txt fastapi pandas dependencies\" /home/user/ws/mnt/ 2>&1 | head -150",
+    "cat /home/user/ws/mnt/dependency-management/requirements.txt 2>/dev/null || echo \"FILE NOT FOUND\"",
+    "semfs grep \"Gradle build dependencies implementation compile\" /home/user/ws/mnt/ 2>&1 | head -100",
+    "cat /home/user/ws/mnt/dependency-management/python_requirements_dev.txt 2>/dev/null | head -80",
+    "mkdir -p /home/user/run/kaifa_claude_3_nokg/model_output"
+  ],
+  "err": "",
+  "mount_kg_listing": "[root]\nAGENTS.md\nCLAUDE.md\nkg\n[kg]\nGRAPH_REPORT.md\nKNOWLEDGE_GRAPH.md\ngraph.json\n"
+}

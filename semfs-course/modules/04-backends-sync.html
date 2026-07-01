@@ -1,0 +1,324 @@
+<section class="module" id="module-4">
+  <div class="module-content">
+
+    <header class="module-header">
+      <span class="module-number">04</span>
+      <h1 class="module-title">The Outside World: Backends and the Couriers That Reach Them</h1>
+      <p class="module-subtitle">Back in module 1, your write was "durable the moment the prompt returned" — but it had not reached the cloud yet. So who actually drives it there? And what happens if the cloud is slow, offline, or a teammate deleted a file on another machine? Meet the courier fleet.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE METAPHOR + THREE BACKEND TIERS ───────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">A shipping logistics network</h2>
+
+      <p>Your <span class="term" data-definition="A cache is a small, fast local store of data kept close by so you do not have to fetch it from somewhere slow every time — like keeping snacks in your desk drawer instead of walking to the store.">cache</span> 🗄️ is the warehouse next door: instant. The <span class="term" data-definition="A backend is the remote system that actually stores and serves your data — a server or cloud service the app talks to over the network, as opposed to your own machine.">backend</span> 📚 is a distant fulfillment center. Between them runs a fleet of couriers — the <span class="term" data-definition="The part of semfs that runs background jobs to keep your local cache and the remote backend in agreement. In this module it is the courier dispatcher, 🚚.">SyncEngine</span> 🚚 — each with its own route and schedule, so YOU never wait at the loading dock.</p>
+
+      <p>semfs offers three backend tiers. The filesystem behaves identically across all of them — <em>graceful degradation, not lowest common denominator.</em></p>
+
+      <div class="pattern-cards">
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">📦</div>
+          <h4 class="pattern-title">Embedded <span style="font-weight:400;font-size:var(--text-xs)">(the default)</span></h4>
+          <p class="pattern-desc"><span class="term" data-definition="SQLite is a tiny database that lives in a single file on your own computer — no separate server to run. Great for offline, single-user apps.">SQLite</span> + <span class="term" data-definition="sqlite-vec is an add-on that lets SQLite store and search meaning-vectors — the number-lists that represent the meaning of text.">sqlite-vec</span> + <span class="term" data-definition="FTS5 is SQLite's full-text search engine — it finds documents by the exact words they contain, like a fast keyword search.">FTS5</span>. Local, offline, one single binary.</p>
+          <p class="pattern-desc"><strong>Best for:</strong> a personal mount on one machine.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">🏢</div>
+          <h4 class="pattern-title">Server</h4>
+          <p class="pattern-desc"><span class="term" data-definition="Postgres is a powerful database that runs as its own server program, built to handle many users writing at the same time.">Postgres</span> + <span class="term" data-definition="pgvector is an extension that teaches Postgres to store and search meaning-vectors, so the database can answer by meaning, not just keywords.">pgvector</span>. Concurrent <span class="term" data-definition="Multi-writer means several machines or people can write to the same store at the same time without stepping on each other.">multi-writer</span>, large <span class="term" data-definition="A corpus is the whole collection of documents a system stores and searches over.">corpora</span> (<span class="term" data-definition="HNSW (Hierarchical Navigable Small World) is a clever index that finds the nearest meaning-vectors fast, even across millions of documents.">HNSW</span> index).</p>
+          <p class="pattern-desc"><strong>Best for:</strong> a team, many documents.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">☁️</div>
+          <h4 class="pattern-title">Cloud</h4>
+          <p class="pattern-desc">Supermemory <span class="term" data-definition="An API (Application Programming Interface) is a doorway one program uses to ask another program to do something or hand over data, over the network.">API</span>. Zero local index — the server keeps a memory graph for you.</p>
+          <p class="pattern-desc"><strong>Best for:</strong> shared, managed memory you do not host yourself.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: THE FOUR KNOBS (Snippet A code↔English) ──────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The dispatcher has four dials</h2>
+
+      <p>The SyncEngine reads its schedule from one small settings struct. Two of the dials are timers; two are simple on/off switches that the mount <span class="term" data-definition="A flag is an option you add to a command to change its behaviour — like adding --no-push to a command. When talking to an AI you would say add a flag for that.">flags</span> flip.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// Knobs for the sync engine. All optional — defaults are production-sane.</span></span>
+<span class="code-line"><span class="code-comment">#[derive(Debug, Clone, Copy)]</span></span>
+<span class="code-line"><span class="code-keyword">pub struct</span> SyncOptions {</span>
+<span class="code-line">    <span class="code-keyword">pub</span> delta_interval: Duration,</span>
+<span class="code-line">    <span class="code-keyword">pub</span> deletion_scan_interval: Duration,</span>
+<span class="code-line">    <span class="code-keyword">pub</span> pull_enabled: <span class="code-keyword">bool</span>,</span>
+<span class="code-line">    <span class="code-keyword">pub</span> push_enabled: <span class="code-keyword">bool</span>,</span>
+<span class="code-line">}</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="code-keyword">impl</span> Default <span class="code-keyword">for</span> SyncOptions {</span>
+<span class="code-line">    <span class="code-keyword">fn</span> <span class="code-function">default</span>() -&gt; Self {</span>
+<span class="code-line">        Self {</span>
+<span class="code-line">            delta_interval: Duration::<span class="code-function">from_secs</span>(<span class="code-string">30</span>),</span>
+<span class="code-line">            deletion_scan_interval: Duration::<span class="code-function">from_secs</span>(<span class="code-string">300</span>),</span>
+<span class="code-line">            pull_enabled: <span class="code-keyword">true</span>,</span>
+<span class="code-line">            push_enabled: <span class="code-keyword">true</span>,</span>
+<span class="code-line">        }</span>
+<span class="code-line">    }</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">These are the dials. Every one is optional — the defaults are sensible for real use.</p>
+            <p class="tl">There are exactly four of them.</p>
+            <p class="tl"><strong>delta_interval</strong>: how often to check the backend for newer documents.</p>
+            <p class="tl"><strong>deletion_scan_interval</strong>: how often to check what got deleted remotely.</p>
+            <p class="tl"><strong>pull_enabled</strong>: master switch for bringing changes IN. <code>--no-sync</code> flips this off.</p>
+            <p class="tl"><strong>push_enabled</strong>: master switch for sending changes OUT. <code>--no-push</code> flips this off.</p>
+            <p class="tl">The defaults: <span class="term" data-definition="Pull means bringing changes IN from the backend to your local cache.">pull</span> every <strong>30 seconds</strong>...</p>
+            <p class="tl">...scan for deletions every <strong>300 seconds</strong> (5 minutes)...</p>
+            <p class="tl">...and both switches start ON, so a fresh mount syncs both ways.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🎛️</div>
+        <div class="callout-content">
+          <strong class="callout-title">A mount flag is not magic</strong>
+          <p>A flag just decides which couriers clock in. <code>--no-push</code> means your writes never leave your machine — exactly how you read a shared container without contaminating it.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: THE COURIER FLEET (icon rows) ────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The five couriers and their schedules</h2>
+
+      <p>With both switches on, five background loops run on their own timers. Each has one job.</p>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">🚚</div>
+          <div>
+            <strong>Loop A — delta pull <span style="font-weight:400">(every ~30s)</span></strong>
+            <p>Fetches documents sorted newest-first and <span class="term" data-definition="To reconcile is to bring two copies of data back into agreement — here, copying the backend's newer version into your local cache.">reconciles</span> anything newer than our <span class="term" data-definition="A watermark is a bookmark of how far you have already caught up — a timestamp marking the newest change you have already pulled, so you only fetch what is newer.">watermark</span> into the cache.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">🗑️</div>
+          <div>
+            <strong>Loop C — deletion scan <span style="font-weight:400">(every ~5min)</span></strong>
+            <p>Compares all remote IDs against local records and unlinks anything that vanished from the backend.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">📤</div>
+          <div>
+            <strong>Loop D — push worker</strong>
+            <p>Sends <span class="term" data-definition="Push means sending your local changes OUT to the backend.">queued</span> local writes up to the backend. Coalesces rapid edits to at most 2 requests per file. (Deep dive in module 5.)</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">⏳</div>
+          <div>
+            <strong>Loop E — inflight poller</strong>
+            <p>Watches documents the server is still processing (extract → chunk → embed → index → done) and updates their status by <span class="term" data-definition="Polling means repeatedly asking are you done yet? on a timer, instead of being notified — like refreshing a tracking page.">polling</span>.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">💧</div>
+          <div>
+            <strong>Loop F — hydration worker</strong>
+            <p>Pulls the actual file <em>contents</em> on demand, only when you open something.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">Durable now, delivered later</strong>
+          <p>semfs splits <em>durable</em> (instant, local) from <em>delivered</em> (eventual, remote). Engineers call this <span class="term" data-definition="Write-behind caching saves your change locally right away, then a background job sends it to the slow remote store afterward — so you get speed AND safety without waiting on the network.">write-behind caching</span> — speed and safety without making you wait on the network.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 4: DATA FLOW ANIMATION (couriers in motion) ─────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Watch the couriers drive</h2>
+
+      <p>Step through one push trip (Loop D) and one pull trip (Loop A). Notice the dispatcher 🚚 always sits between your cache 🗄️ and the backend 📚.</p>
+
+      <div class="flow-animation" data-steps='[
+        {"highlight":"flow-m4-actor-1","label":"You save a file. It lands in the local cache instantly and is queued for delivery."},
+        {"highlight":"flow-m4-actor-2","label":"Loop D push worker claims the queued job from the cache.","packet":true,"from":"m4-actor-1","to":"m4-actor-2"},
+        {"highlight":"flow-m4-actor-3","label":"The dispatcher sends the write up to the backend (a POST or PATCH request).","packet":true,"from":"m4-actor-2","to":"m4-actor-3"},
+        {"highlight":"flow-m4-actor-3","label":"Loop E waits: the server processes async (extract, chunk, embed, index) until status is done."},
+        {"highlight":"flow-m4-actor-3","label":"Now the pull side. Loop A asks the backend for documents newer than our watermark."},
+        {"highlight":"flow-m4-actor-2","label":"The backend hands back any newer documents to the dispatcher.","packet":true,"from":"m4-actor-3","to":"m4-actor-2"},
+        {"highlight":"flow-m4-actor-1","label":"The dispatcher reconciles them into your local cache. Your mount now shows the change.","packet":true,"from":"m4-actor-2","to":"m4-actor-1"}
+      ]'>
+        <div class="flow-actors">
+          <div class="flow-actor" id="flow-m4-actor-1">
+            <div class="flow-actor-icon">🗄️</div>
+            <span>Local Cache</span>
+          </div>
+          <div class="flow-actor" id="flow-m4-actor-2">
+            <div class="flow-actor-icon">🚚</div>
+            <span>SyncEngine</span>
+          </div>
+          <div class="flow-actor" id="flow-m4-actor-3">
+            <div class="flow-actor-icon">📚</div>
+            <span>Backend</span>
+          </div>
+        </div>
+
+        <div class="flow-packet" id="flow-packet"></div>
+
+        <div class="flow-step-label" id="flow-label">Click "Next Step" to begin</div>
+
+        <div class="flow-controls">
+          <button class="btn flow-next-btn">Next Step</button>
+          <button class="btn flow-reset-btn">Restart</button>
+          <span class="flow-progress"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: THE ASYNC GOTCHA (Snippet C as callout) ──────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Why you cannot write the cloud twice at once</h2>
+
+      <p>When you save to the cloud backend, the server says "got it" right away — but the real work happens afterward, in the background.</p>
+
+      <div class="flow-steps">
+        <div class="flow-step"><div class="flow-step-num">📝</div><p>Extract the text</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">✂️</div><p>Cut into chunks</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">🔢</div><p>Make <span class="term" data-definition="An embedding (or vector) is a list of numbers that captures the meaning of a piece of text, so a computer can compare meanings by comparing numbers.">embeddings</span></p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">🗂️</div><p>Index them</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">✅</div><p>status = done</p></div>
+      </div>
+
+      <div class="callout callout-warning">
+        <div class="callout-icon">⚠️</div>
+        <div class="callout-content">
+          <strong class="callout-title">The async-processing trap</strong>
+          <p>Send a second <span class="term" data-definition="PATCH is a network request that updates an existing item; POST creates a new one. Both are ways an app sends data to a server.">PATCH</span> while the first is still processing and the server silently drops your new content. So semfs waits for <code>status=done</code> before sending the next write on the same file — which is why edits can take a moment to appear in search.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">⏭️</div>
+        <div class="callout-content">
+          <strong class="callout-title">Coming up in module 5</strong>
+          <p>You have met the couriers. Next, the clever driving — write coalescing, exponential backoff, jittered timers, crash-safe queues, the macOS NFS trick, and how hybrid semantic search actually finds meaning.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 6: QUIZ ─────────────────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Reason about the fleet</h2>
+
+      <div class="quiz-container" id="quiz-module4">
+
+        <div class="quiz-question-block"
+             data-correct="opt-no"
+             data-explanation-right="Exactly. --no-push flips push_enabled off, so the push loops never clock in. Your edit stays durable on your machine but never leaves it — perfect for reading a shared container without contaminating it."
+             data-explanation-wrong="Not quite. --no-push disables the push side of the fleet, so local writes never travel to the cloud. The file is still saved locally — it just stays there.">
+          <h3 class="quiz-question">You run <code>semfs mount shared-notes --no-push</code>, then edit a file locally. Does your edit reach the cloud?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-yes" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Yes — writes always sync eventually.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-no" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>No — the push loops are disabled, so it stays local.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-30s" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Yes, after the 30-second pull timer fires.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-async"
+             data-explanation-right="Right. The server processes the first write asynchronously; semfs must wait until status=done before sending the second, or the server would silently drop it. That deliberate wait is why the second save seems delayed."
+             data-explanation-wrong="Not quite. The cache saved both edits instantly. The delay is on the cloud side: the server is still processing the first write, and semfs waits for status=done before sending the second so it does not get dropped.">
+          <h3 class="quiz-question">You save a file, then save it again one second later. Why might the second save seem to "not take" for a bit?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-disk" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Your local disk is too slow to write twice that fast.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-async" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>semfs waits for the server to finish the first write before sending the second.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-lost" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The second save was lost and you need to redo it.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-server"
+             data-explanation-right="Exactly. The Server tier (Postgres + pgvector with an HNSW index) is built for concurrent multi-writer access and large corpora — precisely this situation."
+             data-explanation-wrong="Not quite. Embedded (SQLite) is single-binary and offline, great for one machine but not many concurrent writers. Cloud offloads hosting but the question describes self-run, multi-writer scale — that is the Server tier.">
+          <h3 class="quiz-question">You have 2 million documents and several machines writing at once. Which backend tier fits?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-embedded" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Embedded — SQLite, single binary.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-server" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Server — Postgres + pgvector, built for concurrent multi-writer.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-cloud" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Cloud — Supermemory, zero local index.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-5min"
+             data-explanation-right="Right. Deletions are caught by Loop C, the deletion scan, which runs every 300 seconds. Worst case you wait roughly 5 minutes before the file disappears from your mount."
+             data-explanation-wrong="Not quite. Edits arrive via the 30-second delta pull, but deletions are handled separately by Loop C, the deletion scan, which runs every 300 seconds — so up to ~5 minutes in the worst case.">
+          <h3 class="quiz-question">A teammate deletes a file on another machine. Worst case, how long until it disappears from your mount?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-instant" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Instantly — deletions are pushed in real time.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-30s" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>About 30 seconds — same as the delta pull.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-5min" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Up to ~5 minutes — the deletion scan runs every 300s.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module4')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module4')">Try Again</button>
+      </div>
+    </section>
+
+  </div>
+</section>

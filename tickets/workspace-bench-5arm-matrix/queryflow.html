@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QUERY FLOW — one grep, every station, real bytes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800;900&family=Martian+Mono:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#edf2f6;
+  --paper:#f8fbfd;
+  --ink:#11293f;
+  --blue:#1d5b9e;
+  --blue-deep:#0e3a6b;
+  --blue-soft:rgba(29,91,158,.09);
+  --orange:#dd5f1c;
+  --orange-soft:rgba(221,95,28,.09);
+  --green:#1e7a4f;
+  --green-soft:rgba(30,122,79,.10);
+  --red:#bb3326;
+  --red-soft:rgba(187,51,38,.08);
+  --rule:rgba(17,41,63,.18);
+  --grid:rgba(29,91,158,.07);
+  --mono:'Martian Mono',monospace;
+  --sans:'Archivo',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:28px 28px;
+  color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.6;
+}
+.wrap{max-width:920px;margin:0 auto;padding:0 24px}
+.mono{font-family:var(--mono)}
+
+header{padding:52px 0 34px;border-bottom:3px solid var(--blue-deep)}
+.bp-tag{font-family:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--blue);border:1.5px solid var(--blue);padding:4px 12px;display:inline-block}
+h1{font-weight:900;font-size:clamp(32px,5.4vw,56px);line-height:1.0;margin:18px 0 12px;letter-spacing:-.02em;color:var(--blue-deep)}
+.sub{max-width:68ch;color:#3c5269;font-size:15px}
+.sub b{color:var(--ink)}
+
+/* mode toggle */
+.modebar{position:sticky;top:0;z-index:60;background:var(--paper);border-bottom:1.5px solid var(--rule);padding:10px 0;box-shadow:0 2px 10px rgba(17,41,63,.05)}
+.modebar .wrap{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.modebar .lab{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#5a7287}
+.mode-btn{font-family:var(--mono);font-size:12px;padding:7px 16px;border:1.5px solid var(--rule);background:transparent;cursor:pointer;color:var(--ink);transition:all .15s;border-radius:3px}
+.mode-btn:hover{border-color:var(--blue)}
+.mode-btn.active{background:var(--blue-deep);color:#fff;border-color:var(--blue-deep)}
+.mode-note{font-family:var(--mono);font-size:10.5px;color:var(--orange)}
+
+section{padding:46px 0 8px}
+h2{font-weight:800;font-size:clamp(22px,3.4vw,32px);color:var(--blue-deep);margin-bottom:8px;letter-spacing:-.01em}
+.lede{color:#3c5269;max-width:70ch;margin-bottom:26px;font-size:14.5px}
+
+/* cast cards */
+.cast{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin:20px 0}
+.cast-card{background:var(--paper);border:1.5px solid var(--rule);border-radius:6px;padding:16px 18px;position:relative}
+.cast-card .role{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--blue);margin-bottom:6px}
+.cast-card h4{font-size:15px;font-weight:600;margin-bottom:6px}
+.cast-card p{font-size:13px;color:#3c5269}
+.cast-card.bad{border-color:var(--red);border-style:dashed}
+.cast-card.bad .role{color:var(--red)}
+
+/* spine + stations */
+.flow{position:relative;margin:30px 0;padding-left:54px}
+.flow::before{content:"";position:absolute;left:20px;top:0;bottom:0;width:3px;background:var(--blue-deep)}
+.station{position:relative;margin-bottom:30px;background:var(--paper);border:1.5px solid var(--rule);border-radius:8px;overflow:hidden;
+  opacity:0;transform:translateY(16px);transition:opacity .5s ease,transform .5s ease}
+.station.vis{opacity:1;transform:none}
+.station::before{
+  content:attr(data-n);position:absolute;left:-54px;top:18px;width:40px;height:40px;border-radius:50%;
+  background:var(--paper);border:3px solid var(--blue-deep);color:var(--blue-deep);
+  font-family:var(--mono);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;
+}
+.station.danger::before{border-color:var(--red);color:var(--red)}
+.st-head{padding:16px 22px 12px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline}
+.st-head h3{font-size:17px;font-weight:800;color:var(--blue-deep)}
+.st-head .where{font-family:var(--mono);font-size:10px;color:#5a7287;letter-spacing:.04em}
+.st-body{padding:0 22px 16px}
+.st-body p{font-size:13.5px;color:#2c4257;margin-bottom:10px;max-width:75ch}
+.st-body p b{color:var(--ink)}
+
+.tape{font-family:var(--mono);font-size:11.5px;background:#0e2438;color:#cfe4f5;border-radius:5px;padding:12px 15px;margin:10px 0;overflow-x:auto;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+.tape .dim{color:#6c8aa5}
+.tape .hi{color:#ffc46b}
+.tape .ok{color:#7ce0a3}
+.tape .err{color:#ff8d80}
+.io{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 4px}
+.io span{font-family:var(--mono);font-size:10px;letter-spacing:.06em;padding:4px 10px;border-radius:3px;border:1px solid var(--rule)}
+.io .in{background:var(--blue-soft);color:var(--blue-deep)}
+.io .out{background:var(--green-soft);color:var(--green)}
+.io .knob{background:var(--orange-soft);color:var(--orange)}
+
+.gotcha{border-left:3px solid var(--red);background:var(--red-soft);padding:9px 13px;font-size:12.5px;color:#5a3030;margin:10px 0;border-radius:0 4px 4px 0}
+.gotcha b{color:var(--red);font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;display:block;margin-bottom:3px}
+.win{border-left:3px solid var(--green);background:var(--green-soft);padding:9px 13px;font-size:12.5px;color:#234534;margin:10px 0;border-radius:0 4px 4px 0}
+.win b{color:var(--green);font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;display:block;margin-bottom:3px}
+
+.meter{display:flex;align-items:center;gap:10px;margin:8px 0 2px;flex-wrap:wrap}
+.meter .bar{height:13px;background:linear-gradient(90deg,var(--blue),var(--blue-deep));border-radius:3px;min-width:3px;transition:width .4s ease}
+.meter .val{font-family:var(--mono);font-size:11px;color:var(--blue-deep);font-weight:600}
+
+footer{padding:40px 0 70px;border-top:1.5px solid var(--rule);margin-top:40px;font-family:var(--mono);font-size:11px;color:#5a7287;line-height:2}
+.kbd{font-family:var(--mono);font-size:.85em;background:var(--blue-soft);border:1px solid var(--rule);padding:1px 6px;border-radius:3px;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <span class="bp-tag">SCHEMATIC · SEMFS QUERY FLOW · drawn from real traces, run e9b1 · 2026-06-11</span>
+    <h1>One grep, twelve stations,<br>every byte accounted for</h1>
+    <p class="sub">The toy example is real: case 289's actual query, actual rewrite, actual hits, actual payload sizes, actual final bill. Use the <b>delivery-mode toggle</b> below to watch stations 9–12 change shape — that's experiment E9, live on this page.</p>
+  </div>
+</header>
+
+<div class="modebar">
+  <div class="wrap">
+    <span class="lab">Delivery mode (station 9):</span>
+    <button class="mode-btn" data-mode="inline">inline</button>
+    <button class="mode-btn active" data-mode="twotier">two-tier</button>
+    <button class="mode-btn" data-mode="paths">paths</button>
+    <span class="mode-note" id="modeNote"></span>
+  </div>
+</div>
+
+<!-- CAST -->
+<section>
+  <div class="wrap">
+    <h2>The cast</h2>
+    <p class="lede">A 1,452-file Chinese e-commerce workspace. The task: <i>"produce the Top-10 best-selling product list — title, transaction amount, conversion rate."</i> The task statement names three source files. Two of them are corpses.</p>
+    <div class="cast">
+      <div class="cast-card"><div class="role">The agent</div><h4>codex / GPT-5.4</h4><p>Single session, no prompt cache — every turn re-pays its whole history. Knows nothing about semfs except what one file tells it.</p></div>
+      <div class="cast-card"><div class="role">The answer file</div><h4>best_selling_product_core_data_list.txt</h4><p>908 bytes of pure gold: <span class="mono" style="font-size:11px">title | 成交金额 | 转化率</span> rows. Indexed, chunked, embedded.</p></div>
+      <div class="cast-card bad"><div class="role">The corpses</div><h4>top10_product_status_table.xlsx (+1)</h4><p>Named by the task, but actually a 321-byte HTTP 403 HTML stub — the data was never acquired. The rubric pays for <i>noticing this</i>.</p></div>
+      <div class="cast-card"><div class="role">The standing instruction</div><h4>AGENTS.md (hint v3, 929 B)</h4><p>Materialized at the mount root by semfs. "ONE grep → read the top hit → don't crawl → PROVENANCE CHECK on named sources."</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- IMPORT PRELUDE -->
+<section>
+  <div class="wrap">
+    <h2>Station 0 — what import already built (before any query)</h2>
+    <p class="lede">Queries are fast because import did the slow work once, per file:</p>
+    <div class="tape"><span class="dim"># per file, at import time:</span>
+extract text        <span class="dim">xlsx→calamine, pdf/docx→parsers; binaries become readable text</span>
+chunk               <span class="dim">~200-word overlapping windows</span>
+embed               <span class="dim">gemma-q4 ONNX → 768-d vector per chunk → sqlite-vec index</span>
+fts                 <span class="dim">keyword index (FTS5) over the same chunks</span>
+siblings            <span class="dim">binary files get .extracted.md (DUAL-STORE: raw table, verbatim)</span>
+annotations         <span class="dim">the 403 stubs get a [semfs: error-page] chunk — the corruption is INDEXED</span>
+hint                <span class="dim">AGENTS.md / CLAUDE.md rendered into the mount root (agent_hint.rs)</span>
+kg (L7)             <span class="dim">entity graph built — used back-office only; never shown to the agent (H5)</span></div>
+  </div>
+</section>
+
+<!-- THE FLOW -->
+<section>
+  <div class="wrap">
+    <h2>The twelve stations of one grep</h2>
+    <p class="lede">Follow the payload. Sizes on the meters are real measurements.</p>
+
+    <div class="flow">
+
+      <div class="station" data-n="1">
+        <div class="st-head"><h3>The agent decides</h3><span class="where">codex, turn 1</span></div>
+        <div class="st-body">
+          <p>At session start codex auto-read <span class="kbd">AGENTS.md</span> from its working directory (its native instruction-file mechanism — we never touch the prompt). The hint's economy says: one semantic search first. The model emits a tool call:</p>
+          <div class="tape">/bin/bash -lc 'semfs grep <span class="hi">"best selling product"</span> .'</div>
+          <div class="meter"><div class="bar" style="width:8px"></div><span class="val">20 chars of query</span></div>
+          <div class="gotcha"><b>what used to go wrong here</b>Hint v1 commanded "read kg/KNOWLEDGE_GRAPH.md FIRST" → a 35.7K-token read at the worst possible turn, re-paid on every later turn (~58K/run damage). Deleted in hint v2.</div>
+        </div>
+      </div>
+
+      <div class="station" data-n="2">
+        <div class="st-head"><h3>CLI wakes up, finds its container</h3><span class="where">crates/semfs/src/cmd/grep.rs</span></div>
+        <div class="st-body">
+          <p>The <span class="kbd">semfs</span> binary resolves which mounted container "." belongs to via the mount marker (tag <span class="kbd">chanpin-matrix</span>), and reads its env knobs:</p>
+          <div class="io"><span class="knob">SEMFS_RESULT_LIMIT=5</span><span class="knob">SEMFS_GREP_RESULT_CAP=6144</span><span class="knob">SEMFS_GREP_TOTAL_CAP=10240</span><span class="knob">SEMFS_GREP_RENDER_MODE=<i id="knobMode">two-tier</i></span><span class="knob">SEMFS_REWRITE=1</span></div>
+        </div>
+      </div>
+
+      <div class="station" data-n="3">
+        <div class="st-head"><h3>Query rewrite — the cross-lingual bridge</h3><span class="where">LLM call (OpenRouter) · skipped if no key</span></div>
+        <div class="st-body">
+          <p>An English query against a Chinese corpus would miss on keywords. One small LLM call expands it (real output from the trace):</p>
+          <div class="tape"><span class="dim"># rewritten query:</span> "best-selling product, top-selling product, popular
+product, <span class="hi">畅销产品, 热销商品, 热卖产品</span>"</div>
+          <div class="meter"><div class="bar" style="width:34px"></div><span class="val">~90 chars</span></div>
+          <div class="win"><b>why this exists</b>On the cross-lingual investigation this single step moved the answer file from rank #417 to rank #1 — the one thing literal grep can never do.</div>
+        </div>
+      </div>
+
+      <div class="station" data-n="4">
+        <div class="st-head"><h3>IPC to the mount daemon</h3><span class="where">daemon/protocol.rs · Request::Search over unix socket</span></div>
+        <div class="st-body">
+          <p>The CLI doesn't open the index itself — it asks the <b>daemon that owns the mount</b>. That's what makes the search backend-agnostic: the daemon answers identically whether the index is SQLite+vec, embedded pglite, external pgvector, or cloud. (If the daemon is unreachable: SQLite falls back to a direct read-only open; pglite fails closed — its index lives only in the daemon.)</p>
+          <div class="io"><span class="in">in: query + scope path</span><span class="out">out: Vec&lt;SearchHit&gt; {filepath, chunk, memory, similarity}</span></div>
+        </div>
+      </div>
+
+      <div class="station" data-n="5">
+        <div class="st-head"><h3>Embed the query</h3><span class="where">gemma-q4 ONNX, local, no network</span></div>
+        <div class="st-body">
+          <p>The rewritten query becomes a 768-dimensional vector — the same space every chunk was embedded into at import.</p>
+          <div class="meter"><div class="bar" style="width:60px"></div><span class="val">768 floats ≈ 3 KB</span></div>
+          <div class="gotcha"><b>old infra bug here</b>The embedder used to cache 898 MB of model blobs INTO the corpus directory → a later unscoped import re-indexed its own model files → mount hang. Fixed by the driver's cache strip (RC4).</div>
+        </div>
+      </div>
+
+      <div class="station" data-n="6">
+        <div class="st-head"><h3>Retrieve twice</h3><span class="where">sqlite-vec KNN + FTS5</span></div>
+        <div class="st-body">
+          <p>Two independent searches over the chunks: <b>vector KNN</b> (meaning) and <b>FTS keyword</b> (exact terms — the rewrite's 热销商品 helps here). Two ranked candidate lists.</p>
+          <div class="tape"><span class="ok">vec:</span>  best_selling_product_core_data_list.txt  <span class="dim">(chunk 1, 2)</span>
+      apparel_product_shooting_sheet.xlsx …
+<span class="ok">fts:</span>  best_selling_product_core_data_list.txt  <span class="dim">(畅销/热销 hits)</span>
+      top10_product_status_table.xlsx <span class="err">[semfs: error-page annotation]</span> …</div>
+        </div>
+      </div>
+
+      <div class="station" data-n="7">
+        <div class="st-head"><h3>Fuse — RRF</h3><span class="where">reciprocal-rank fusion</span></div>
+        <div class="st-body">
+          <p>The two lists merge by reciprocal rank: a file ranked well in <i>both</i> lists wins. Robust — but it <b>compresses the score range</b>: fused scores end up packed close together.</p>
+          <div class="gotcha"><b>live bug found by E9</b>The confidence verdict (station 9) computed its margin on these RRF-squashed scores → the top-vs-#2 gap never cleared 15% → it said MIXED in every run. The HIGH stop-signal has never actually fired. Wave-2 fix: normalize by the result-set spread, (s1−s2)/(s1−sN).</div>
+        </div>
+      </div>
+
+      <div class="station" data-n="8">
+        <div class="st-head"><h3>Rerank + cut</h3><span class="where">JINA cross-encoder (CPU ~45 s on the box) · RESULT_LIMIT</span></div>
+        <div class="st-body">
+          <p>A cross-encoder reads query + each candidate <i>together</i> and rescores — slower but sharper than vector distance. Then the list is cut to <span class="kbd">RESULT_LIMIT=5</span>. The answer file holds rank #1.</p>
+          <div class="meter"><div class="bar" style="width:46px"></div><span class="val">5 hits survive</span></div>
+        </div>
+      </div>
+
+      <div class="station" data-n="9" id="st9">
+        <div class="st-head"><h3>RENDER — the E9 battleground</h3><span class="where">grep.rs render loop · cap_render / render_mode / confidence_line</span></div>
+        <div class="st-body">
+          <p>The hits become text for the agent. Rules that apply in every mode: binary hits are served from <b>extracted text</b>, never raw bytes (the format-trap fix); a hit whose excerpt is the whole file gets <span class="kbd"># ^ COMPLETE FILE</span>; a capped one gets an honest <span class="kbd"># ^ TRUNCATED</span>; the 403 stub's <span class="kbd">[semfs: error-page]</span> annotation prints verbatim; and a <b>global 10 KB budget</b> stops the total from ever reaching the harness clip cliff.</p>
+          <div class="tape" id="renderTape"></div>
+          <div class="meter"><div class="bar" id="renderBar"></div><span class="val" id="renderVal"></span></div>
+        </div>
+      </div>
+
+      <div class="station danger" data-n="10">
+        <div class="st-head"><h3>The clip — codex's secret chopper</h3><span class="where">inside the codex harness; measured by E6</span></div>
+        <div class="st-body">
+          <p>Between the tool and the model sits codex's truncation layer (measured this morning, codex 0.133): <b>≤10 KB passes whole · ~15 KB gets a notice · 49 KB collapses to ~1.2K tokens of head+tail</b>, middle silently gone.</p>
+          <div class="tape" id="clipTape"></div>
+          <div class="gotcha"><b>why station 9's caps exist</b>An uncapped broad grep used to emit ~300 KB. The chopper gutted it blind; the agent received shredded results, lost trust, and re-searched — the 247–700K-token death spirals of the original matrix started right here.</div>
+        </div>
+      </div>
+
+      <div class="station" data-n="11">
+        <div class="st-head"><h3>Into context — and the meter runs</h3><span class="where">the agent loop · cached_input=0</span></div>
+        <div class="st-body">
+          <p>The render enters the conversation history — <b>permanently</b>. Every later turn re-pays it (cost = size × turns-remaining). Now the agent chooses, and this is the residual coin flip:</p>
+          <div class="tape" id="branchTape"></div>
+        </div>
+      </div>
+
+      <div class="station" data-n="12">
+        <div class="st-head"><h3>Deliverable + the final bill</h3><span class="where">model_output/best_selling_product_core_data_list.txt</span></div>
+        <div class="st-body">
+          <p>The agent writes the Top-10 list (and, when the provenance check fired, the 403 report that earns the extra rubric points). The bill, by arm — all real runs:</p>
+          <div class="tape" id="billTape"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    SOURCES — traces: matrix_artifacts/e8seq + e9w1 (box) · code: cmd/grep.rs, agent_hint.rs, backend/mod.rs, daemon/protocol.rs · measurements: EXPERIMENT_MATRIX.md, TOKEN_ECONOMY.md, E6 probes<br>
+    companion pages: <a href="hypotheses.html">hypotheses.html</a> (the case file) · <a href="mechanics.html">mechanics.html</a> (pseudocode mechanics)<br>
+    payloads and bills are from runs w1/e9b1/e9c1 (case 289, 2026-06-11); n is small everywhere — treat numbers as representative, not gospel.
+  </div>
+</footer>
+
+<script>
+const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}})},{threshold:.08});
+document.querySelectorAll('.station').forEach(el=>io.observe(el));
+
+const MODES={
+  inline:{
+    note:'every hit gets a full excerpt — the Phase-3 scout default',
+    knob:'inline',
+    render:`<span class="dim"># 5 hits, each up to 6 KB of extracted text:</span>
+best_selling_product_core_data_list.txt:1-10:<span class="ok">1. 2015春季新款韩版修身牛仔外套女 | 成交金额：37200元 | 转化率：2.85% \\n2. …(all 10 rows)…</span>
+<span class="ok"># ^ COMPLETE FILE — excerpt above is this file's entire content; use it directly.</span>
+top10_product_status_table.xlsx:<span class="err">[semfs: source is an HTTP error page (403 Forbidden) — report, do not parse]</span>
+apparel_product_shooting_sheet.xlsx:1-48:<span class="dim">货号 拍摄日期 模特 …(full extracted table)…</span>
+<span class="dim">…2 more full excerpts…</span>`,
+    size:13244, sizeLabel:'13,244 B (real, run w1) — inside the 15 KB cliff, passes whole',
+    clip:'13.2 KB → <span class="ok">PASSES WHOLE</span> — every ranked hit and every answer row reaches the model intact.',
+    branch:`<span class="ok">trust path (w1, wp2, ~⅓ of runs):</span>  answer in excerpt → write → DONE.  2 calls, ~21.5K tokens (the floor)
+<span class="hi">verify path (w2, ~⅓):</span>             "is it tho?" → re-grep ×5, crawl → 12 calls, 169K
+<span class="ok">provenance path (wp1, hint v3):</span>   peek named files → SEE the 403 → report it → 9 calls, 94K, +2 rubrics`,
+    bill:`plain baseline      71–322K tokens (mean 171K)   acc ⊘/5/7
+<span class="ok">inline scout        21.5K best · 169K worst (bimodal)   acc 4-6/15</span>
+two-tier            22.5K best · 94K worst                acc 4-5/15 (verdict miscalibrated)
+paths               85.5K · 86.7K (±1K!)                  acc 6/15 ×2 clean`
+  },
+  twotier:{
+    note:'top hit full + confidence verdict + path-tier rest — E9 arm (b)',
+    knob:'two-tier',
+    render:`<span class="dim"># tier 1 — top hit only, full excerpt:</span>
+best_selling_product_core_data_list.txt:1-10:<span class="ok">1. 2015春季新款韩版修身牛仔外套女 | 成交金额：37200元 | 转化率：2.85% \\n2. …(all 10 rows)…</span>
+<span class="ok"># ^ COMPLETE FILE — use it directly.</span>
+<span class="dim"># tier 2 — the rest as path + 160-char snippet:</span>
+top10_product_status_table.xlsx: <span class="err">[semfs: error-page 403]</span>
+apparel_product_shooting_sheet.xlsx: 货号 拍摄日期 模特 拍摄状态 …
+problem_product_tracking.xlsx: 问题商品 处理状态 …
+
+<span class="hi"># confidence: MIXED — top results score closely. Open the top 1-2 files
+# listed to confirm, then answer. Do not re-search with new wording.</span>
+<span class="dim">  ↑ should say HIGH; RRF score-squash bug (station 7) — wave-2 fix pending</span>`,
+    size:2307, sizeLabel:'2,307 B (real, run e9b1) — 83% smaller than inline',
+    clip:'2.3 KB → <span class="ok">PASSES WHOLE</span>, miles under every threshold.',
+    branch:`<span class="ok">trust path (e9b1, e9b3):</span>   answered from top excerpt → 2 calls, 22.5K tokens
+<span class="hi">verify path (e9b2):</span>        crawled despite verdict → 10 calls, 94K
+<span class="dim">the verdict said MIXED every time (bug) — the HIGH stop-signal is still untested</span>`,
+    bill:`plain baseline      71–322K tokens (mean 171K)   acc ⊘/5/7
+inline scout        21.5K best · 169K worst        acc 4-6/15
+<span class="ok">two-tier            22.5K best · 94K worst         acc 4-5/15 — real test awaits wave 2</span>
+paths               85.5K · 86.7K (±1K!)           acc 6/15 ×2 clean`
+  },
+  paths:{
+    note:'pointers only (~1 KB) — E9 arm (c), the consistency champion',
+    knob:'paths',
+    render:`<span class="dim"># every hit: path + 160-char teaser. that's all.</span>
+best_selling_product_core_data_list.txt: 1. 2015春季新款韩版修身牛仔外套女 | 成交金额…
+top10_product_status_table.xlsx: <span class="err">[semfs: error-page 403]</span>
+apparel_product_shooting_sheet.xlsx: 货号 拍摄日期 模特 …
+problem_product_tracking.xlsx: 问题商品 处理状态 …
+interaction_record_table.xlsx: 客服 互动记录 …
+<span class="dim"># "here's WHERE the answers are. go read them yourself."</span>`,
+    size:1050, sizeLabel:'~1 KB — discovery only; acquisition moves to the agent',
+    clip:'1 KB → trivially whole. But the agent now pays acquisition itself: each cat/sed is a turn whose bytes get re-paid.',
+    branch:`<span class="ok">the stereotyped path (e9c1, e9c2 — both runs!):</span>
+grep(1KB) → cat top file → head -c 400 the named xlsx stubs → <span class="err">sees 403</span> → report → write
+7-8 calls, ~86K tokens, 6/15 — provenance happens STRUCTURALLY (can't answer from an excerpt you never got)`,
+    bill:`plain baseline      71–322K tokens (mean 171K)   acc ⊘/5/7
+inline scout        21.5K best · 169K worst        acc 4-6/15 (lottery)
+two-tier            22.5K best · 94K worst         acc 4-5/15
+<span class="ok">paths               85.5K · 86.7K (±1K!)           acc 6/15 ×2 clean — the salary, not the lottery</span>`
+  }
+};
+
+function setMode(m){
+  const M=MODES[m];
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
+  document.getElementById('modeNote').textContent=M.note;
+  document.getElementById('knobMode').textContent=M.knob;
+  document.getElementById('renderTape').innerHTML=M.render;
+  document.getElementById('clipTape').innerHTML=M.clip;
+  document.getElementById('branchTape').innerHTML=M.branch;
+  document.getElementById('billTape').innerHTML=M.bill;
+  const w=Math.max(6,Math.min(280,M.size/55));
+  document.getElementById('renderBar').style.width=w+'px';
+  document.getElementById('renderVal').textContent=M.sizeLabel;
+}
+document.querySelectorAll('.mode-btn').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
+setMode('twotier');
+</script>
+</body>
+</html>

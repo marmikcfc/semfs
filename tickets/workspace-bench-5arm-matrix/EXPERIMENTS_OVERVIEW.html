@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>semfs × Workspace-Bench — Experiment Overview</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --ink:#e6edf3; --mut:#8b949e;
+    --line:#30363d; --accent:#58a6ff; --green:#3fb950; --red:#f85149; --amber:#d29922;
+    --purple:#bc8cff; --cyan:#39c5cf;
+    --win:#1b3a26; --winln:#3fb950; --loss:#3a1d1d; --lossln:#f85149; --neu:#33291a; --neuln:#d29922;
+    --mono:"SF Mono",ui-monospace,"Cascadia Code",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;font-size:15px}
+  a{color:var(--accent);text-decoration:none}
+  code,.mono{font-family:var(--mono);font-size:.86em}
+  .wrap{display:flex;max-width:1400px;margin:0 auto}
+  /* sidebar */
+  nav.side{position:sticky;top:0;align-self:flex-start;height:100vh;width:240px;flex:0 0 240px;
+    background:var(--panel);border-right:1px solid var(--line);padding:20px 0;overflow-y:auto}
+  nav.side h1{font-size:15px;margin:0 18px 4px;color:var(--ink)}
+  nav.side .sub{font-size:11px;color:var(--mut);margin:0 18px 18px;font-family:var(--mono)}
+  nav.side a{display:block;padding:7px 18px;color:var(--mut);font-size:13.5px;border-left:2px solid transparent}
+  nav.side a:hover{color:var(--ink);background:var(--panel2)}
+  nav.side a.active{color:var(--accent);border-left-color:var(--accent);background:var(--panel2)}
+  nav.side .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:#586069;margin:16px 18px 4px}
+  main{flex:1;min-width:0;padding:34px 46px 120px}
+  section{margin-bottom:64px;scroll-margin-top:20px}
+  h2{font-size:26px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-top:0}
+  h3{font-size:18px;color:var(--cyan);margin-top:34px}
+  h4{font-size:15px;color:var(--purple);margin-bottom:6px}
+  p{color:#c9d1d9}
+  .lead{font-size:17px;color:var(--mut)}
+  .pill{display:inline-block;padding:1px 9px;border-radius:20px;font-size:11px;font-family:var(--mono);font-weight:600;vertical-align:middle}
+  .pill.win{background:var(--win);color:var(--winln)}
+  .pill.loss{background:var(--loss);color:var(--lossln)}
+  .pill.neu{background:var(--neu);color:var(--neuln)}
+  .pill.done{background:#10243a;color:var(--accent)}
+  .pill.skip{background:#2d2d33;color:var(--mut)}
+  .pill.todo{background:#2a1f3d;color:var(--purple)}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--ink);font-weight:600}
+  td.mono,th.mono{font-family:var(--mono)}
+  tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+  .rwin td{background:rgba(63,185,80,.08)!important}
+  .rloss td{background:rgba(248,81,73,.07)!important}
+  .num{text-align:right;font-family:var(--mono)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:18px 20px;margin:16px 0}
+  .card.accent{border-left:3px solid var(--accent)}
+  .card.green{border-left:3px solid var(--green)}
+  .card.red{border-left:3px solid var(--red)}
+  .card.amber{border-left:3px solid var(--amber)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  @media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}nav.side{display:none}main{padding:20px}}
+  .kbd{font-family:var(--mono);background:#0a0c10;border:1px solid var(--line);border-radius:5px;padding:11px 14px;
+    display:block;white-space:pre;overflow-x:auto;font-size:12.5px;color:#a5d6ff;margin:10px 0}
+  .muted{color:var(--mut)}
+  .big{font-size:34px;font-weight:700;font-family:var(--mono)}
+  .stat{text-align:center;padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:9px}
+  .stat .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+  /* ELI5 ladder */
+  .ladder-btns{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0}
+  .ladder-btns button{background:var(--panel2);color:var(--mut);border:1px solid var(--line);border-radius:7px;
+    padding:8px 14px;cursor:pointer;font-family:var(--sans);font-size:13px;transition:.15s}
+  .ladder-btns button:hover{color:var(--ink)}
+  .ladder-btns button.on{background:var(--accent);color:#04101f;border-color:var(--accent);font-weight:600}
+  .ladder-panel{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:9px;padding:20px 24px;min-height:120px}
+  .ladder-panel .lvl{font-size:11px;font-family:var(--mono);color:var(--accent);text-transform:uppercase;letter-spacing:.08em}
+  /* calculator */
+  .calc{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:20px 24px}
+  .calc .row{display:flex;align-items:center;gap:14px;margin:10px 0}
+  .calc label{flex:0 0 230px;font-size:13.5px}
+  .calc input[type=range]{flex:1;accent-color:var(--accent)}
+  .calc .val{flex:0 0 90px;text-align:right;font-family:var(--mono);color:var(--cyan)}
+  .calc .out{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);display:flex;gap:30px;flex-wrap:wrap}
+  /* expandable */
+  details.exp{background:var(--panel);border:1px solid var(--line);border-radius:9px;margin:10px 0;overflow:hidden}
+  details.exp>summary{cursor:pointer;padding:14px 18px;list-style:none;display:flex;align-items:center;gap:12px;font-weight:600}
+  details.exp>summary::-webkit-details-marker{display:none}
+  details.exp>summary:hover{background:var(--panel2)}
+  details.exp>summary .arr{color:var(--mut);transition:.2s;font-family:var(--mono)}
+  details.exp[open]>summary .arr{transform:rotate(90deg)}
+  details.exp>summary .ekey{font-family:var(--mono);color:var(--accent);flex:0 0 64px}
+  details.exp .body{padding:4px 18px 18px;border-top:1px solid var(--line)}
+  .tag{display:inline-block;font-size:10.5px;font-family:var(--mono);padding:1px 7px;border-radius:4px;
+    background:var(--panel2);color:var(--mut);border:1px solid var(--line);margin:2px 3px 2px 0}
+  .artpath{font-size:12px;font-family:var(--mono);color:var(--cyan);margin:10px 0 0;padding-top:8px;border-top:1px dashed var(--line)}
+  .artpath::before{content:"📂 ";font-family:var(--sans)}
+  .decision{margin:12px 0 2px;border-top:1px solid var(--line);padding-top:12px}
+  .decision .dl{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);margin-bottom:7px}
+  .decision .drow{display:flex;gap:10px;margin:7px 0;font-size:13px;align-items:flex-start}
+  .decision .dk{flex:0 0 92px;font-family:var(--mono);font-weight:700;font-size:11.5px;padding:2px 8px;border-radius:5px;text-align:center}
+  .decision .dk.p{background:var(--win);color:var(--winln)}
+  .decision .dk.f{background:var(--loss);color:var(--lossln)}
+  .decision .dt{flex:1;color:#c9d1d9}
+  .decision .dt b{color:var(--ink)}
+  /* svg bar charts */
+  .chartwrap{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:18px 20px;margin:14px 0}
+  .chartwrap .ctitle{font-size:13px;color:var(--mut);margin-bottom:6px}
+  .legend{display:flex;gap:18px;font-size:12px;margin-top:8px;flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:11px;height:11px;border-radius:2px;display:inline-block}
+  .flow text{font-family:var(--sans)}
+  .note{font-size:12.5px;color:var(--mut);font-style:italic}
+  hr{border:none;border-top:1px solid var(--line);margin:30px 0}
+  .arena-tabs{display:flex;gap:0;border-bottom:1px solid var(--line);margin:18px 0 0}
+  .arena-tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--mut);
+    padding:10px 18px;cursor:pointer;font-size:14px;font-family:var(--sans)}
+  .arena-tabs button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  .arena-body{display:none}.arena-body.on{display:block}
+  .toc-top{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="side">
+  <h1>semfs × WB</h1>
+  <div class="sub">experiment overview · 2026-06</div>
+  <a href="#tldr" class="active">TL;DR &amp; verdict</a>
+  <a href="#eli5">The finding, 5 ways</a>
+  <a href="#physics">The cost equation</a>
+  <a href="#calc">Token calculator</a>
+  <div class="grp">Done</div>
+  <a href="#bestconfig">★ Best config</a>
+  <a href="#arenas">Results by arena</a>
+  <a href="#timeline">Experiment timeline</a>
+  <a href="#knobs">Every knob tested</a>
+  <a href="#dataflow">How a run is wired</a>
+  <div class="grp">Not done</div>
+  <a href="#remaining">Remaining experiments</a>
+  <a href="#next">Next steps</a>
+</nav>
+<main>
+
+<!-- ============ TL;DR ============ -->
+<section id="tldr">
+  <h2>What were we testing, and did it work?</h2>
+  <p class="lead">One question drove the whole campaign:
+  <strong>can semfs (semantic filesystem) make a coding agent cheaper or more accurate
+  than a plain agent reading files directly?</strong></p>
+
+  <div class="grid3" style="margin:22px 0">
+    <div class="stat"><div class="lbl">Experiments run</div><div class="big" style="color:var(--accent)">E1–E11</div><div class="muted">+ 6-phase EC2 ladder, then Modal</div></div>
+    <div class="stat"><div class="lbl">Headline pre-reg condition</div><div class="big" style="color:var(--red)">FAILED</div><div class="muted">E8: 2/5 wins (needed ≥3)</div></div>
+    <div class="stat"><div class="lbl">Honest answer on tokens</div><div class="big" style="color:var(--amber)">It depends</div><div class="muted">parity + situational wins</div></div>
+  </div>
+
+  <div class="card amber">
+    <h4 style="color:var(--amber);margin-top:0">The one-paragraph verdict</h4>
+    <p style="margin-bottom:0">After fixing the infrastructure that made semfs <em>look</em> terrible, the local
+    semfs arm reaches <strong>accuracy parity or better</strong> with plain on every case. But it
+    <strong>does not reliably save tokens</strong>. It wins tokens only on a narrow case shape —
+    <em>single-answer questions whose answer file is not named in the task</em>, where one capped
+    semantic search replaces 4–8 blind <code>find</code>/<code>grep</code> probes. On broad workspace
+    tasks the agent over-explores and semfs <em>costs</em> 1.4×–3.6× more. <strong>Conclusion: we were
+    benchmarking on the wrong arena</strong> — on a small, well-named corpus, plain <code>grep</code>
+    is already near-optimal, so there is little for semfs to win.</p>
+  </div>
+
+  <h3>The three things that were actually true</h3>
+  <table>
+    <tr><th style="width:30px">#</th><th>Claim</th><th>Evidence</th><th style="width:90px">Status</th></tr>
+    <tr><td class="mono">1</td><td><strong>"semfs loses catastrophically"</strong> was an infrastructure bug, not retrieval quality.</td>
+      <td>4 independent infra bugs (disk ENOSPC page-tears, 716 contamination sidecars, fastembed cache pollution, stale-daemon vec0 corruption). Fixed → timeout/0-score became plain-competitive.</td><td><span class="pill win">CONFIRMED</span></td></tr>
+    <tr><td class="mono">2</td><td><strong>The agent's behaviour is the cost function</strong>, not the retrieval pipeline.</td>
+      <td>Under <code>cached_input=0</code>, every turn re-pays all context. A baked hint saying "read the 35 KB knowledge-graph FIRST" cost 58K tokens/run. Killing it + capping search output was the biggest lever.</td><td><span class="pill win">CONFIRMED</span></td></tr>
+    <tr><td class="mono">3</td><td><strong>WB-chanpin can't prove semfs.</strong> A 1,452-file corpus with clean filenames is grep's home turf.</td>
+      <td>plain wins both axes (46% @ 89K). E8 + E11 both confirm semfs only ties or wins narrowly. semfs's proven edges (format-trap −80%, cross-lingual #417→#1) live elsewhere.</td><td><span class="pill neu">LIKELY (~70%)</span></td></tr>
+  </table>
+</section>
+
+<!-- ============ ELI5 ladder ============ -->
+<section id="eli5">
+  <h2>The finding, explained 5 ways</h2>
+  <p class="muted">Click a level — same finding, from a 10-year-old to an engineer.</p>
+  <div class="ladder-btns" id="lad">
+    <button data-l="0" class="on">① ELI5</button>
+    <button data-l="1">② Curious</button>
+    <button data-l="2">③ Technical</button>
+    <button data-l="3">④ Deep</button>
+    <button data-l="4">⑤ Expert</button>
+  </div>
+  <div class="ladder-panel" id="ladpanel"></div>
+</section>
+
+<!-- ============ PHYSICS ============ -->
+<section id="physics">
+  <h2>Why tokens cost what they cost (the physics)</h2>
+  <p>Every result only makes sense once you see the cost equation. The agent is <em>single-turn</em>
+  with <span class="mono">cached_input=0</span>: <strong>every tool-call turn re-sends the entire
+  conversation so far.</strong> So the bill is not "how much did we read" — it's "how much did we
+  read × how many turns remained after we read it."</p>
+
+  <div class="kbd">TotalTokens ≈  T·S  +  Σ (T−s)·(oₛ + aₛ)  +  G
+
+  T   = number of tool-call turns
+  S   = static scaffold re-paid EVERY turn (system + task prompt + injected hint)
+  oₛ  = model-visible output of the tool call at turn s   (≠ what the tool emitted!)
+  s   = the turn a big read happens — EARLY reads are re-paid more times
+  G   = generated/output tokens (small on WB: ~1–3K)</div>
+
+  <div class="grid3" style="margin-top:14px">
+    <div class="card accent"><h4>Law 1 · turns multiply scaffold</h4><p class="muted" style="margin:0">Every avoided turn saves a whole <code>S</code> re-read. Turn count <code>T</code> is the master dial.</p></div>
+    <div class="card accent"><h4>Law 2 · early reads cost most</h4><p class="muted" style="margin:0">A read at turn 1 is re-paid <code>(T−1)</code> times. The hint commanded the 35 KB KG read at <em>turn 1</em> — the worst possible slot.</p></div>
+    <div class="card accent"><h4>Law 3 · output is a rounding error</h4><p class="muted" style="margin:0">Output <code>G</code> ≈ 1–3K vs 78–138K input. Input is ~96% of the bill — so output-compression (caveman) was de-prioritised.</p></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h4>The hidden truncation layer (changes how we read every number)</h4>
+    <p style="margin-bottom:0">codex clips every tool output to <strong>~10 KiB or 256 lines, head+tail, before the model sees it.</strong>
+    A cloud run <em>emitted</em> 830K chars but the model was billed as if it saw ~10 KiB. So capping
+    <code>semfs grep</code> at 6 KB isn't mainly "fewer bytes" — it's <strong>choosing which bytes survive</strong>
+    instead of letting codex blindly cut the middle (possibly dropping the answer row). Put the answer first; the head survives.</p>
+  </div>
+</section>
+
+<!-- ============ CALCULATOR ============ -->
+<section id="calc">
+  <h2>Interactive · feel the cost equation</h2>
+  <p class="muted">Drag the sliders. Watch how <em>turn count</em> dominates — and why a big <em>early</em> read hurts far more than the same read late.</p>
+  <div class="calc">
+    <div class="row"><label>Turn count <span class="mono">T</span></label><input id="cT" type="range" min="2" max="32" value="7"><span class="val" id="cTv">7</span></div>
+    <div class="row"><label>Scaffold <span class="mono">S</span> (incl. hint, tokens)</label><input id="cS" type="range" min="1500" max="9000" step="500" value="3000"><span class="val" id="cSv">3,000</span></div>
+    <div class="row"><label>Big read size <span class="mono">o</span> (tokens)</label><input id="cO" type="range" min="500" max="80000" step="500" value="9000"><span class="val" id="cOv">9,000</span></div>
+    <div class="row"><label>Big read happens at turn <span class="mono">s</span></label><input id="cs" type="range" min="1" max="10" value="1"><span class="val" id="csv">1</span></div>
+    <div class="out">
+      <div><div class="lbl muted">SCAFFOLD COST  T·S</div><div class="mono" style="font-size:20px;color:var(--cyan)" id="oScaf">—</div></div>
+      <div><div class="lbl muted">BIG-READ COST  (T−s)·o</div><div class="mono" style="font-size:20px;color:var(--amber)" id="oRead">—</div></div>
+      <div><div class="lbl muted">≈ TOTAL</div><div class="mono" style="font-size:20px;color:var(--green)" id="oTot">—</div></div>
+      <div><div class="lbl muted">vs plain (≈79K on 289)</div><div class="mono" style="font-size:20px" id="oCmp">—</div></div>
+    </div>
+    <p class="note" id="calcNote" style="margin-top:14px"></p>
+  </div>
+</section>
+
+<!-- ============ BEST CONFIG ============ -->
+<section id="bestconfig">
+  <h2>★ The best token-saving config</h2>
+  <p>Across the whole campaign, this is the configuration that reaches accuracy parity-or-better and
+  saves tokens where any config can. It is the <strong>shipped default</strong> ("scout stack").
+  The honest caveat: it only <em>wins tokens situationally</em>.</p>
+
+  <div class="kbd">SEMFS_SEARCH_ONLY=off        # MANDATORY — "on" → catastrophic flail (H2). Agent must be able to fall back to reading files.
+SEMFS_GREP_RESULT_CAP=6144   # cap per-hit render to 6 KB — sits inside codex's ~10 KiB clip; WE choose which bytes survive
+SEMFS_GREP_TOTAL_CAP=10240   # global render budget — stops 5×6KB hits summing past the clip
+SEMFS_RESULT_LIMIT=5         # ranked hits returned
+SEMFS_KG=0   SEMFS_GRAPH_FS=0  # KG / by-topic surfaces are net-negative for codex-class agents (H5, O7)
+SEMFS_REWRITE=1              # cross-lingual query rewrite (zh task ↔ en files) — proven rank fix #417→#1
+hint = v4.1                  # "facts + costs only" — zero KG-first, zero honesty coaching (the bitter lesson)</div>
+
+  <div class="grid2">
+    <div class="card green">
+      <h4 style="color:var(--green);margin-top:0">✓ Where it saves tokens at no accuracy cost</h4>
+      <p style="margin:0 0 8px">Narrow, single-answer QA where the answer file is <strong>not named</strong> in the task →
+      one capped semantic search replaces 4–8 blind discovery probes.</p>
+      <ul style="margin:0;padding-left:18px" class="muted">
+        <li>E8 case 175 — <strong>−7% tokens</strong>, accuracy ↑ (.083→.305)</li>
+        <li>E8 case 44 — <strong>−10% tokens</strong>, accuracy ↑</li>
+        <li>E11 e11-001 — <strong>−28% tokens</strong>, accuracy within tolerance</li>
+        <li>EC2 case 289 best run — <strong>76.8K vs plain 79K</strong> (first-ever sub-plain)</li>
+      </ul>
+    </div>
+    <div class="card red">
+      <h4 style="color:var(--red);margin-top:0">✗ Where it costs more (the majority)</h4>
+      <p style="margin:0 0 8px">Broad workspace tasks where the agent explores widely, or tiny-file
+      corpora where scanning is already cheap.</p>
+      <ul style="margin:0;padding-left:18px" class="muted">
+        <li>E8 case 289 — <strong>3.6× tokens</strong> (390K vs 107K), accuracy ↑ only</li>
+        <li>E8 case 95 — <strong>2.6× tokens</strong>, both score 0</li>
+        <li>E8 case 15 — <strong>1.4× tokens</strong>, parity</li>
+        <li>E11 e11-002 — tied (+0.3%), files too small to stress discovery</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card accent" style="margin-top:16px">
+    <h4 style="margin-top:0">The two levers that actually moved the needle</h4>
+    <ol style="margin:0;padding-left:20px">
+      <li><strong>The grep-cap code fix.</strong> <code>semfs grep</code> returned uncapped ~300K-char blobs; the cap knobs were <em>inert on the CLI path</em> until patched. Capping to 6 KB moved case 289 from 111–145K → a 77–98K band.</li>
+      <li><strong>Killing the KG-first hint.</strong> The baked <code>AGENTS.md</code> said "read kg/KNOWLEDGE_GRAPH.md FIRST" → 35.7K KG read + 22.4K os.walk = 58K wasted/run. Hint v4.1 (facts + costs only) removed it.</li>
+    </ol>
+    <p class="muted" style="margin:10px 0 0">Residual blocker to a <em>consistent</em> win: run-to-run call-count variance (5 vs 16 calls) from the agent's own <code>os.walk</code> crawl. The fix is a code feature that was never built — <a href="#remaining">E14 <code>semfs slice</code></a>.</p>
+  </div>
+</section>
+
+<!-- ============ ARENAS ============ -->
+<section id="arenas">
+  <h2>Results, by arena</h2>
+  <p class="muted">The campaign moved across three arenas. Tabs below. Green row = semfs won tokens at accuracy parity; red = semfs lost tokens.</p>
+  <div class="arena-tabs" id="arenaTabs">
+    <button class="on" data-a="e8">E8 · broad workspace (Modal, n=3)</button>
+    <button data-a="e11">E11 · discovery-stressed (Modal, n=3)</button>
+    <button data-a="ph0">Phase 0 · original 5-arm (EC2, infra-broken)</button>
+  </div>
+
+  <div class="arena-body on" data-a="e8">
+    <p>Five real WB cases, full 1,452-file corpus. <strong>Pre-registered condition: ≥3/5 cases where
+    nokg tokens &lt; plain AND accuracy ≥ plain−1/15. Result: 2/5 → FAILED.</strong></p>
+    <table>
+      <tr><th>case</th><th>arm</th><th class="num">accuracy</th><th class="num">tokens</th><th>verdict</th></tr>
+      <tr><td class="mono">289</td><td>plain</td><td class="num">0.178</td><td class="num">107,734</td><td></td></tr>
+      <tr class="rloss"><td class="mono">289</td><td>nokg</td><td class="num">0.311</td><td class="num">390,759</td><td><span class="pill loss">3.6× tok</span> acc-only</td></tr>
+      <tr><td class="mono">175</td><td>plain</td><td class="num">0.083</td><td class="num">118,844</td><td></td></tr>
+      <tr class="rwin"><td class="mono">175</td><td>nokg</td><td class="num">0.305</td><td class="num">110,407</td><td><span class="pill win">WIN</span> −7% tok, acc ↑</td></tr>
+      <tr><td class="mono">95</td><td>plain</td><td class="num">0.000</td><td class="num">118,164</td><td></td></tr>
+      <tr class="rloss"><td class="mono">95</td><td>nokg</td><td class="num">0.000</td><td class="num">303,311</td><td><span class="pill loss">2.6× tok</span> both 0</td></tr>
+      <tr><td class="mono">15</td><td>plain</td><td class="num">0.062</td><td class="num">342,694</td><td><span class="muted">ceiling</span></td></tr>
+      <tr class="rloss"><td class="mono">15</td><td>nokg</td><td class="num">0.062</td><td class="num">493,085</td><td><span class="pill loss">1.4× tok</span> parity</td></tr>
+      <tr><td class="mono">44</td><td>plain</td><td class="num">0.000</td><td class="num">102,584</td><td><span class="muted">ceiling</span></td></tr>
+      <tr class="rwin"><td class="mono">44</td><td>nokg</td><td class="num">0.021</td><td class="num">92,466</td><td><span class="pill win">WIN</span> −10% tok</td></tr>
+    </table>
+    <p class="note">nokg accuracy ≥ plain in 4/5 cases (semfs reliably helps accuracy) — but tokens &lt; plain in only 2/5.</p>
+  </div>
+
+  <div class="arena-body" data-a="e11">
+    <p>Purpose-built "needle in 200 files" corpus, Chinese task ↔ English files (tests cross-lingual rewrite).
+    <strong>Result: 1/2 cases win.</strong> The corpus turned out too small to stress discovery.</p>
+    <table>
+      <tr><th>case</th><th>arm</th><th class="num">accuracy</th><th class="num">tokens</th><th>verdict</th></tr>
+      <tr><td class="mono">e11-001</td><td>plain</td><td class="num">0.611</td><td class="num">70,187</td><td></td></tr>
+      <tr class="rwin"><td class="mono">e11-001</td><td>nokg</td><td class="num">0.556</td><td class="num">50,467</td><td><span class="pill win">WIN</span> −28% tok</td></tr>
+      <tr><td class="mono">e11-002</td><td>plain</td><td class="num">0.722</td><td class="num">59,718</td><td></td></tr>
+      <tr><td class="mono">e11-002</td><td>nokg</td><td class="num">0.778</td><td class="num">59,880</td><td><span class="pill neu">TIE</span> +0.3% tok, acc ↑</td></tr>
+    </table>
+    <p class="note">Root cause of non-discrimination: files are ~1 KB each, so scanning all 200 costs only ~60–70K tokens — too cheap for search to beat. Real discovery stress needs ≥10 KB files or ≥1,000 files.</p>
+  </div>
+
+  <div class="arena-body" data-a="ph0">
+    <p>The original matrix that started everything — <strong>but all local arms were infra-broken</strong>
+    (disk full, contamination, corruption). This is why "semfs loses" was the wrong conclusion; the
+    later experiments cleaned the infra and the picture changed.</p>
+    <table>
+      <tr><th>arm</th><th class="num">accuracy</th><th class="num">mean tokens</th><th>what it was</th></tr>
+      <tr class="rwin"><td>plain</td><td class="num">46%</td><td class="num">89,270</td><td>no semfs — best on both axes</td></tr>
+      <tr><td>cloud</td><td class="num">27%</td><td class="num">93,443</td><td>Supermemory server search — token-neutral, won case 95 only</td></tr>
+      <tr class="rloss"><td>nokg</td><td class="num">3%</td><td class="num">~247,000</td><td>contaminated seed + 45-min timeout</td></tr>
+      <tr class="rloss"><td>gfs_off</td><td class="num">10%</td><td class="num">177,711</td><td>+ knowledge graph</td></tr>
+      <tr class="rloss"><td>gfs_on</td><td class="num">14%</td><td class="num">471,217</td><td>+ /by-topic/ — worst tokens in the matrix</td></tr>
+    </table>
+    <p class="note">13/15 local cells infra-failed. The whole E1–E5 ladder exists to prove this was infra, not retrieval — and it did (H1 confirmed).</p>
+  </div>
+
+  <h3>Tokens at a glance (E8, plain vs semfs per case)</h3>
+  <div class="chartwrap">
+    <div class="ctitle">mean tokens — lower is better · <span style="color:var(--green)">plain</span> vs <span style="color:var(--amber)">semfs (nokg)</span></div>
+    <div id="barchart"></div>
+    <div class="legend"><span><i style="background:var(--green)"></i>plain</span><span><i style="background:var(--amber)"></i>semfs nokg</span></div>
+  </div>
+</section>
+
+<!-- ============ TIMELINE ============ -->
+<section id="timeline">
+  <h2>The full experiment timeline</h2>
+  <p class="muted">Every experiment, what it tested, the knobs it varied, and the result. Click to expand.</p>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E1</span><span>Infra-clean rerun — was the catastrophe infra?</span><span class="pill done">DONE</span></summary>
+    <div class="body">
+      <p><span class="tag">tests H1</span><span class="tag">case 289</span><span class="tag">knob: SEARCH_ONLY=off</span></p>
+      <p class="artpath">artifacts/matrix_artifacts/rune_289*/ (case-289 cells)</p>
+      <p><strong>Question:</strong> if we fix disk/contamination/corruption and change nothing else, does semfs stop losing?</p>
+      <p><strong>Result:</strong> timeout/0-score → <strong>111K/5-of-15 and 145K/6-of-15</strong>, matching plain's accuracy. <span class="pill win">H1 CONFIRMED</span> — the catastrophe was 100% infrastructure.</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E2</span><span>SEARCH_ONLY A/B — is hiding the file tree safe?</span><span class="pill done">DONE</span></summary>
+    <div class="body">
+      <p><span class="tag">tests H2</span><span class="tag">knob: SEARCH_ONLY on/off</span></p>
+      <p class="artpath">artifacts/matrix_artifacts/rune_289so/ (search-only cell) · rune_289*/</p>
+      <p><strong>Result:</strong> <code>=on</code> flailed &gt;30 min toward timeout; <code>=off</code> finished in 114s. <span class="pill win">H2 CONFIRMED</span> — <code>off</code> is the mandatory safety floor (the agent must be able to fall back to reading files).</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E3</span><span>Summaries — does an LLM-summary index beat raw chunks?</span><span class="pill neu">INCONCLUSIVE</span></summary>
+    <div class="body">
+      <p><span class="tag">tests O4</span><span class="tag">case 44</span><span class="tag">seed: summary-embedded vs raw</span></p>
+      <p class="artpath">artifacts/matrix_artifacts/rune_sum2/ · run44ds/ · e3_summary_ab/ (metrics + surviving traces)</p>
+      <p><strong>Result:</strong> sum-dualstore 2/16 @ 125K vs raw 4/16 @ 130K — token-neutral. Case 44 <em>names</em> its files, so summaries were structurally untestable here. The valid test moved to E11.</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E4 / E4′</span><span>Delivery caps — found the inert-knob bug, then patched it</span><span class="pill done">DONE · CODE</span></summary>
+    <div class="body">
+      <p><span class="tag">tests O1</span><span class="tag">knob: DOC_RETURN_CAP, RESULT_LIMIT → GREP_RESULT_CAP (new)</span></p>
+      <p class="artpath">artifacts/matrix_artifacts/rune_289c/ (cap cells) · rune_c15*/ (case-15 frontier)</p>
+      <p><strong>Finding:</strong> <code>SEMFS_DOC_RETURN_CAP</code>/<code>RESULT_LIMIT</code>/<code>RETURN_MODE</code> were <strong>INERT on the agent's CLI path</strong> — a broad query returned ~300K–372K chars no matter what. <strong>Fix:</strong> patched <code>grep.rs</code> with a new <code>SEMFS_GREP_RESULT_CAP</code> (per-hit render cap, default 6 KB).</p>
+      <p><strong>Result:</strong> cap=3KB → <strong>76.8K/5-of-15</strong> — the first local run ever to dip below plain on tokens. <span class="pill win">H4 CONFIRMED via code</span>; variance remains.</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E5</span><span>KG ablation — is the knowledge graph worth its tokens?</span><span class="pill done">DONE</span></summary>
+    <div class="body">
+      <p><span class="tag">tests H5 / O7</span><span class="tag">trace attribution</span></p>
+      <p class="artpath">artifacts/matrix_artifacts/rune_289*/ (trace breakdown source) · rune_lh/ (leanhint)</p>
+      <p><strong>Result:</strong> trace breakdown showed <strong>35.7K tokens reading kg/KNOWLEDGE_GRAPH.md + 22.4K os.walk per run</strong>, with zero accuracy payoff. A fresh KG-off seed build was impractical (½-indexed in 3h on the 16 GB box). <span class="pill win">H5 CONFIRMED</span> — KG surfaces are net-negative for codex.</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E6</span><span>Clip calibration — how much does codex actually show the model?</span><span class="pill done">DONE</span></summary>
+    <div class="body">
+      <p><span class="tag">tests O1 foundation</span><span class="tag">no semfs</span></p>
+      <p class="artpath">box /tmp/e6/ marker-file probes (runA/B/CD.jsonl) — not pulled; numbers in EXPERIMENTS_NEXT.md E6</p>
+      <p><strong>Result (codex 0.133.0):</strong> ≤10 KB passes whole; cliff ~15 KB; overflow is <em>catastrophic not graceful</em> — a 49 KB read survives as only ~1.2K head+tail tokens. So <code>GREP_RESULT_CAP=6144</code> sits comfortably inside the window. Put answer content first (the head survives).</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E7</span><span>Hint surgery ladder — does the ~2 KB hint dominate the pipeline?</span><span class="pill done">DONE (partial)</span></summary>
+    <div class="body">
+      <p><span class="tag">tests O2, O7</span><span class="tag">hint v1 → v4.1</span></p>
+      <p class="artpath">artifacts/matrix_artifacts/e8seq/ (w*=v2, wp*=v3) · e95v4/ (v4.1)</p>
+      <p>Evolved the injected <code>AGENTS.md</code> across 4 versions: v1 ("read kg/ FIRST" — convicted, −58K/run) → v2 leanhint ("ONE grep → read top hit → no crawl") → v3 (+ provenance check — backfired, zeroed case 95) → <strong>v4.1 (facts + costs only, zero coaching) — shipped default.</strong> <span class="pill win">O2 supported</span>: the hint drives behaviour, behaviour is the cost.</p>
+      <p class="note">E7c (KG-as-≤4KB-digest arm) was specified but never built — see Remaining.</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E8</span><span>The scout stack headline — pre-registered kill condition</span><span class="pill done">DONE</span><span class="pill loss">FAILED 2/5</span></summary>
+    <div class="body">
+      <p><span class="tag">tests O3</span><span class="tag">5 cases × 2 arms × n=3</span><span class="tag">Modal</span></p>
+      <p class="artpath">artifacts/run2/e8/ (e8_results.jsonl + 30 cell JSONs + e8_raw.log)</p>
+      <p><strong>Pre-registered:</strong> ≥3/5 cases with nokg tokens &lt; plain at accuracy ≥ plain−1/15 → "semfs delivers". <strong>Result: 2/5 (175, 44) → FAILED.</strong> nokg accuracy beat plain in 4/5 cases but used more tokens in 3/5. → declared "wrong arena", routed to E11. <a href="#arenas">Full table</a>.</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E9 / E9w2</span><span>Delivery-form duel + confidence stop-signal</span><span class="pill done">DONE</span></summary>
+    <div class="body">
+      <p><span class="tag">tests O1</span><span class="tag">knob: GREP_RENDER_MODE inline/two-tier/paths</span></p>
+      <p class="artpath">artifacts/matrix_artifacts/e9w1/ (e9b*=two-tier, e9c*=paths) · run2/e9w2/ (Modal wave 2)</p>
+      <p><strong>E9 wave 1:</strong> <code>paths</code> mode was the most consistent arm ever measured (±1K tokens on 289) — but it <em>crawls</em> on multi-file synthesis (case 95: 32 calls). Render mode is task-shaped. <strong>E9w2:</strong> the confidence HIGH stop-signal <em>never fired</em> in 3/3 runs — the agent solves via direct reads without ever calling <code>semfs grep</code>. Confidence-optimization path stopped.</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E9(d)</span><span>Query-time caveman compression pilot</span><span class="pill neu">MECHANISM PROVEN · BENCH CONFOUNDED</span></summary>
+    <div class="body">
+      <p><span class="tag">knob: GREP_COMPRESS</span><span class="tag">case 95</span></p>
+      <p class="artpath">artifacts/matrix_artifacts/e9d/ (e9d_c1,c2=compress · e9d_x1,x2=control) — now local</p>
+      <p><strong>Smoke:</strong> render 158.7KB→62.5KB (−61%), 25/25 salient numbers preserved. <strong>Bench:</strong> confounded — the zeros were caused by hint v3's provenance check backfiring + the judge filename lottery, not by compression. Led to removing the provenance check on principle (coaching = teaching to the test).</p>
+    </div></details>
+
+  <details class="exp"><summary><span class="arr">▶</span><span class="ekey">E11</span><span>Discovery-stressed + cross-lingual</span><span class="pill done">DONE</span><span class="pill neu">1/2 win</span></summary>
+    <div class="body">
+      <p><span class="tag">tests O4, O8</span><span class="tag">400-file synthetic corpus</span><span class="tag">zh task ↔ en files</span><span class="tag">Modal</span></p>
+      <p class="artpath">artifacts/run2/e11/ (e11_results.jsonl + e11_final_raw.log + seed-build logs)</p>
+      <p><strong>Result: 1/2 win.</strong> e11-001 saved 28% tokens; e11-002 tied. The corpus was too small (1 KB files) to make scanning expensive. Also surfaced: a metadata bug (wrong needle names), the <code>modal volume put</code> path-prefix trap, and the missing-AGENTS.md crash on SEMFS_INDEX_ONLY seeds — all fixed. <a href="#arenas">Full table</a>.</p>
+    </div></details>
+
+  <h3>Cross-cutting discovery — the benchmark bug</h3>
+  <div class="card red">
+    <h4 style="color:var(--red);margin-top:0">🔴 Case 95 is a judge filename lottery</h4>
+    <p style="margin-bottom:0">The agent-visible task names <em>no output file</em>; the expected filename lives only in judge-side
+    fields. Agents rationally name the file after the task's words — then a lenient judge grades content (12/12),
+    a strict one zeroes on the name (0/12). <strong>Proven:</strong> two identical runs (same config, same deliverable filename)
+    scored 0/12 and 12/12. 34/100 WB cases have this shape. Every case-95 <em>score</em> carries an asterisk; only the token/call axis is trustworthy there.</p>
+  </div>
+</section>
+
+<!-- ============ KNOBS ============ -->
+<section id="knobs">
+  <h2>Every knob tested, and its verdict</h2>
+  <p class="muted">Organised by pipeline layer: INFRA → INDEX → SEARCH → DELIVERY → AFFORDANCE.</p>
+  <table>
+    <tr><th>knob / lever</th><th>layer</th><th>values tested</th><th>verdict</th></tr>
+    <tr><td>infra gates (disk guard, quick_check, dummy SM key, fastembed strip, daemon kill)</td><td class="mono">INFRA</td><td>absent → present</td><td><span class="pill win">mandatory</span> absence fakes "retrieval losses"</td></tr>
+    <tr><td>seed: gemma-q4 / clean / sum / dual-store / leanhint</td><td class="mono">INDEX</td><td>all</td><td>clean = baseline; dual-store keeps tables exact</td></tr>
+    <tr><td class="mono">SEMFS_STORAGE_BACKEND</td><td class="mono">INDEX</td><td>local sqlite / cloud</td><td>cloud wins only when coverage helps (case 95)</td></tr>
+    <tr><td class="mono">SEMFS_REWRITE</td><td class="mono">SEARCH</td><td>1 (always)</td><td><span class="pill win">keep</span> cross-lingual rank fix #417→#1</td></tr>
+    <tr><td class="mono">SEMFS_SEARCH_ONLY</td><td class="mono">DELIVERY</td><td>on / off</td><td><span class="pill loss">off always</span> on → catastrophic flail (H2)</td></tr>
+    <tr><td class="mono">SEMFS_GREP_INLINE</td><td class="mono">DELIVERY</td><td>on (always)</td><td>inline excerpts beat file-pointers for codex</td></tr>
+    <tr><td class="mono">SEMFS_RESULT_LIMIT</td><td class="mono">DELIVERY</td><td>8 / 5 / 3</td><td>5 = current; was inert pre-patch</td></tr>
+    <tr><td class="mono">SEMFS_DOC_RETURN_CAP / RETURN_MODE</td><td class="mono">DELIVERY</td><td>various</td><td><span class="pill loss">INERT on CLI</span> superseded by GREP_RESULT_CAP</td></tr>
+    <tr><td class="mono">SEMFS_GREP_RESULT_CAP</td><td class="mono">DELIVERY</td><td>∞ / 6 KB / 3 KB</td><td><span class="pill win">6 KB shipped</span> 6KB acc holds; 3KB −1 acc</td></tr>
+    <tr><td class="mono">SEMFS_GREP_TOTAL_CAP</td><td class="mono">DELIVERY</td><td>∞ / 10 KB</td><td><span class="pill win">10 KB shipped</span> per-hit caps can sum past the clip</td></tr>
+    <tr><td class="mono">SEMFS_GREP_RENDER_MODE</td><td class="mono">DELIVERY</td><td>inline / two-tier / paths</td><td><span class="pill neu">task-shaped</span> paths = ±1K on QA, crawls on synthesis</td></tr>
+    <tr><td>hint v1 / v2 / v3 / v4.1</td><td class="mono">AFFORDANCE</td><td>all</td><td><span class="pill win">v4.1 shipped</span> v1 = −58K/run harm; coaching removed on principle</td></tr>
+    <tr><td class="mono">SEMFS_KG / SEMFS_GRAPH_FS</td><td class="mono">AFFORDANCE</td><td>on/off matrix</td><td><span class="pill loss">both off</span> /by-topic = worst tokens in matrix</td></tr>
+    <tr><td class="mono">SEMFS_GREP_COMPRESS</td><td class="mono">DELIVERY</td><td>off / on</td><td><span class="pill neu">mechanism proven</span> behavioural effect unmeasured → E15</td></tr>
+    <tr><td class="mono">SEMFS_INDEX_ONLY</td><td class="mono">INFRA</td><td>0 / 1 (NEW)</td><td><span class="pill win">works</span> Modal-native seed build, no FUSE</td></tr>
+  </table>
+</section>
+
+<!-- ============ DATAFLOW ============ -->
+<section id="dataflow">
+  <h2>How a single benchmark run is wired</h2>
+  <p class="muted">Grounding the numbers in the architecture: what is stored, and how data flows between components in one (case, arm) run on Modal.</p>
+  <div class="chartwrap">
+  <svg viewBox="0 0 980 470" width="100%" class="flow" font-size="12.5">
+    <defs>
+      <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+    </defs>
+    <!-- volume -->
+    <rect x="20" y="20" width="200" height="170" rx="9" fill="#161b22" stroke="#30363d"/>
+    <text x="34" y="44" fill="#bc8cff" font-weight="700">Modal Volume /data</text>
+    <text x="34" y="70" fill="#8b949e">corpus/  (1452 files)</text>
+    <text x="34" y="92" fill="#8b949e">seeds/   chanpin-clean.db</text>
+    <text x="48" y="112" fill="#586069">└ chunks · vchunks (vec)</text>
+    <text x="48" y="130" fill="#586069">└ fs_dentry · fs_data</text>
+    <text x="34" y="154" fill="#8b949e">wb/evaluation/tasks_*</text>
+    <text x="48" y="172" fill="#586069">└ metadata.json (rubrics)</text>
+
+    <!-- prep -->
+    <rect x="280" y="20" width="220" height="170" rx="9" fill="#161b22" stroke="#30363d"/>
+    <text x="294" y="44" fill="#39c5cf" font-weight="700">run_case() — prep</text>
+    <text x="294" y="70" fill="#8b949e">cp corpus → /tmp/workdir</text>
+    <text x="294" y="92" fill="#8b949e">cp seed → ~/.semfs/&lt;tag&gt;.db</text>
+    <text x="294" y="114" fill="#8b949e">write .semfs marker</text>
+    <text x="294" y="136" fill="#8b949e">extract AGENTS.md hint</text>
+    <text x="294" y="158" fill="#586069">(plain arm: skip all 4 ↑)</text>
+    <text x="294" y="180" fill="#586069">set SEMFS_* env</text>
+
+    <!-- agent -->
+    <rect x="560" y="20" width="200" height="170" rx="9" fill="#161b22" stroke="#30363d"/>
+    <text x="574" y="44" fill="#3fb950" font-weight="700">codex / GPT-5.4</text>
+    <text x="574" y="70" fill="#8b949e">reads AGENTS.md hint</text>
+    <text x="574" y="92" fill="#8b949e">semfs grep "query"</text>
+    <text x="588" y="110" fill="#586069">→ ranked hits ≤6KB</text>
+    <text x="574" y="132" fill="#8b949e">reads top-hit file</text>
+    <text x="574" y="154" fill="#8b949e">writes deliverable</text>
+    <text x="588" y="172" fill="#586069">model_output/*.txt</text>
+
+    <!-- judge -->
+    <rect x="820" y="20" width="140" height="170" rx="9" fill="#161b22" stroke="#30363d"/>
+    <text x="834" y="44" fill="#d29922" font-weight="700">Judge</text>
+    <text x="834" y="68" fill="#8b949e">Seed-2.0-Lite</text>
+    <text x="834" y="90" fill="#8b949e">rubric scoring</text>
+    <text x="834" y="112" fill="#586069">copies only</text>
+    <text x="834" y="128" fill="#586069">model_output/</text>
+    <text x="834" y="156" fill="#8b949e">score / 6 or /15</text>
+
+    <!-- arrows row1 -->
+    <line x1="220" y1="100" x2="278" y2="100" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)"/>
+    <line x1="500" y1="100" x2="558" y2="100" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)"/>
+    <line x1="760" y1="100" x2="818" y2="100" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)"/>
+
+    <!-- grep loop back to seed -->
+    <path d="M600,190 C600,250 360,250 360,250 L150,250 C120,250 120,200 120,194" fill="none" stroke="#3fb950" stroke-width="1.6" stroke-dasharray="5,4" marker-end="url(#ar)"/>
+    <text x="370" y="244" fill="#3fb950">semfs grep --tag opens the seed DB directly (daemonless, no FUSE) — sqlite-vec search</text>
+
+    <!-- cost callout -->
+    <rect x="20" y="300" width="940" height="150" rx="9" fill="#0a0c10" stroke="#30363d"/>
+    <text x="40" y="328" fill="#e6edf3" font-weight="700">Where the tokens go (cost = Σ over turns, each turn re-pays all prior context):</text>
+    <text x="40" y="356" fill="#8b949e">• Static scaffold S (system + task + hint) — re-paid every one of T turns  →  T·S</text>
+    <text x="40" y="380" fill="#8b949e">• Each tool output oₛ — re-paid (T−s) times; an early KG read at turn 1 is the most expensive read in the run</text>
+    <text x="40" y="404" fill="#8b949e">• semfs's lever: fewer turns (1 search vs 4–8 probes) + smaller capped payloads (≤6KB) + no KG-first hint</text>
+    <text x="40" y="430" fill="#f85149">• plain's hidden cost: it re-pays its own find/grep discovery probes — ~60–70% of plain's 79K on case 289</text>
+  </svg>
+  </div>
+</section>
+
+<!-- ============ REMAINING ============ -->
+<section id="remaining">
+  <h2>Experiments we have NOT done</h2>
+  <p>For each: what it tests, why it was parked, and — most important — <strong>what a pass or fail would actually
+  mean for us</strong> (the conclusion we'd draw and the move we'd make). These are pre-registered so the result
+  can't be rationalised after the fact: each PASS/FAIL maps to a decision, not just a number.</p>
+
+  <div class="card">
+    <h4><span class="mono" style="color:var(--purple)">E14</span> · <code>semfs slice</code> tool <span class="pill todo">highest-value code</span></h4>
+    <p style="margin:6px 0"><strong>What:</strong> <code>semfs grep</code> stores the full ranked result server-side and returns ≤1 KB + a result-id;
+    a new <code>semfs slice &lt;id&gt; --file N --range a:b</code> retrieves precise pieces on demand.</p>
+    <p style="margin:6px 0"><strong>Why it matters:</strong> this is the missing piece that would kill the run-to-run variance (the agent's
+    <code>os.walk</code> crawl). Target flow: search(1KB) → slice(2KB) → write ≈ <strong>25–30K tokens</strong> — the first floor-adjacent run.</p>
+    <p style="margin:6px 0" class="muted"><strong>Parked because:</strong> it's the only real code investment on the list; was gated on E9 signalling that small-payload delivery is safe (it did).</p>
+    <div class="decision">
+      <div class="dl">What the result means for us — criterion: n≥3 on case 289, mean tokens vs plain's ~79K at accuracy ≥ plain−1</div>
+      <div class="drow"><span class="dk p">✓ PASS</span><span class="dt">a <b>consistent</b> 25–30K run at parity → <b>this is the both-axes win we never got.</b> semfs has a real, repeatable token edge via the artifact pattern (search→slice→write). We build &amp; ship <code>slice</code>, and the product story finally leads with tokens.</span></div>
+      <div class="drow"><span class="dk f">✗ FAIL</span><span class="dt">tokens don't reach the floor, or accuracy drops → <b>delivery optimization has hit its ceiling for codex.</b> Stop chasing token wins through retrieval/delivery entirely; the remaining value of semfs is accuracy/acquisition, not cost.</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4><span class="mono" style="color:var(--purple)">E7c</span> · KG-as-≤4 KB digest arm <span class="pill todo">cheap</span></h4>
+    <p style="margin:6px 0"><strong>What:</strong> replace the 61 KB knowledge-graph file with a ≤4 KB digest (topic→dir table + inaccessible-files list).</p>
+    <p style="margin:6px 0"><strong>Tests:</strong> O7's escape hatch — can KG be <em>rehabilitated</em> as a tiny digest rather than killed outright? Would beat nokg on neither or both axes.</p>
+    <p style="margin:6px 0" class="muted"><strong>Parked because:</strong> KG-off seed builds are impractically slow on the 16 GB box; now unblocked by the Modal <code>SEMFS_INDEX_ONLY</code> path.</p>
+    <div class="decision">
+      <div class="dl">What the result means for us — criterion: digest arm vs nokg on tokens &amp; accuracy</div>
+      <div class="drow"><span class="dk p">✓ PASS</span><span class="dt">digest ≥ nokg on either axis → <b>KG isn't dead, it was just too big.</b> The 61 KB graph was the problem, not the idea. We ship the ≤4 KB digest as the orientation surface and rehabilitate a feature we'd written off.</span></div>
+      <div class="drow"><span class="dk f">✗ FAIL</span><span class="dt">digest ≤ nokg on both → <b>KG is net-negative even when tiny.</b> Confirms O7 fully: kill KG/by-topic as an agent-facing surface for codex-class agents, end of story. Removes a whole feature branch from the roadmap.</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4><span class="mono" style="color:var(--purple)">E13</span> · ≤1 KB workspace map <span class="pill todo">half-day</span></h4>
+    <p style="margin:6px 0"><strong>What:</strong> inject a ~1 KB map (top-level dirs, file-type census, "where things live") into the hint.</p>
+    <p style="margin:6px 0"><strong>Tests:</strong> O2's alternative — if hints alone underperform, does a structural map cut discovery probes (4–8 → 1–2)? It would help <em>both</em> arms (retrieval-free).</p>
+    <p style="margin:6px 0" class="muted"><strong>Parked because:</strong> lower priority than the hint+cap levers that were already winning.</p>
+    <div class="decision">
+      <div class="dl">What the result means for us — criterion: discovery-probe count (find/ls/grep) with vs without the map</div>
+      <div class="drow"><span class="dk p">✓ PASS</span><span class="dt">probes drop 4–8 → 1–2 → <b>a cheap, retrieval-free token lever.</b> Ship the map in the hint. Caveat: it helps the <em>plain</em> arm too, so it's a general agent-scaffolding win, not a semfs differentiator — good for the product, neutral for the "semfs vs plain" thesis.</span></div>
+      <div class="drow"><span class="dk f">✗ FAIL</span><span class="dt">probe count unchanged → <b>codex doesn't steer on structural maps.</b> Combined with the hint findings, this says behaviour isn't instruction-driven for this agent — drop maps, and stop expecting prompt/scaffold text to change exploration.</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4><span class="mono" style="color:var(--purple)">E15</span> · caveman-compressed <code>.extracted.md</code> siblings (input-side) <span class="pill skip">SKIPPED</span></h4>
+    <p style="margin:6px 0"><strong>What:</strong> store a fact-preserving ~35–65% compression of prose documents so one clipped read carries the whole doc (spreadsheets stay exempt — rubrics need exact rows).</p>
+    <p style="margin:6px 0"><strong>Tests:</strong> O6 input-side — wins on whole-document synthesis (95/175-shape); must not hurt localized QA (289-shape).</p>
+    <p style="margin:6px 0" class="muted"><strong>Skipped because:</strong> it was gated on E8 passing its kill condition (it failed). Revivable if the discovery arena is re-aimed.</p>
+    <div class="decision">
+      <div class="dl">What the result means for us — criterion: acquisition tokens on a 95-style synthesis case, AND exact-value rubrics held</div>
+      <div class="drow"><span class="dk p">✓ PASS</span><span class="dt">tokens −30–50% with <b>zero</b> exact-value rubric regression → a real input-side acquisition lever for synthesis tasks. Compress prose siblings at index time; raw tables stay verbatim.</span></div>
+      <div class="drow"><span class="dk f">✗ FAIL</span><span class="dt"><b>any</b> exact-value rubric regresses → <b>the format-trap reborn</b> (compression dropped a number/name/date a rubric needed). Hard stop: never compress fact-bearing content. This is a pre-registered kill condition, not a judgment call.</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4><span class="mono" style="color:var(--purple)">E10</span> · cache-adjusted re-scoring <span class="pill skip">DE-SCOPED</span> &nbsp;·&nbsp; <span class="mono" style="color:var(--purple)">E12</span> · caveman output compression <span class="pill skip">DE-PRIORITISED</span></h4>
+    <p style="margin:6px 0"><strong>E10:</strong> re-price every run under production prompt-caching (~10× cheaper repeated input). De-scoped — focus is raw input tokens; OpenAI caching is automatic API-side.</p>
+    <p style="margin:6px 0"><strong>E12:</strong> compress what the agent <em>writes</em>. De-prioritised — output is only ~2–4% of tokens (Law 3).</p>
+    <div class="decision">
+      <div class="dl">What the result means for us (if ever revisited)</div>
+      <div class="drow"><span class="dk p">✓ PASS</span><span class="dt"><b>E10:</b> arm orderings flip under cache-adjusted pricing → the raw-token metric overstates semfs's turn-count penalty; report cache-adjusted cost — semfs may look far better in production. <b>E12:</b> &gt;10% total-token delta → narration is bigger than traces show; promote caveman from polish to a real lever.</span></div>
+      <div class="drow"><span class="dk f">✗ FAIL</span><span class="dt"><b>E10:</b> orderings unchanged → raw tokens stand; drop the metric complaint. <b>E12:</b> ≤8% delta → output really is a rounding error; keep caveman as product polish only. Either way, no roadmap change — that's why both are parked.</span></div>
+    </div>
+  </div>
+
+  <div class="card amber">
+    <h4 style="color:var(--amber)">E11-redesign (call it E12-new) · a corpus that actually stresses discovery <span class="pill todo">the real next test</span></h4>
+    <p style="margin:6px 0"><strong>Why:</strong> E11 failed to discriminate because its files were ~1 KB (scanning all 200 cost only ~70K tokens).</p>
+    <p style="margin:6px 0"><strong>Fix:</strong> rebuild with <strong>≥10 KB files</strong> (realistic boilerplate padding) <em>or</em> <strong>≥1,000 files</strong>, so linear scanning becomes prohibitively expensive and search can win decisively.</p>
+    <div class="decision">
+      <div class="dl">What the result means for us — the make-or-break test for the whole token thesis. Criterion: nokg beats plain on tokens at accuracy parity, n≥3, on a genuinely scan-expensive corpus</div>
+      <div class="drow"><span class="dk p">✓ PASS</span><span class="dt">semfs wins decisively where scanning is expensive → <b>confirms O8's discovery half.</b> We finally have the arena where semfs's value is real and measurable. This becomes the product's headline benchmark, and "the wrong arena" verdict is resolved — it was the corpus, not the product.</span></div>
+      <div class="drow"><span class="dk f">✗ FAIL</span><span class="dt">semfs still ties/loses even when scanning is costly → <b>the problem is deeper than arena choice.</b> semfs has no token edge for codex anywhere. Pivot away from the token story entirely; either lead purely on accuracy/acquisition, or reconsider whether codex is the right agent for the pitch.</span></div>
+    </div>
+  </div>
+
+  <div class="card red">
+    <h4 style="color:var(--red)">Benchmark bug · fix the judge filename lottery <span class="pill todo">blocks all 95-class scores</span></h4>
+    <p style="margin:6px 0"><strong>Fix:</strong> either (a) the task states the output filename, or (b) the rubric accepts task-consistent names + matches on content with n≥2 judge runs. Until then, 34/100 WB cases produce coin-flip scores.</p>
+    <div class="decision">
+      <div class="dl">This is a measurement-validity fix, not a hypothesis — so the "result" is about trust, not pass/fail</div>
+      <div class="drow"><span class="dk p">✓ FIXED</span><span class="dt">case-95-class scores become deterministic across judge runs → <b>34/100 WB cases become trustworthy.</b> We can finally quote synthesis-case accuracy and re-read every asterisked result in this campaign (incl. the e9d compression confound).</span></div>
+      <div class="drow"><span class="dk f">✗ IF SKIPPED</span><span class="dt">every synthesis-case accuracy number stays a coin flip → <b>we keep mis-attributing judge noise to retrieval/compression/hint changes</b> (exactly what happened in E9(d)). Any future accuracy claim on these cases is unsafe to quote.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ NEXT ============ -->
+<section id="next">
+  <h2>Next steps — in priority order</h2>
+  <ol>
+    <li><strong>Decide the arena (strategic fork).</strong> E8 failed its kill condition and E11 didn't discriminate. The pre-committed branch says: stop optimising WB-chanpin tokens and re-aim at discovery-stressed + cross-lingual corpora. <em>Decision needed: redesign the discovery corpus (E12-new), or pivot to the multi-benchmark adapter (xAFS / terminal-bench)?</em></li>
+    <li><strong>Build <code>semfs slice</code> (E14).</strong> The only lever with a credible path to a <em>consistent</em> floor-adjacent run (25–30K). Everything else is ±parity.</li>
+    <li><strong>Fix the judge filename lottery</strong> before quoting any synthesis-case accuracy again. It silently corrupts 34/100 cases.</li>
+    <li><strong>Run E7c (KG-digest)</strong> — now cheap via the Modal <code>SEMFS_INDEX_ONLY</code> path; settles whether KG dies or shrinks.</li>
+    <li><strong>If accuracy is the goal, not tokens:</strong> semfs <em>already</em> wins — nokg accuracy beat plain in 4/5 E8 cases. Lead the product story with acquisition (format-trap −80%) + cross-lingual (#417→#1), not raw token counts on grep-friendly ground.</li>
+  </ol>
+
+  <div class="card accent">
+    <h4 style="margin-top:0">The honest bottom line</h4>
+    <p style="margin-bottom:0">There <em>is</em> a best token-saving config (the scout stack, already shipped), and it never <em>hurts</em>
+    accuracy — but it only <em>saves</em> tokens on unnamed-answer single-file QA. On the benchmark we chose,
+    plain <code>grep</code> is near-optimal, so the ceiling for a token win is low by construction. The next
+    real result requires either a harder arena or the <code>semfs slice</code> code feature — not another knob.</p>
+  </div>
+
+  <p class="note" style="margin-top:30px">Sources: <code>EXPERIMENT_RUN_2.md</code>, <code>EXPERIMENT_MATRIX.md</code>, <code>RESULTS.md</code>,
+  <code>TOKEN_ECONOMY.md</code>, <code>OPINIONS.md</code>, <code>EXPERIMENTS_NEXT.md</code> · per-run traces under
+  <code>artifacts/run2/</code> (Modal), <code>artifacts/run5arm/</code> (Phase 0), and
+  <code>artifacts/matrix_artifacts/</code> (Phase 1–7 EC2, pulled local 2026-06-12 — dir map in
+  <code>RUN_MANIFEST.md</code>) · generated 2026-06-12.</p>
+</section>
+
+</main>
+</div>
+
+<script>
+/* ---------- ELI5 ladder ---------- */
+const LAD=[
+ {t:"You have a giant filing cabinet",h:`We built a smart helper (<b>semfs</b>) that's supposed to find papers in a giant filing cabinet faster than a person who just opens drawer after drawer. We tested it. The surprise: when the cabinet is small and the folders have clear labels, just opening drawers is already fast — so the smart helper doesn't save much time. It only really helps when there are <i>hundreds of look-alike folders with no clear labels</i>.`},
+ {t:"Search vs. scanning",h:`semfs adds <b>semantic search</b> to a coding agent. The hope was: one good search beats blindly listing and reading lots of files, saving the agent work (= tokens = money). It turns out search wins only when blind scanning is <i>expensive</i>. On our test corpus (1,452 well-named files) scanning is cheap, so plain file-reading already wins. semfs ties on accuracy and only sometimes saves tokens.`},
+ {t:"The token economy",h:`The agent re-pays its <i>entire</i> conversation on every step (no caching). So cost = (turns × scaffold) + (each read × how many steps came after it). semfs's job is to cut turns and shrink reads. It does — <b>but only if the alternative (plain scanning) was wasteful.</b> On a small, well-labelled corpus plain isn't very wasteful, so there's little to win. The biggest fixes were capping search output to 6 KB and deleting a hint that told the agent to read a 35 KB knowledge-graph first.`},
+ {t:"The experiment arc",h:`We ran E1–E11. E1–E5 proved the original "semfs loses" was an <b>infrastructure bug</b>, not retrieval. E6–E9 found the real levers: cap the search payload (codex hides anything past ~10 KB anyway) and rewrite the injected hint. E8 was the pre-registered headline test — it <b>failed</b> (2/5 cases saved tokens, needed 3). E11 tried a discovery-stressed corpus but the files were too small to make scanning costly, so it didn't discriminate (1/2).`},
+ {t:"The mechanism, precisely",h:`Under <code>cached_input=0</code>, TotalTokens ≈ T·S + Σ(T−s)·oₛ + G. semfs's edge is bounded by how much of plain's cost is wasted discovery re-payment. On WB-chanpin (filename-semantic ground truth, clean txt/csv) <code>find|grep</code> is a near-perfect retriever, so that waste is small and the achievable token win is ≤10% — within run-to-run call-count variance. The grep-cap code fix + KG-first hint removal pulled case 289 from 111–145K into a 77–98K band around plain's 79K; a <i>consistent</i> sub-plain win needs the unbuilt <code>semfs slice</code> artifact pattern to kill the agent's os.walk crawl. Accuracy, separately, reaches parity-or-better everywhere — semfs's real demonstrated edges (format-trap −80%, cross-lingual #417→#1) live outside this benchmark's measurable axes.`}
+];
+const lp=document.getElementById('ladpanel'),lb=document.getElementById('lad');
+function setLad(i){lp.innerHTML=`<div class="lvl">Level ${i+1} · ${LAD[i].t}</div><p style="margin:10px 0 0;font-size:${i<2?'16px':'14.5px'}">${LAD[i].h}</p>`;
+  [...lb.children].forEach((b,j)=>b.classList.toggle('on',j==i));}
+lb.addEventListener('click',e=>{if(e.target.dataset.l!=null)setLad(+e.target.dataset.l)});
+setLad(0);
+
+/* ---------- cost calculator ---------- */
+const el=id=>document.getElementById(id);
+const fmt=n=>Math.round(n).toLocaleString();
+function calc(){
+  const T=+el('cT').value, S=+el('cS').value, o=+el('cO').value, s=Math.min(+el('cs').value,T);
+  el('cTv').textContent=T; el('cSv').textContent=fmt(S); el('cOv').textContent=fmt(o); el('csv').textContent=s;
+  const scaf=T*S, read=Math.max(0,(T-s))*o, base=Math.round(T*1500*.4), tot=scaf+read+base+2000;
+  el('oScaf').textContent=fmt(scaf); el('oRead').textContent=fmt(read); el('oTot').textContent=fmt(tot);
+  const plain=79000, d=Math.round((tot-plain)/plain*100);
+  const cmp=el('oCmp'); cmp.textContent=(d>=0?'+':'')+d+'%'; cmp.style.color=d<=0?'var(--green)':'var(--red)';
+  el('calcNote').innerHTML = s<=2 && o>20000
+    ? `That ${fmt(o)}-token read landed at turn ${s} of ${T} — it gets re-paid ${T-s} times. <b>This is exactly the KG-first hint mistake</b> (a 35K read at turn 1).`
+    : (read<scaf ? `Notice the scaffold (T·S = ${fmt(scaf)}) dominates — <b>cutting turns beats shrinking reads</b> here.`
+                 : `The big read dominates — and pushing it later (higher s) or capping it (lower o) is the lever.`);
+}
+['cT','cS','cO','cs'].forEach(id=>el(id).addEventListener('input',calc)); calc();
+
+/* ---------- arena tabs ---------- */
+document.getElementById('arenaTabs').addEventListener('click',e=>{
+  const a=e.target.dataset.a; if(!a)return;
+  document.querySelectorAll('#arenaTabs button').forEach(b=>b.classList.toggle('on',b.dataset.a==a));
+  document.querySelectorAll('.arena-body').forEach(d=>d.classList.toggle('on',d.dataset.a==a));
+});
+
+/* ---------- bar chart (E8 plain vs nokg tokens) ---------- */
+(function(){
+  const data=[
+    {c:'289',p:107734,n:390759},{c:'175',p:118844,n:110407},{c:'95',p:118164,n:303311},
+    {c:'15',p:342694,n:493085},{c:'44',p:102584,n:92466}
+  ];
+  const W=860,H=240,pad=46,max=Math.max(...data.flatMap(d=>[d.p,d.n])),bw=24,grp=120;
+  let svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" font-size="11">`;
+  // axis
+  svg+=`<line x1="${pad}" y1="${H-30}" x2="${W-10}" y2="${H-30}" stroke="#30363d"/>`;
+  [0,.25,.5,.75,1].forEach(f=>{const y=H-30-f*(H-70);svg+=`<line x1="${pad}" y1="${y}" x2="${W-10}" y2="${y}" stroke="#21262d"/><text x="${pad-6}" y="${y+3}" fill="#586069" text-anchor="end">${Math.round(max*f/1000)}K</text>`;});
+  data.forEach((d,i)=>{
+    const x=pad+24+i*grp;
+    const hp=(d.p/max)*(H-70), hn=(d.n/max)*(H-70);
+    svg+=`<rect x="${x}" y="${H-30-hp}" width="${bw}" height="${hp}" fill="#3fb950" rx="2"><title>plain ${d.p.toLocaleString()}</title></rect>`;
+    svg+=`<rect x="${x+bw+6}" y="${H-30-hn}" width="${bw}" height="${hn}" fill="#d29922" rx="2"><title>nokg ${d.n.toLocaleString()}</title></rect>`;
+    svg+=`<text x="${x+bw}" y="${H-14}" fill="#8b949e" text-anchor="middle">case ${d.c}</text>`;
+    const win=d.n<d.p; svg+=`<text x="${x+bw}" y="${H-30-Math.max(hp,hn)-6}" fill="${win?'#3fb950':'#f85149'}" text-anchor="middle" font-weight="700">${win?'✓':'✗'}</text>`;
+  });
+  svg+=`</svg>`;
+  document.getElementById('barchart').innerHTML=svg;
+})();
+
+/* ---------- scrollspy ---------- */
+const links=[...document.querySelectorAll('nav.side a')];
+const secs=links.map(a=>document.querySelector(a.getAttribute('href')));
+const obs=new IntersectionObserver(es=>{
+  es.forEach(e=>{if(e.isIntersecting){links.forEach(l=>l.classList.toggle('active',l.getAttribute('href')==='#'+e.target.id));}});
+},{rootMargin:'-20% 0px -70% 0px'});
+secs.forEach(s=>s&&obs.observe(s));
+</script>
+</body>
+</html>

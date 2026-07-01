@@ -1,0 +1,2261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>semfs — How a Semantic Filesystem Works</title>
+
+  <!-- Google Fonts: Bricolage Grotesque · DM Sans · JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400;1,9..40,500&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css">
+
+  <style>
+    :root {
+      --color-accent:       #2A7B9B;
+      --color-accent-hover: #1F6280;
+      --color-accent-light: #E4F2F7;
+      --color-accent-muted: #5A9DB8;
+    }
+  </style>
+
+  <script src="main.js" defer></script>
+</head>
+<body>
+
+  <nav class="nav" id="nav">
+    <div class="progress-bar" id="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+    <div class="nav-inner">
+      <span class="nav-title">semfs — How a Semantic Filesystem Works</span>
+      <div class="nav-dots" id="nav-dots" role="tablist">
+        <button class="nav-dot" data-target="module-1" data-tooltip="Where did your words go?" role="tab" aria-label="Module 1: Where did your words go?"></button>
+        <button class="nav-dot" data-target="module-2" data-tooltip="Meet the cast" role="tab" aria-label="Module 2: Meet the cast"></button>
+        <button class="nav-dot" data-target="module-3" data-tooltip="The trait seam" role="tab" aria-label="Module 3: The trait seam"></button>
+        <button class="nav-dot" data-target="module-4" data-tooltip="The outside world" role="tab" aria-label="Module 4: The outside world"></button>
+        <button class="nav-dot" data-target="module-5" data-tooltip="The clever tricks" role="tab" aria-label="Module 5: The clever tricks"></button>
+        <button class="nav-dot" data-target="module-6" data-tooltip="When things break" role="tab" aria-label="Module 6: When things break"></button>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main">
+    <!-- modules/*.html content is assembled here by build.sh -->
+<section class="module" id="module-1">
+
+  <!-- ===================== SCREEN 1: The hook ===================== -->
+  <div class="module-screen">
+    <h2>Where Did Your Words Go?</h2>
+    <p>You type this into a folder, hit enter, and the prompt comes back instantly:</p>
+
+    <div class="callout callout-info">
+      <div class="callout-icon">⌨️</div>
+      <div class="callout-content">
+        <strong class="callout-title">The everyday moment</strong>
+        <p><code>echo "remember the deploy runs migrations first" > ./notes/deploy.md</code> — done before you blink. But where did your words actually <em>go</em>?</p>
+      </div>
+    </div>
+
+    <p>Meet <strong>semfs</strong> — short for <span class="term" data-definition="Semantic filesystem. It makes a cloud storage service look and feel like a normal folder on your computer, while quietly understanding the meaning of what you store.">semantic filesystem</span>. It is a single self-contained <span class="term" data-definition="A program compiled into one runnable file you double-click or call from the terminal — no installer, no extra libraries to download. semfs is one such file.">binary</span> that makes a storage service behave like an ordinary <span class="term" data-definition="The system that organizes your files into folders so you can open, move, and delete them. semfs makes cloud memory look like one of these.">filesystem</span> folder.</p>
+
+    <p>The whole point: every tool you already own — <code>cat</code>, <code>ls</code>, <code>grep</code>, your editor, git — already speaks "files." So memory delivered <em>as files</em> needs no new <span class="term" data-definition="Software Development Kit — a special bundle of code a programmer must wire into their app to use a service. semfs needs none of this; plain file operations are enough.">SDK</span> and no special tool.</p>
+  </div>
+
+  <!-- ===================== SCREEN 2: The metaphor ===================== -->
+  <div class="module-screen">
+    <h2>The Dropbox at the Post Office</h2>
+    <p>Picture sliding a letter through the slot of a post-office dropbox. The instant it drops, it is <em>safe</em> — the post office owns it now, it will not blow away. But it has not been <em>delivered</em> yet.</p>
+
+    <div class="icon-rows">
+      <div class="icon-row">
+        <div class="icon-circle" style="background: var(--color-actor-1)">✉️</div>
+        <div>
+          <strong>The letter drops — it is safe NOW</strong>
+          <p>Your write lands locally the instant the prompt returns. It will survive even if you pull the plug.</p>
+        </div>
+      </div>
+      <div class="icon-row">
+        <div class="icon-circle" style="background: var(--color-actor-3)">🚚</div>
+        <div>
+          <strong>A courier delivers it LATER</strong>
+          <p>Sending it on to the real destination happens afterward, quietly, in the background.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-accent">
+      <div class="callout-icon">💡</div>
+      <div class="callout-content">
+        <strong class="callout-title">The one idea that explains everything</strong>
+        <p>A write is <span class="term" data-definition="Durable means the data is safely written to disk and will survive a crash, restart, or power loss — it is not just floating in memory.">durable</span> the instant it lands locally, but <em>delivery</em> to the real <span class="term" data-definition="The storage system underneath that actually keeps your data long-term — semfs lets you pick which one. The folder behaves the same no matter which you choose.">backend</span> happens later, <span class="term" data-definition="Async (asynchronous) means it happens in the background on its own schedule, so you do not have to wait for it to finish.">in the background</span>. This explains every &quot;my note did not show up on the other machine yet&quot; question you will ever have.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SCREEN 3: The hero data flow ===================== -->
+  <div class="module-screen">
+    <h2>Follow Your Words Through Four Hands</h2>
+    <p>Step through exactly what happens after you hit enter. Watch carefully <em>where</em> the prompt returns to you.</p>
+
+    <div class="flow-animation" data-steps='[
+      {"highlight":"flow-actor-1","label":"You run echo to write a line into the folder"},
+      {"highlight":"flow-actor-2","label":"The folder receives your text","packet":true,"from":"actor-1","to":"actor-2"},
+      {"highlight":"flow-actor-3","label":"Bytes saved to local SQLite cache — now durable","packet":true,"from":"actor-2","to":"actor-3"},
+      {"highlight":"flow-actor-3","label":"The prompt returns to you HERE — your data is already safe"},
+      {"highlight":"flow-actor-4","label":"Later, in the background, it drains to the chosen backend to be embedded and indexed","packet":true,"from":"actor-3","to":"actor-4"}
+    ]'>
+      <div class="flow-actors">
+        <div class="flow-actor" id="flow-actor-1">
+          <div class="flow-actor-icon">🖥️</div>
+          <span>You / Shell</span>
+        </div>
+        <div class="flow-actor" id="flow-actor-2">
+          <div class="flow-actor-icon">📁</div>
+          <span>semfs mount</span>
+        </div>
+        <div class="flow-actor" id="flow-actor-3">
+          <div class="flow-actor-icon">💾</div>
+          <span>Local SQLite cache</span>
+        </div>
+        <div class="flow-actor" id="flow-actor-4">
+          <div class="flow-actor-icon">☁️</div>
+          <span>Backend (cloud)</span>
+        </div>
+      </div>
+
+      <div class="flow-packet" id="flow-packet"></div>
+
+      <div class="flow-step-label" id="flow-label">Click "Next Step" to begin</div>
+
+      <div class="flow-controls">
+        <button class="btn flow-next-btn">Next Step</button>
+        <button class="btn flow-reset-btn">Restart</button>
+        <span class="flow-progress"></span>
+      </div>
+    </div>
+
+    <div class="badge-list">
+      <div class="badge-item">
+        <code class="badge-code">mount</code>
+        <span class="badge-desc">To <span class="term" data-definition="Mounting attaches a storage system so it shows up as a folder you can open and use, just like plugging in a USB drive.">mount</span> means make a remote store appear as a folder on your machine.</span>
+      </div>
+      <div class="badge-item">
+        <code class="badge-code">container</code>
+        <span class="badge-desc">A <span class="term" data-definition="A named bucket of memory — one labeled box holding a related set of files. You mount one container as one folder.">container</span> is a named bucket of memory, identified by a <span class="term" data-definition="A short label that names a container, like a sticker on a box, so semfs knows which bucket of memory to open.">tag</span>.</span>
+      </div>
+      <div class="badge-item">
+        <code class="badge-code">SQLite</code>
+        <span class="badge-desc">A tiny <span class="term" data-definition="SQLite is a small, fast database that lives in a single file on your own machine — no server needed. semfs uses it as the local cache.">SQLite</span> database file that acts as the local <span class="term" data-definition="A cache is a nearby copy kept for speed, so you do not have to fetch from far away every time.">cache</span> — instant and works offline.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SCREEN 4: The quickstart, line by line ===================== -->
+  <div class="module-screen">
+    <h2>The Whole Journey, In Four Lines</h2>
+    <p>Here is a real session from the project README. Read the left as code, the right as plain English.</p>
+
+    <div class="translation-block animate-in">
+      <div class="translation-code">
+        <span class="translation-label">CODE</span>
+        <pre><code><span class="code-line"><span class="code-comment"># 2. mount a memory container as a folder</span></span>
+<span class="code-line">semfs mount my-notes --path ./my-notes</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="code-comment"># 3. use it like any folder</span></span>
+<span class="code-line">echo <span class="code-string">"the deploy pipeline runs migrations before swapping traffic"</span> > ./my-notes/deploy.md</span>
+<span class="code-line">cat ./my-notes/deploy.md</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="code-comment"># 4. search by meaning (run from inside the mount)</span></span>
+<span class="code-line">cd ./my-notes && semfs grep <span class="code-string">"how are schema changes applied during a release"</span></span>
+<span class="code-line"><span class="code-comment">#   → deploy.md:1:the deploy pipeline runs migrations before swapping traffic</span></span></code></pre>
+      </div>
+      <div class="translation-english">
+        <span class="translation-label">PLAIN ENGLISH</span>
+        <div class="translation-lines">
+          <p class="tl">Attach a memory container named "my-notes" so it appears as a real folder.</p>
+          <p class="tl">It now lives at <code>./my-notes</code> — open it like any folder.</p>
+          <p class="tl">&nbsp;</p>
+          <p class="tl">Write a sentence into a file. The prompt returns <strong>instantly</strong> — because the write only had to reach your local disk, not the cloud.</p>
+          <p class="tl">Read it straight back. You get the exact bytes you wrote.</p>
+          <p class="tl">&nbsp;</p>
+          <p class="tl">Step into the folder and ask a question in plain language.</p>
+          <p class="tl">The answer: the matching file, line number, and the verbatim text.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-accent">
+      <div class="callout-icon">🔎</div>
+      <div class="callout-content">
+        <strong class="callout-title">Look closely at the magic</strong>
+        <p>Your question — &quot;schema changes during a release&quot; — shares almost no words with the file — &quot;deploy pipeline runs migrations.&quot; Yet it matched. That is <span class="term" data-definition="Searching by meaning instead of exact words. The query and the file can share zero words and still match because the computer compares ideas, not letters.">semantic search</span>, the killer feature.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SCREEN 5: How grep finds it ===================== -->
+  <div class="module-screen">
+    <h2>Why grep-by-meaning Is a Superpower</h2>
+    <p>Here is the output format you get back when you ask a question:</p>
+
+    <div class="translation-block animate-in">
+      <div class="translation-code">
+        <span class="translation-label">CODE</span>
+        <pre><code><span class="code-line">$ semfs grep <span class="code-string">"credential renewal flow"</span></span>
+<span class="code-line">auth.md:12:the access token is refreshed by the middleware before each request</span></code></pre>
+      </div>
+      <div class="translation-english">
+        <span class="translation-label">PLAIN ENGLISH</span>
+        <div class="translation-lines">
+          <p class="tl">You ask about "credential renewal" — words that never appear in the file.</p>
+          <p class="tl">It still finds the right line and hands back exactly three things: <strong>filepath : line : chunk</strong>. The chunk is <span class="term" data-definition="Word-for-word, exactly as written, with nothing changed or summarized.">verbatim</span> text from the file.</p>
+        </div>
+      </div>
+    </div>
+
+    <p>Behind the scenes, the backend turns each line into an <span class="term" data-definition="An embedding turns text into a list of numbers that captures its meaning, so the computer can tell that two differently-worded sentences mean the same thing.">embedding</span> and builds an <span class="term" data-definition="An index is a lookup structure that lets the computer find relevant things fast, like the index at the back of a book.">index</span> over them. That is what lets it match by idea, not by letters.</p>
+
+    <div class="callout callout-info">
+      <div class="callout-icon">🤖</div>
+      <div class="callout-content">
+        <strong class="callout-title">Why this matters for AI agents</strong>
+        <p>An AI agent can grab <em>just</em> the relevant lines instead of stuffing whole files into its limited <span class="term" data-definition="The amount of text an AI model can hold in mind at once. Smaller is cheaper and faster, so handing the AI only the relevant lines is a big win.">context window</span>. Memory-as-files gives the model a stable surface it already knows how to use.</p>
+      </div>
+    </div>
+
+    <div class="pattern-cards">
+      <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+        <div class="pattern-icon" style="background: var(--color-actor-1)">🪣</div>
+        <h4 class="pattern-title">SQLite-vec</h4>
+        <p class="pattern-desc">A local backend — runs on your machine, no server. Great for getting started.</p>
+      </div>
+      <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+        <div class="pattern-icon" style="background: var(--color-actor-2)">🐘</div>
+        <h4 class="pattern-title">Postgres / pgvector</h4>
+        <p class="pattern-desc">A full database backend for teams and shared memory.</p>
+      </div>
+      <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+        <div class="pattern-icon" style="background: var(--color-actor-4)">☁️</div>
+        <h4 class="pattern-title">Supermemory</h4>
+        <p class="pattern-desc">A hosted cloud memory service. The folder behaves identically either way.</p>
+      </div>
+    </div>
+
+    <p>The storage underneath is <strong>pluggable</strong> — you pick it when you mount, and the folder behaves the same no matter which you chose. We will meet each of these later.</p>
+  </div>
+
+  <!-- ===================== SCREEN 6: Quiz ===================== -->
+  <div class="module-screen">
+    <h2>Think It Through</h2>
+    <p>Three scenarios. No memorizing — just apply what you saw.</p>
+
+    <div class="quiz-container" id="quiz-module1">
+
+      <div class="scenario-block">
+        <div class="scenario-context">
+          <span class="scenario-label">Scenario 1</span>
+          <p>You write a file and the prompt returns. A millisecond later you yank your network cable out of the wall. Is your data lost?</p>
+        </div>
+        <div class="quiz-question-block"
+             data-correct="opt-safe"
+             data-explanation-right="Exactly. The write became durable the moment it landed in the local SQLite cache — that happened before the prompt returned. Only the background sync to the cloud is delayed; it resumes when the network is back."
+             data-explanation-wrong="Not quite — remember the post-office dropbox. The bytes were saved to the local SQLite cache before the prompt returned, so they are already durable. Only the background delivery to the cloud is delayed.">
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-lost" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Yes — it never reached the cloud, so it is gone.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-safe" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>No — it is already in the local cache; only the cloud sync is delayed.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-maybe" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Only if you never reconnect within a few seconds.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+      </div>
+
+      <div class="scenario-block">
+        <div class="scenario-context">
+          <span class="scenario-label">Scenario 2</span>
+          <p>The team debates: should we give the AI a custom "save_memory" tool, or expose memory as a plain folder? Why does semfs choose the folder?</p>
+        </div>
+        <div class="quiz-question-block"
+             data-correct="opt-files"
+             data-explanation-right="Right. Editors, git, grep, and shells already speak files — so no new SDK, no tool schema, nothing to wire in. The AI uses skills it already has."
+             data-explanation-wrong="Think about what every tool already knows how to do. A custom tool means new code and a new schema everywhere; a folder works with cat, ls, grep, git, and your editor out of the box — no SDK needed.">
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-fast" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Folders are technically faster than tool calls.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-files" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Every tool already speaks files, so no new SDK or tool schema is needed.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-secure" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Folders are more secure than custom tools.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+      </div>
+
+      <div class="scenario-block">
+        <div class="scenario-context">
+          <span class="scenario-label">Scenario 3</span>
+          <p>You run <code>semfs grep "how do I roll back a release"</code> and it returns a line that never contains the word "rollback." How is that possible?</p>
+        </div>
+        <div class="quiz-question-block"
+             data-correct="opt-meaning"
+             data-explanation-right="Yes. semantic search compares meaning using embeddings, so a query and a matching line can share zero words and still match because the ideas line up."
+             data-explanation-wrong="It is not luck or hidden keywords. The backend turns text into embeddings — numbers that capture meaning — and matches by idea, not by exact text. Shared words are not required.">
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-keyword" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>It secretly stores hidden keyword tags on every file.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-luck" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>It guessed — semantic search is just fuzzy spelling matching.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-meaning" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Semantic search matches by meaning via embeddings, not exact text.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+      </div>
+
+      <button class="quiz-check-btn" onclick="checkQuiz('quiz-module1')">Check Answers</button>
+      <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module1')">Try Again</button>
+    </div>
+
+    <div class="callout callout-info">
+      <div class="callout-icon">➡️</div>
+      <div class="callout-content">
+        <strong class="callout-title">Next up</strong>
+        <p>You just watched your words travel through four hands. Next, let us meet each of them by name — the Mount, the Cache, the Sync, the Backend, and the Daemon — as characters.</p>
+      </div>
+    </div>
+  </div>
+
+</section>
+<section class="module" id="module-2">
+  <div class="module-content">
+
+    <!-- ── MODULE HEADER ─────────────────────────────────────── -->
+    <header class="module-header">
+      <span class="module-number">02</span>
+      <h1 class="module-title">Meet the Cast</h1>
+      <p class="module-subtitle">Last module you watched your words pass through four hands on the way from your keyboard to the cloud. Those hands have names. Let&apos;s meet the crew.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE THEATER METAPHOR ────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">One seamless show, a whole crew backstage</h2>
+
+      <p>From the outside, semfs looks like a single thing: a folder you can read and write. Behind the curtain, a small crew runs the show — and each member has exactly <strong>one</strong> job.</p>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🎭</div>
+        <div class="callout-content">
+          <strong class="callout-title">The big idea</strong>
+          <p>semfs is built from a handful of components, each with a single responsibility, talking through clean boundaries. Engineers call this
+            <span class="term" data-definition="Separation of concerns means each part of a system handles one job and one job only. It lets you fix or replace one part without disturbing the others — like a kitchen crew where the dishwasher never touches the menu.">separation of concerns</span>.
+            It&apos;s what lets you tell an AI &ldquo;the bug is in the sync layer, not the mount layer&rdquo; instead of &ldquo;it&apos;s broken somewhere.&rdquo;</p>
+        </div>
+      </div>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">🎫</div>
+          <div>
+            <strong>The CLI — the front desk</strong>
+            <p>Parses your typed
+              <span class="term" data-definition="A command is a line you type into a terminal to tell the computer to do something, like 'semfs mount'. The CLI is the program that reads that line.">command</span>
+              like <code>semfs mount</code> and hands off. It&apos;s a thin
+              <span class="term" data-definition="CLI stands for Command-Line Interface — a text-only way to control a program by typing commands instead of clicking buttons. When talking to an AI you might say 'add a CLI flag for this'.">CLI</span>
+              <span class="term" data-definition="Dispatch means handing a request off to whichever piece of code is responsible for it — like a receptionist routing your call to the right department.">dispatch</span> layer.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">🚪</div>
+          <div>
+            <strong>The Mount adapter — the translator at the door</strong>
+            <p>Turns
+              <span class="term" data-definition="The kernel is the core of your operating system — the part that talks directly to hardware and manages files, memory, and processes. Programs ask the kernel to do low-level things on their behalf.">kernel</span>
+              filesystem calls into plain method calls. The <em>only</em> place that knows about
+              <span class="term" data-definition="FUSE (Filesystem in Userspace) is a Linux feature that lets an ordinary program pretend to be a filesystem, so a folder can be backed by anything you want.">FUSE</span> or
+              <span class="term" data-definition="NFS (Network File System) is a long-standing protocol for accessing files over a network. semfs runs a tiny NFS server on your own machine to make macOS see the folder.">NFS</span>.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">📜</div>
+          <div>
+            <strong>The VFS / FileSystem trait — the contract everyone signs</strong>
+            <p>Defines what any filesystem must be able to do (lookup, read, write, mkdir). It&apos;s the rulebook — we go deep on this
+              <span class="term" data-definition="A trait (in the Rust language) is a list of abilities a thing promises to provide — like a job description. Any component that 'signs' the trait must implement every ability on the list.">trait</span> next module.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-4)">🗄️</div>
+          <div>
+            <strong>The Cache / CacheFs — the fast local vault</strong>
+            <p>A
+              <span class="term" data-definition="SQLite is a tiny, fast database that lives in a single file on your own computer — no server needed. It's one of the most widely used pieces of software on Earth.">SQLite</span>
+              database that stores your bytes durably and instantly, right on your machine.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-5)">🚚</div>
+          <div>
+            <strong>The SyncEngine — the courier</strong>
+            <p>Background
+              <span class="term" data-definition="Async (asynchronous) work happens in the background without making you wait. You hand off a task and carry on; it finishes later and tells you when it's done.">async</span>
+              loops that carry your writes up to the backend and pull remote changes back down.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">📚</div>
+          <div>
+            <strong>The Backend / SemanticIndex — the librarian</strong>
+            <p>Answers <code>grep</code> by <em>meaning</em>, not just exact words. Can be cloud, Postgres, or local.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">🧑‍🔧</div>
+          <div>
+            <strong>The Daemon — the stage manager</strong>
+            <p>The long-running
+              <span class="term" data-definition="A daemon is a program that quietly runs in the background for a long time, keeping things going without a visible window — like a building's HVAC system humming away unseen.">daemon</span>
+              process that owns an active mount, with its
+              <span class="term" data-definition="A socket is a doorway two programs use to talk to each other on the same machine or across a network. Think of it as a private phone line between processes.">socket</span>,
+              <span class="term" data-definition="A PID (Process ID) is the unique number the operating system gives each running program, so it can be found, watched, or stopped.">PID</span>, and log files.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: GROUP CHAT (HERO VISUAL) ────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Listen in on the crew: a write, in their own words</h2>
+
+      <p>Here&apos;s what the crew actually says to each other when you save a file. Play it message by message and watch who hands off to whom.</p>
+
+      <div class="chat-window" id="chat-module2">
+        <div class="chat-messages">
+
+          <div class="chat-message" data-msg="0" data-sender="cli" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-1)">🎫</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-1)">CLI</span>
+              <p>User ran <code>echo &gt; deploy.md</code>. Your turn, door.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="1" data-sender="mount" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-2)">🚪</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-2)">Mount</span>
+              <p>Save these bytes for deploy.md, please.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="2" data-sender="cache" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-4)">🗄️</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-4)">Cache</span>
+              <p>Stored and durable. You can tell them it is done.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="3" data-sender="mount" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-2)">🚪</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-2)">Mount</span>
+              <p>Prompt can return now.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="4" data-sender="sync" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-5)">🚚</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-5)">SyncEngine</span>
+              <p>I will carry deploy.md up to the backend in the background — nobody has to wait for me.</p>
+            </div>
+          </div>
+
+          <div class="chat-message" data-msg="5" data-sender="backend" style="display:none">
+            <div class="chat-avatar" style="background: var(--color-actor-3)">📚</div>
+            <div class="chat-bubble">
+              <span class="chat-sender" style="color: var(--color-actor-3)">Backend</span>
+              <p>Got it. Embedding and indexing it now so grep can find it by meaning.</p>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="chat-typing" id="chat-typing" style="display:none">
+          <div class="chat-avatar" id="typing-avatar">?</div>
+          <div class="chat-typing-dots">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+          </div>
+        </div>
+
+        <div class="chat-controls">
+          <button class="btn chat-next-btn">Next Message</button>
+          <button class="btn chat-all-btn">Play All</button>
+          <button class="btn chat-reset-btn">Replay</button>
+          <span class="chat-progress"></span>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">⏱️</div>
+        <div class="callout-content">
+          <strong class="callout-title">Notice the handoff</strong>
+          <p>Your prompt comes back the instant the <strong>Cache</strong> says &ldquo;durable&rdquo; — long before the <strong>SyncEngine</strong> and <strong>Backend</strong> finish their slow background work. That split is why writes feel instant.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: CODE ↔ ENGLISH (the cast list in code) ──── -->
+    <section class="screen">
+      <h2 class="screen-heading">The cast list, in the code&apos;s own words</h2>
+
+      <p>Open the
+        <span class="term" data-definition="A library is reusable code that other programs borrow to do work — it has no 'run' button of its own. A binary is the actual runnable program. semfs splits the two so the same logic can power many front-ends.">library&apos;s</span>
+        table of contents and you&apos;ll find the entire crew listed as one
+        <span class="term" data-definition="A module is a labelled folder of related code that groups one job together. A crate is Rust's word for a whole package of modules. Each 'pub mod' line below names one module.">module</span>
+        each.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-keyword">pub mod</span> agent_hint;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> api;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> backend;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> cache;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> config;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> daemon;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> mount;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> sync;</span>
+<span class="code-line"><span class="code-keyword">pub mod</span> vfs;</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">Each <code>pub mod</code> line is one crew member, declared once.</p>
+            <p class="tl"><strong>backend</strong> is the librarian who answers grep by meaning.</p>
+            <p class="tl"><strong>cache</strong> is the fast local vault that stores your bytes.</p>
+            <p class="tl"><strong>daemon</strong> is the stage manager that owns the mount.</p>
+            <p class="tl"><strong>mount</strong> is the door that translates kernel calls.</p>
+            <p class="tl"><strong>sync</strong> is the courier carrying changes up and down.</p>
+            <p class="tl"><strong>vfs</strong> is the contract — the rulebook everyone signs.</p>
+          </div>
+        </div>
+      </div>
+
+      <p>And the runnable program? Almost empty. The
+        <span class="term" data-definition="A binary is the compiled, runnable program — the thing you actually launch. Here it does almost nothing itself; it just forwards your command to the library.">binary</span>
+        just parses and dispatches:</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line">#[tokio::main]</span>
+<span class="code-line"><span class="code-keyword">async fn</span> <span class="code-function">main</span>() -&gt; Result&lt;()&gt; {</span>
+<span class="code-line">    <span class="code-function">init_tracing</span>();</span>
+<span class="code-line">    <span class="code-keyword">let</span> cli = Cli::<span class="code-function">parse</span>();</span>
+<span class="code-line">    cmd::<span class="code-function">dispatch</span>(cli.command).<span class="code-keyword">await</span></span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">Turn on logging so we can see what happened.</p>
+            <p class="tl">Read the command the user typed.</p>
+            <p class="tl">Hand it to the right handler — and that&apos;s it.</p>
+            <p class="tl">All the interesting code lives in the library, not here.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 4: ONE DOOR, TWO TRICKS + MATCHING ─────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Only the door knows about FUSE and NFS</h2>
+
+      <p>There are two ways to make the OS see a folder. The Mount adapter hides that choice from everyone else — so the rest of the crew never has to care which one is in play.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-keyword">pub enum</span> MountBackend {</span>
+<span class="code-line">    <span class="code-comment">/// FUSE — Linux only. Uses the `fuser` crate.</span></span>
+<span class="code-line">    Fuse,</span>
+<span class="code-line"></span>
+<span class="code-line">    <span class="code-comment">/// NFSv3 over localhost — works on both macOS and Linux.</span></span>
+<span class="code-line">    Nfs,</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">Two doors to choose from, listed in one place.</p>
+            <p class="tl">On Linux, use FUSE to back the folder.</p>
+            <p class="tl">On macOS (and Linux), use a tiny local NFS server instead.</p>
+            <p class="tl">Everything else in semfs is blissfully unaware which door is open — that&apos;s the whole point of separating this out.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="screen-heading" style="font-size: var(--text-xl)">Your turn: match each actor to its one job</h3>
+      <p>Drag the crew member onto the job description that fits.</p>
+
+      <div class="dnd-container">
+        <div class="dnd-chips">
+          <div class="dnd-chip" draggable="true" data-answer="mount">🚪 Mount</div>
+          <div class="dnd-chip" draggable="true" data-answer="cache">🗄️ Cache</div>
+          <div class="dnd-chip" draggable="true" data-answer="sync">🚚 SyncEngine</div>
+          <div class="dnd-chip" draggable="true" data-answer="backend">📚 Backend</div>
+          <div class="dnd-chip" draggable="true" data-answer="daemon">🧑‍🔧 Daemon</div>
+        </div>
+        <div class="dnd-zones">
+          <div class="dnd-zone" data-correct="mount">
+            <p class="dnd-zone-label">Translates kernel filesystem calls (FUSE/NFS)</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+          <div class="dnd-zone" data-correct="cache">
+            <p class="dnd-zone-label">Stores your bytes durably and instantly (SQLite)</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+          <div class="dnd-zone" data-correct="sync">
+            <p class="dnd-zone-label">Carries writes to the backend and pulls remote changes</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+          <div class="dnd-zone" data-correct="backend">
+            <p class="dnd-zone-label">Answers grep by meaning</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+          <div class="dnd-zone" data-correct="daemon">
+            <p class="dnd-zone-label">The long-running process that owns the mount</p>
+            <div class="dnd-zone-target">Drop here</div>
+          </div>
+        </div>
+        <button class="btn" onclick="checkDnD()">Check Matches</button>
+        <button class="btn" onclick="resetDnD()">Reset</button>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: QUIZ ────────────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Debug like you know the crew</h2>
+
+      <p>Knowing who owns what turns &ldquo;it&apos;s broken&rdquo; into &ldquo;the bug is in <em>this</em> actor.&rdquo; Try these.</p>
+
+      <div class="quiz-container" id="quiz-module2">
+
+        <div class="quiz-question-block"
+             data-correct="opt-backend"
+             data-explanation-right="Exactly. If cat reads the file back correctly, the Cache and Mount are clearly healthy — the bytes are there. Search-by-meaning is the Backend/SemanticIndex's job (or the SyncEngine that feeds it), so that's where you look first."
+             data-explanation-wrong="Not quite. If cat reads the file back fine, the Cache and Mount are doing their jobs — the bytes are stored and readable. The problem is specifically with search by meaning, which is owned by the Backend (with the SyncEngine feeding it).">
+          <h3 class="quiz-question">Search returns nothing relevant, but your files read back fine with <code>cat</code>. Which actor is the prime suspect?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-mount" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Mount adapter 🚪 — the door must be mistranslating</span>
+            </button>
+            <button class="quiz-option" data-value="opt-cache" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Cache 🗄️ — your bytes were never saved</span>
+            </button>
+            <button class="quiz-option" data-value="opt-backend" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Backend 📚 (or the SyncEngine feeding it) — meaning-search is its job</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-mount"
+             data-explanation-right="Right. The Mount adapter is the only place in the entire codebase that knows about FUSE or NFS. A brand-new way of mounting is a new door — so only the door changes. Everyone else stays blissfully unaware."
+             data-explanation-wrong="Think about separation of concerns. The Mount adapter is the *only* component that knows about how the OS sees the folder (FUSE vs NFS). A new mounting method is a new door — so the Mount adapter is the one and only place to change.">
+          <h3 class="quiz-question">You want to support a brand-new way of mounting folders on some future operating system. Which ONE component should change?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-mount" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Mount adapter 🚪 — the only one that knows about FUSE/NFS</span>
+            </button>
+            <button class="quiz-option" data-value="opt-cache" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The Cache 🗄️ — it stores the files, so it must change too</span>
+            </button>
+            <button class="quiz-option" data-value="opt-all" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>All of them — a new OS touches everything</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-lib"
+             data-explanation-right="Exactly. The binary just parses the command and dispatches; all the real behavior lives in the reusable semfs_core library. That makes the logic testable on its own and reusable by other front-ends, not just this one command-line tool."
+             data-explanation-wrong="Not quite. It isn't laziness or a missing feature — it's deliberate. The binary only parses and dispatches; every bit of real behavior lives in the reusable semfs_core library, so it can be tested alone and reused by other front-ends.">
+          <h3 class="quiz-question">Why is <code>main.rs</code> only about six lines of real logic?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-unfinished" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The program is unfinished — more code is coming</span>
+            </button>
+            <button class="quiz-option" data-value="opt-lib" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>By design — the binary just dispatches; all behavior lives in the reusable library</span>
+            </button>
+            <button class="quiz-option" data-value="opt-fast" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Shorter files run faster, so they kept it tiny</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module2')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module2')">Try Again</button>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🔜</div>
+        <div class="callout-content">
+          <strong class="callout-title">Next up</strong>
+          <p>One of these actors — the Contract — is the secret to how semfs swaps its entire storage engine without anyone noticing. Next.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>
+<section class="module" id="module-3">
+  <div class="module-content">
+
+    <header class="module-header">
+      <span class="module-number">03</span>
+      <h1 class="module-title">The Trait Seam: One Folder, Any Storage</h1>
+      <p class="module-subtitle">semfs can store your memory in a local file, a database, or a cloud service — and the folder behaves <em>identically</em> across all three. The trick is a single idea you already use every day: the power socket.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE METAPHOR ───────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The wall socket nobody thinks about</h2>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">🔌</div>
+          <div>
+            <strong>Your charger plugs into a standard shape</strong>
+            <p>It does not care if the power comes from a coal plant, a solar farm, or a nuclear reactor.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">⚡</div>
+          <div>
+            <strong>The socket is a contract</strong>
+            <p>As long as 120V arrives through that shape, you can swap the entire power plant behind the wall.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">🧩</div>
+          <div>
+            <strong>A <span class="term" data-definition="A trait in Rust is a contract: a named set of abilities. Any type that promises to provide those abilities can be used wherever the trait is expected — exactly like any plug that fits the socket. When talking to an AI you would say put this behind a trait.">trait</span> is that socket</strong>
+            <p>In semfs code, a trait is a standard shape that many different storage engines can plug into.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">The single most useful sentence you can say to an AI</strong>
+          <p>This is called <span class="term" data-definition="Programming to an interface means your code depends on a contract (the shape) rather than on one specific implementation (the thing). Swap the thing later without rewriting everything around it.">programming to an interface</span>, not an implementation. It is THE most transferable idea in this whole course.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: THE SEAM (Snippet A + B) ───────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Where the two halves meet</h2>
+
+      <p>semfs defines <strong>what a filesystem must do</strong> separately from <strong>how any storage does it</strong>. The two halves meet at one contract — engineers call that meeting point the <span class="term" data-definition="A seam is the clean boundary between two parts of a system where you can swap one side without disturbing the other — like the socket between your charger and the power grid.">seam</span>.</p>
+
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="flow-step-num">🚪</div>
+          <p>Frontends (Mount) <strong>call</strong> the contract</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">🔌</div>
+          <p>The <span class="term" data-definition="An interface is the published list of what something can do, with no detail on how. The trait IS the interface here. Same idea, different word.">interface</span> (the socket)</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">🗄️</div>
+          <p>Backends <strong>fulfill</strong> the contract</p>
+        </div>
+      </div>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">//! The [`FileSystem`] and [`File`] traits — the core filesystem abstraction.</span></span>
+<span class="code-line"><span class="code-comment">//!</span></span>
+<span class="code-line"><span class="code-comment">//! Every backend in semfs (`MemFs` in-memory, `CacheFs` SQLite-</span></span>
+<span class="code-line"><span class="code-comment">//! backed in M5, future experiments) implements these traits. Every frontend</span></span>
+<span class="code-line"><span class="code-comment">//! (FUSE and NFS mount adapters in M3) calls into them.</span></span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">This is the <span class="term" data-definition="An abstraction hides messy detail behind a simple shape. The socket is an abstraction over the entire power grid — you see two holes, not a power plant.">abstraction</span> at the heart of semfs.</p>
+            <p class="tl">&nbsp;</p>
+            <p class="tl">Many <strong>backends</strong> — an <span class="term" data-definition="In-memory means the data lives in fast temporary memory (RAM) and vanishes when the program stops. Perfect for tests that need to run quickly and leave no trace.">in-memory</span> one for tests, a SQLite one for real use.</p>
+            <p class="tl">They all <span class="term" data-definition="An implementation (impl in Rust) is the actual code that fulfills a trait — the concrete plug that fits the socket. The trait says what; the impl says how.">implement</span> these traits.</p>
+            <p class="tl">Many frontends (the mount adapters) all call into the same shape. That shared point is the seam.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: DATA FLOW (the fork) ───────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">One call, any plant behind the wall</h2>
+
+      <p>Watch a single write descend through the contract, then fork to whichever backend happens to be plugged in. The Mount makes <strong>one</strong> call; the trait routes it; both backends handle it identically.</p>
+
+      <div class="flow-animation" data-steps='[
+        {"highlight":"flow-m3-actor-1","label":"Mount makes ONE call: create_file"},
+        {"highlight":"flow-m3-actor-2","label":"The call reaches the FileSystem trait — the socket","packet":true,"from":"m3-actor-1","to":"m3-actor-2"},
+        {"highlight":"flow-m3-actor-3","label":"If MemFs is plugged in, it stores the file in memory","packet":true,"from":"m3-actor-2","to":"m3-actor-3"},
+        {"highlight":"flow-m3-actor-4","label":"If CacheFs is plugged in, it writes the file to SQLite","packet":true,"from":"m3-actor-2","to":"m3-actor-4"},
+        {"highlight":"flow-m3-actor-1","label":"Either way the Mount gets the same answer back — it never knew which plant ran"}
+      ]'>
+        <div class="flow-actors">
+          <div class="flow-actor" id="flow-m3-actor-1">
+            <div class="flow-actor-icon">🚪</div>
+            <span>Mount adapter</span>
+          </div>
+          <div class="flow-actor" id="flow-m3-actor-2">
+            <div class="flow-actor-icon">🔌</div>
+            <span>FileSystem trait</span>
+          </div>
+          <div class="flow-actor" id="flow-m3-actor-3">
+            <div class="flow-actor-icon">⚡</div>
+            <span>MemFs (test)</span>
+          </div>
+          <div class="flow-actor" id="flow-m3-actor-4">
+            <div class="flow-actor-icon">🗄️</div>
+            <span>CacheFs (SQLite)</span>
+          </div>
+        </div>
+
+        <div class="flow-packet" id="flow-packet"></div>
+
+        <div class="flow-step-label" id="flow-label">Click "Next Step" to begin</div>
+
+        <div class="flow-controls">
+          <button class="btn flow-next-btn">Next Step</button>
+          <button class="btn flow-reset-btn">Restart</button>
+          <span class="flow-progress"></span>
+        </div>
+      </div>
+
+      <p>That <span class="term" data-definition="async (asynchronous) code can start a slow job — like a disk write — and let other work continue instead of freezing. The await keyword waits for the result only when it is actually needed.">async</span> call returns an <span class="term" data-definition="An inode is a filesystem ID number for a single file or folder. semfs uses these numbers to track every item, just like a real disk does.">inode</span> and its <span class="term" data-definition="Attributes are the facts about a file: its size, type, timestamps, permissions — everything except the contents themselves.">attributes</span>, regardless of which backend answered.</p>
+    </section>
+
+    <!-- ── SCREEN 4: LAYER TOGGLE (one shape, many impls) ───────── -->
+    <section class="screen">
+      <h2 class="screen-heading">One shape, fulfilled three ways</h2>
+
+      <p>Same method name — different machinery behind it. Flip between the contract and its two backends.</p>
+
+      <div class="layer-demo">
+        <div class="layer-tabs">
+          <button class="layer-tab active" onclick="showLayer('html')">The Contract</button>
+          <button class="layer-tab" onclick="showLayer('css')">Backend A: MemFs</button>
+          <button class="layer-tab" onclick="showLayer('js')">Backend B: CacheFs</button>
+        </div>
+        <div class="layer-viewport">
+          <div class="layer" id="layer-html" style="display:block">
+            <div class="badge-list">
+              <div class="badge-item">
+                <code class="badge-code">trait FileSystem</code>
+                <span class="badge-desc">The socket. It declares the method <code>lookup</code> but writes zero code for it — it only states that the ability must exist.</span>
+              </div>
+              <div class="badge-item">
+                <code class="badge-code">fn lookup(...)</code>
+                <span class="badge-desc">"Find a file by name inside a folder." WHAT, never HOW.</span>
+              </div>
+            </div>
+          </div>
+          <div class="layer" id="layer-css" style="display:none">
+            <div class="badge-list">
+              <div class="badge-item">
+                <code class="badge-code">MemFs</code>
+                <span class="badge-desc">In-memory backend used in tests. Fast, disposable, no disk.</span>
+              </div>
+              <div class="badge-item">
+                <code class="badge-code">fn lookup(...)</code>
+                <span class="badge-desc">Fulfills the same method by scanning a table held in RAM. Same shape, RAM machinery.</span>
+              </div>
+            </div>
+          </div>
+          <div class="layer" id="layer-js" style="display:none">
+            <div class="badge-list">
+              <div class="badge-item">
+                <code class="badge-code">CacheFs</code>
+                <span class="badge-desc">The real backend, backed by a SQLite file on disk.</span>
+              </div>
+              <div class="badge-item">
+                <code class="badge-code">fn lookup(...)</code>
+                <span class="badge-desc">Fulfills the same method by running a SQL query against the database. Same shape, disk machinery.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="layer-description" id="layer-desc">The contract names the ability. Each backend supplies its own machinery. Calling code never sees the difference.</p>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: CODE↔ENGLISH (Snippet C) ───────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Proof: an 8-line fake fools the search</h2>
+
+      <p>The search socket is a trait called <code>SemanticIndex</code>. The real cloud plugs into it — but so can a tiny <span class="term" data-definition="A fake (or mock) is a stand-in that satisfies the contract with hardcoded answers, used in tests so you do not need the real, slow, networked thing. It returns canned data instantly.">fake</span> used in tests. Search cannot tell them apart.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// The semantic-search substrate behind `grep`. Any backend that answers a semantic query.</span></span>
+<span class="code-line"><span class="code-keyword">#[async_trait]</span></span>
+<span class="code-line"><span class="code-keyword">pub trait</span> <span class="code-function">SemanticIndex</span>: Send + Sync {</span>
+<span class="code-line">    <span class="code-comment">/// Search by meaning. `filepath` optionally scopes to a prefix.</span></span>
+<span class="code-line">    <span class="code-keyword">async fn</span> <span class="code-function">search</span>(&self, query: &<span class="code-keyword">str</span>, filepath: Option&lt;&<span class="code-keyword">str</span>&gt;)</span>
+<span class="code-line">        -&gt; anyhow::Result&lt;Vec&lt;SearchHit&gt;&gt;;</span>
+<span class="code-line">}</span>
+<span class="code-line">&nbsp;</span>
+<span class="code-line">    <span class="code-keyword">struct</span> <span class="code-function">FakeIndex</span>;</span>
+<span class="code-line">&nbsp;</span>
+<span class="code-line">    <span class="code-keyword">#[async_trait]</span></span>
+<span class="code-line">    <span class="code-keyword">impl</span> SemanticIndex <span class="code-keyword">for</span> FakeIndex {</span>
+<span class="code-line">        <span class="code-keyword">async fn</span> <span class="code-function">search</span>(&self, query: &<span class="code-keyword">str</span>, _filepath: Option&lt;&<span class="code-keyword">str</span>&gt;)</span>
+<span class="code-line">            -&gt; anyhow::Result&lt;Vec&lt;SearchHit&gt;&gt; {</span>
+<span class="code-line">            Ok(vec![SearchHit {</span>
+<span class="code-line">                filepath: Some(<span class="code-string">"/notes/a.md"</span>.into()),</span>
+<span class="code-line">                memory: None,</span>
+<span class="code-line">                chunk: Some(format!(<span class="code-string">"matched: {query}"</span>)),</span>
+<span class="code-line">                similarity: <span class="code-string">0.9</span>,</span>
+<span class="code-line">            }])</span>
+<span class="code-line">        }</span>
+<span class="code-line">    }</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">This trait is the search socket. Anything that answers a meaning-based query can plug in.</p>
+            <p class="tl">It promises one ability: <code>search</code>. Give it words, get back matches.</p>
+            <p class="tl">That is the whole contract — WHAT, not HOW.</p>
+            <p class="tl">&nbsp;</p>
+            <p class="tl">Now a totally fake librarian named <code>FakeIndex</code>.</p>
+            <p class="tl">We <span class="term" data-definition="impl is Rust shorthand for implement: the block of real code that makes a type fulfill a trait. impl SemanticIndex for FakeIndex means here is how FakeIndex provides the search ability.">impl</span>ement the same socket for it.</p>
+            <p class="tl">Its <code>search</code> ignores the real world entirely...</p>
+            <p class="tl">...and just returns one canned hit: the file, a fake snippet echoing your query, and a 0.9 score.</p>
+            <p class="tl">Eight lines. <code>grep</code> calls the shape and never notices it is a puppet — which is exactly the point.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🧪</div>
+        <div class="callout-content">
+          <strong class="callout-title">Why a fake exists</strong>
+          <p>The fake lets the test suite check search logic fast and offline — no real cloud, no network. Any plug that fits the socket works.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 6: THE PAYOFF (Snippet D) ─────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The payoff: swap the plant in one spot</h2>
+
+      <p>One tiny function decides which backend <code>grep</code> uses. Adding offline search later means changing only <em>this</em> — every caller stays untouched.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// Resolve the search backend. Phase 1: always the cloud client. Phase 5 adds</span></span>
+<span class="code-line"><span class="code-comment">/// local/offline selection here.</span></span>
+<span class="code-line"><span class="code-keyword">fn</span> <span class="code-function">resolve_index</span>(api_url: &<span class="code-keyword">str</span>, key: &<span class="code-keyword">str</span>, tag: &<span class="code-keyword">str</span>) -&gt; Arc&lt;<span class="code-keyword">dyn</span> SemanticIndex&gt; {</span>
+<span class="code-line">    <span class="code-keyword">let</span> api = Arc::new(semfs_core::api::ApiClient::new(api_url, key, tag));</span>
+<span class="code-line">    Arc::new(CloudIndex::new(api))</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">A function whose job is just "pick the search backend."</p>
+            <p class="tl">&nbsp;</p>
+            <p class="tl">It returns <code><span class="term" data-definition="Arc is a shareable handle to a value that many parts of the program can hold at once. dyn means some thing fulfilling this trait, decided at runtime. Together: a shared handle to whatever backend we plugged in.">Arc&lt;dyn SemanticIndex&gt;</span></code> — a shared handle to <em>some</em> thing that fulfills the search contract.</p>
+            <p class="tl">Today it builds a cloud client...</p>
+            <p class="tl">...and hands back the cloud backend. Tomorrow, swap in a local one right here — and nothing else changes.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── QUIZ ─────────────────────────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Think it through</h2>
+
+      <div class="quiz-container" id="quiz-module3">
+
+        <div class="quiz-question-block"
+             data-correct="opt-one"
+             data-explanation-right="Exactly. Callers depend on the trait, not the backend. The choice lives only in resolve_index, so that is the single spot to change."
+             data-explanation-wrong="Look again at the seam. Every caller talks to the Arc<dyn SemanticIndex> shape — only resolve_index names a concrete backend, so only it changes.">
+          <h3 class="quiz-question">semfs wants to add a local offline search engine. Based on the resolve function, how many call sites of grep must change?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-one" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Just one — resolve_index</span>
+            </button>
+            <button class="quiz-option" data-value="opt-all" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Every place that calls grep</span>
+            </button>
+            <button class="quiz-option" data-value="opt-trait" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The SemanticIndex trait itself must be rewritten</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-fast"
+             data-explanation-right="Right. The fake satisfies the contract with instant canned answers, so grep logic can be tested fast and offline — no cloud, no network."
+             data-explanation-wrong="Not quite. The fake is not about speed of the cloud or replacing it in production — it exists so tests can run instantly and offline by substituting anything that fits the contract.">
+          <h3 class="quiz-question">Why does the test suite ship a FakeIndex instead of calling the real cloud?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-fast" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>To test grep logic fast and offline, with no real cloud or network</span>
+            </button>
+            <button class="quiz-option" data-value="opt-faster" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Because the fake gives better search results than the cloud</span>
+            </button>
+            <button class="quiz-option" data-value="opt-prod" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>To replace the cloud backend in production</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-iface"
+             data-explanation-right="Exactly the lesson of this module. Define the contract first, put the concrete provider behind it, and swapping providers later touches almost nothing."
+             data-explanation-wrong="Think about the seam. Hard-wiring Stripe everywhere is the opposite of programming to an interface — you would have to rip out Stripe from every spot to switch to PayPal.">
+          <h3 class="quiz-question">You ask an AI to build a payment feature that might use Stripe now and PayPal later. Which instruction captures this module&apos;s lesson?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-iface" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Define a payments trait/interface and put Stripe behind it, so we can swap providers without touching the rest of the app</span>
+            </button>
+            <button class="quiz-option" data-value="opt-direct" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Call the Stripe library directly everywhere we need to charge a card</span>
+            </button>
+            <button class="quiz-option" data-value="opt-both" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Write the Stripe code and the PayPal code now and pick at runtime with if-statements scattered through the app</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-handle"
+             data-explanation-right="Spot on. It is a shareable handle to SOME thing that fulfills the search contract — the caller neither knows nor cares which concrete backend it is."
+             data-explanation-wrong="Look at the words. dyn means decided at runtime, Arc means shareable handle. It is deliberately NOT a specific backend — that vagueness is the whole feature.">
+          <h3 class="quiz-question">What does Arc&lt;dyn SemanticIndex&gt; mean in plain terms?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-handle" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>A shareable handle to some thing that fulfills the search contract — which concrete backend is unknown and irrelevant</span>
+            </button>
+            <button class="quiz-option" data-value="opt-cloud" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>A guarantee that the backend is always the cloud client</span>
+            </button>
+            <button class="quiz-option" data-value="opt-copy" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>A private copy of the search results that no one else can read</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module3')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module3')">Try Again</button>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🔭</div>
+        <div class="callout-content">
+          <strong class="callout-title">Up next</strong>
+          <p>Now that you understand the socket, let us look at the power plants that plug into it — SQLite-vec, Postgres, the Supermemory cloud — and the couriers that drive between them.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>
+<section class="module" id="module-4">
+  <div class="module-content">
+
+    <header class="module-header">
+      <span class="module-number">04</span>
+      <h1 class="module-title">The Outside World: Backends and the Couriers That Reach Them</h1>
+      <p class="module-subtitle">Back in module 1, your write was "durable the moment the prompt returned" — but it had not reached the cloud yet. So who actually drives it there? And what happens if the cloud is slow, offline, or a teammate deleted a file on another machine? Meet the courier fleet.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE METAPHOR + THREE BACKEND TIERS ───────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">A shipping logistics network</h2>
+
+      <p>Your <span class="term" data-definition="A cache is a small, fast local store of data kept close by so you do not have to fetch it from somewhere slow every time — like keeping snacks in your desk drawer instead of walking to the store.">cache</span> 🗄️ is the warehouse next door: instant. The <span class="term" data-definition="A backend is the remote system that actually stores and serves your data — a server or cloud service the app talks to over the network, as opposed to your own machine.">backend</span> 📚 is a distant fulfillment center. Between them runs a fleet of couriers — the <span class="term" data-definition="The part of semfs that runs background jobs to keep your local cache and the remote backend in agreement. In this module it is the courier dispatcher, 🚚.">SyncEngine</span> 🚚 — each with its own route and schedule, so YOU never wait at the loading dock.</p>
+
+      <p>semfs offers three backend tiers. The filesystem behaves identically across all of them — <em>graceful degradation, not lowest common denominator.</em></p>
+
+      <div class="pattern-cards">
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">📦</div>
+          <h4 class="pattern-title">Embedded <span style="font-weight:400;font-size:var(--text-xs)">(the default)</span></h4>
+          <p class="pattern-desc"><span class="term" data-definition="SQLite is a tiny database that lives in a single file on your own computer — no separate server to run. Great for offline, single-user apps.">SQLite</span> + <span class="term" data-definition="sqlite-vec is an add-on that lets SQLite store and search meaning-vectors — the number-lists that represent the meaning of text.">sqlite-vec</span> + <span class="term" data-definition="FTS5 is SQLite's full-text search engine — it finds documents by the exact words they contain, like a fast keyword search.">FTS5</span>. Local, offline, one single binary.</p>
+          <p class="pattern-desc"><strong>Best for:</strong> a personal mount on one machine.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">🏢</div>
+          <h4 class="pattern-title">Server</h4>
+          <p class="pattern-desc"><span class="term" data-definition="Postgres is a powerful database that runs as its own server program, built to handle many users writing at the same time.">Postgres</span> + <span class="term" data-definition="pgvector is an extension that teaches Postgres to store and search meaning-vectors, so the database can answer by meaning, not just keywords.">pgvector</span>. Concurrent <span class="term" data-definition="Multi-writer means several machines or people can write to the same store at the same time without stepping on each other.">multi-writer</span>, large <span class="term" data-definition="A corpus is the whole collection of documents a system stores and searches over.">corpora</span> (<span class="term" data-definition="HNSW (Hierarchical Navigable Small World) is a clever index that finds the nearest meaning-vectors fast, even across millions of documents.">HNSW</span> index).</p>
+          <p class="pattern-desc"><strong>Best for:</strong> a team, many documents.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">☁️</div>
+          <h4 class="pattern-title">Cloud</h4>
+          <p class="pattern-desc">Supermemory <span class="term" data-definition="An API (Application Programming Interface) is a doorway one program uses to ask another program to do something or hand over data, over the network.">API</span>. Zero local index — the server keeps a memory graph for you.</p>
+          <p class="pattern-desc"><strong>Best for:</strong> shared, managed memory you do not host yourself.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: THE FOUR KNOBS (Snippet A code↔English) ──────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The dispatcher has four dials</h2>
+
+      <p>The SyncEngine reads its schedule from one small settings struct. Two of the dials are timers; two are simple on/off switches that the mount <span class="term" data-definition="A flag is an option you add to a command to change its behaviour — like adding --no-push to a command. When talking to an AI you would say add a flag for that.">flags</span> flip.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// Knobs for the sync engine. All optional — defaults are production-sane.</span></span>
+<span class="code-line"><span class="code-comment">#[derive(Debug, Clone, Copy)]</span></span>
+<span class="code-line"><span class="code-keyword">pub struct</span> SyncOptions {</span>
+<span class="code-line">    <span class="code-keyword">pub</span> delta_interval: Duration,</span>
+<span class="code-line">    <span class="code-keyword">pub</span> deletion_scan_interval: Duration,</span>
+<span class="code-line">    <span class="code-keyword">pub</span> pull_enabled: <span class="code-keyword">bool</span>,</span>
+<span class="code-line">    <span class="code-keyword">pub</span> push_enabled: <span class="code-keyword">bool</span>,</span>
+<span class="code-line">}</span>
+<span class="code-line"></span>
+<span class="code-line"><span class="code-keyword">impl</span> Default <span class="code-keyword">for</span> SyncOptions {</span>
+<span class="code-line">    <span class="code-keyword">fn</span> <span class="code-function">default</span>() -&gt; Self {</span>
+<span class="code-line">        Self {</span>
+<span class="code-line">            delta_interval: Duration::<span class="code-function">from_secs</span>(<span class="code-string">30</span>),</span>
+<span class="code-line">            deletion_scan_interval: Duration::<span class="code-function">from_secs</span>(<span class="code-string">300</span>),</span>
+<span class="code-line">            pull_enabled: <span class="code-keyword">true</span>,</span>
+<span class="code-line">            push_enabled: <span class="code-keyword">true</span>,</span>
+<span class="code-line">        }</span>
+<span class="code-line">    }</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">These are the dials. Every one is optional — the defaults are sensible for real use.</p>
+            <p class="tl">There are exactly four of them.</p>
+            <p class="tl"><strong>delta_interval</strong>: how often to check the backend for newer documents.</p>
+            <p class="tl"><strong>deletion_scan_interval</strong>: how often to check what got deleted remotely.</p>
+            <p class="tl"><strong>pull_enabled</strong>: master switch for bringing changes IN. <code>--no-sync</code> flips this off.</p>
+            <p class="tl"><strong>push_enabled</strong>: master switch for sending changes OUT. <code>--no-push</code> flips this off.</p>
+            <p class="tl">The defaults: <span class="term" data-definition="Pull means bringing changes IN from the backend to your local cache.">pull</span> every <strong>30 seconds</strong>...</p>
+            <p class="tl">...scan for deletions every <strong>300 seconds</strong> (5 minutes)...</p>
+            <p class="tl">...and both switches start ON, so a fresh mount syncs both ways.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🎛️</div>
+        <div class="callout-content">
+          <strong class="callout-title">A mount flag is not magic</strong>
+          <p>A flag just decides which couriers clock in. <code>--no-push</code> means your writes never leave your machine — exactly how you read a shared container without contaminating it.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: THE COURIER FLEET (icon rows) ────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The five couriers and their schedules</h2>
+
+      <p>With both switches on, five background loops run on their own timers. Each has one job.</p>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">🚚</div>
+          <div>
+            <strong>Loop A — delta pull <span style="font-weight:400">(every ~30s)</span></strong>
+            <p>Fetches documents sorted newest-first and <span class="term" data-definition="To reconcile is to bring two copies of data back into agreement — here, copying the backend's newer version into your local cache.">reconciles</span> anything newer than our <span class="term" data-definition="A watermark is a bookmark of how far you have already caught up — a timestamp marking the newest change you have already pulled, so you only fetch what is newer.">watermark</span> into the cache.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">🗑️</div>
+          <div>
+            <strong>Loop C — deletion scan <span style="font-weight:400">(every ~5min)</span></strong>
+            <p>Compares all remote IDs against local records and unlinks anything that vanished from the backend.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">📤</div>
+          <div>
+            <strong>Loop D — push worker</strong>
+            <p>Sends <span class="term" data-definition="Push means sending your local changes OUT to the backend.">queued</span> local writes up to the backend. Coalesces rapid edits to at most 2 requests per file. (Deep dive in module 5.)</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">⏳</div>
+          <div>
+            <strong>Loop E — inflight poller</strong>
+            <p>Watches documents the server is still processing (extract → chunk → embed → index → done) and updates their status by <span class="term" data-definition="Polling means repeatedly asking are you done yet? on a timer, instead of being notified — like refreshing a tracking page.">polling</span>.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">💧</div>
+          <div>
+            <strong>Loop F — hydration worker</strong>
+            <p>Pulls the actual file <em>contents</em> on demand, only when you open something.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">Durable now, delivered later</strong>
+          <p>semfs splits <em>durable</em> (instant, local) from <em>delivered</em> (eventual, remote). Engineers call this <span class="term" data-definition="Write-behind caching saves your change locally right away, then a background job sends it to the slow remote store afterward — so you get speed AND safety without waiting on the network.">write-behind caching</span> — speed and safety without making you wait on the network.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 4: DATA FLOW ANIMATION (couriers in motion) ─────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Watch the couriers drive</h2>
+
+      <p>Step through one push trip (Loop D) and one pull trip (Loop A). Notice the dispatcher 🚚 always sits between your cache 🗄️ and the backend 📚.</p>
+
+      <div class="flow-animation" data-steps='[
+        {"highlight":"flow-m4-actor-1","label":"You save a file. It lands in the local cache instantly and is queued for delivery."},
+        {"highlight":"flow-m4-actor-2","label":"Loop D push worker claims the queued job from the cache.","packet":true,"from":"m4-actor-1","to":"m4-actor-2"},
+        {"highlight":"flow-m4-actor-3","label":"The dispatcher sends the write up to the backend (a POST or PATCH request).","packet":true,"from":"m4-actor-2","to":"m4-actor-3"},
+        {"highlight":"flow-m4-actor-3","label":"Loop E waits: the server processes async (extract, chunk, embed, index) until status is done."},
+        {"highlight":"flow-m4-actor-3","label":"Now the pull side. Loop A asks the backend for documents newer than our watermark."},
+        {"highlight":"flow-m4-actor-2","label":"The backend hands back any newer documents to the dispatcher.","packet":true,"from":"m4-actor-3","to":"m4-actor-2"},
+        {"highlight":"flow-m4-actor-1","label":"The dispatcher reconciles them into your local cache. Your mount now shows the change.","packet":true,"from":"m4-actor-2","to":"m4-actor-1"}
+      ]'>
+        <div class="flow-actors">
+          <div class="flow-actor" id="flow-m4-actor-1">
+            <div class="flow-actor-icon">🗄️</div>
+            <span>Local Cache</span>
+          </div>
+          <div class="flow-actor" id="flow-m4-actor-2">
+            <div class="flow-actor-icon">🚚</div>
+            <span>SyncEngine</span>
+          </div>
+          <div class="flow-actor" id="flow-m4-actor-3">
+            <div class="flow-actor-icon">📚</div>
+            <span>Backend</span>
+          </div>
+        </div>
+
+        <div class="flow-packet" id="flow-packet"></div>
+
+        <div class="flow-step-label" id="flow-label">Click "Next Step" to begin</div>
+
+        <div class="flow-controls">
+          <button class="btn flow-next-btn">Next Step</button>
+          <button class="btn flow-reset-btn">Restart</button>
+          <span class="flow-progress"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: THE ASYNC GOTCHA (Snippet C as callout) ──────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Why you cannot write the cloud twice at once</h2>
+
+      <p>When you save to the cloud backend, the server says "got it" right away — but the real work happens afterward, in the background.</p>
+
+      <div class="flow-steps">
+        <div class="flow-step"><div class="flow-step-num">📝</div><p>Extract the text</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">✂️</div><p>Cut into chunks</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">🔢</div><p>Make <span class="term" data-definition="An embedding (or vector) is a list of numbers that captures the meaning of a piece of text, so a computer can compare meanings by comparing numbers.">embeddings</span></p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">🗂️</div><p>Index them</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">✅</div><p>status = done</p></div>
+      </div>
+
+      <div class="callout callout-warning">
+        <div class="callout-icon">⚠️</div>
+        <div class="callout-content">
+          <strong class="callout-title">The async-processing trap</strong>
+          <p>Send a second <span class="term" data-definition="PATCH is a network request that updates an existing item; POST creates a new one. Both are ways an app sends data to a server.">PATCH</span> while the first is still processing and the server silently drops your new content. So semfs waits for <code>status=done</code> before sending the next write on the same file — which is why edits can take a moment to appear in search.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">⏭️</div>
+        <div class="callout-content">
+          <strong class="callout-title">Coming up in module 5</strong>
+          <p>You have met the couriers. Next, the clever driving — write coalescing, exponential backoff, jittered timers, crash-safe queues, the macOS NFS trick, and how hybrid semantic search actually finds meaning.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 6: QUIZ ─────────────────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Reason about the fleet</h2>
+
+      <div class="quiz-container" id="quiz-module4">
+
+        <div class="quiz-question-block"
+             data-correct="opt-no"
+             data-explanation-right="Exactly. --no-push flips push_enabled off, so the push loops never clock in. Your edit stays durable on your machine but never leaves it — perfect for reading a shared container without contaminating it."
+             data-explanation-wrong="Not quite. --no-push disables the push side of the fleet, so local writes never travel to the cloud. The file is still saved locally — it just stays there.">
+          <h3 class="quiz-question">You run <code>semfs mount shared-notes --no-push</code>, then edit a file locally. Does your edit reach the cloud?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-yes" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Yes — writes always sync eventually.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-no" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>No — the push loops are disabled, so it stays local.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-30s" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Yes, after the 30-second pull timer fires.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-async"
+             data-explanation-right="Right. The server processes the first write asynchronously; semfs must wait until status=done before sending the second, or the server would silently drop it. That deliberate wait is why the second save seems delayed."
+             data-explanation-wrong="Not quite. The cache saved both edits instantly. The delay is on the cloud side: the server is still processing the first write, and semfs waits for status=done before sending the second so it does not get dropped.">
+          <h3 class="quiz-question">You save a file, then save it again one second later. Why might the second save seem to "not take" for a bit?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-disk" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Your local disk is too slow to write twice that fast.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-async" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>semfs waits for the server to finish the first write before sending the second.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-lost" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>The second save was lost and you need to redo it.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-server"
+             data-explanation-right="Exactly. The Server tier (Postgres + pgvector with an HNSW index) is built for concurrent multi-writer access and large corpora — precisely this situation."
+             data-explanation-wrong="Not quite. Embedded (SQLite) is single-binary and offline, great for one machine but not many concurrent writers. Cloud offloads hosting but the question describes self-run, multi-writer scale — that is the Server tier.">
+          <h3 class="quiz-question">You have 2 million documents and several machines writing at once. Which backend tier fits?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-embedded" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Embedded — SQLite, single binary.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-server" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Server — Postgres + pgvector, built for concurrent multi-writer.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-cloud" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Cloud — Supermemory, zero local index.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-5min"
+             data-explanation-right="Right. Deletions are caught by Loop C, the deletion scan, which runs every 300 seconds. Worst case you wait roughly 5 minutes before the file disappears from your mount."
+             data-explanation-wrong="Not quite. Edits arrive via the 30-second delta pull, but deletions are handled separately by Loop C, the deletion scan, which runs every 300 seconds — so up to ~5 minutes in the worst case.">
+          <h3 class="quiz-question">A teammate deletes a file on another machine. Worst case, how long until it disappears from your mount?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-instant" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Instantly — deletions are pushed in real time.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-30s" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>About 30 seconds — same as the delta pull.</span>
+            </button>
+            <button class="quiz-option" data-value="opt-5min" onclick="selectOption(this)">
+              <div class="quiz-option-radio"></div>
+              <span>Up to ~5 minutes — the deletion scan runs every 300s.</span>
+            </button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module4')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module4')">Try Again</button>
+      </div>
+    </section>
+
+  </div>
+</section>
+<section class="module" id="module-5">
+  <div class="module-content">
+
+    <header class="module-header">
+      <span class="module-number">05</span>
+      <h1 class="module-title">The Clever Tricks</h1>
+      <p class="module-subtitle">You can build something that syncs files. Making it survive flaky networks, rapid-fire saves, server hiccups, and a laptop that sleeps mid-write — <em>that</em> is engineering. Here are the tricks semfs uses.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE METAPHOR + HERO PATTERN CARDS ──────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The rookie courier vs. the veteran</h2>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-error)">🚲</div>
+          <div>
+            <strong>The rookie</strong>
+            <p>Delivers every package the instant it lands, hits traffic, crashes, loses packages, and re-rides the same street ten times.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-success)">🛵</div>
+          <div>
+            <strong>The veteran</strong>
+            <p>Batches deliveries, waits a little longer each time a buzzer is broken, staggers departures, keeps a waterproof manifest, and knows a secret shortcut around the toll bridge.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🚚</div>
+        <div class="callout-content">
+          <strong class="callout-title">Meet the cast (again)</strong>
+          <p>The <strong>SyncEngine 🚚</strong> is our courier. The <strong>Mount 🚪</strong> is the folder it serves. The <strong>Backend 📚</strong> is the warehouse it delivers to. These seven tricks are the craft <em>inside</em> the courier's daily routine.</p>
+        </div>
+      </div>
+
+      <h3 class="screen-subheading">The seven tricks</h3>
+      <div class="pattern-cards">
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">📦</div>
+          <h4 class="pattern-title">Write coalescing</h4>
+          <p class="pattern-desc">Rapid edits to one file collapse to at-most-2 server requests, no matter how fast you hit save.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">⏳</div>
+          <h4 class="pattern-title">Exponential backoff</h4>
+          <p class="pattern-desc">When a send fails, wait longer before each retry instead of machine-gunning a struggling server.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">🎲</div>
+          <h4 class="pattern-title">Adaptive interval + jitter</h4>
+          <p class="pattern-desc">Poll faster after activity, stretch out when idle, and add randomness so mounts do not all call home at once.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-4)">
+          <div class="pattern-icon" style="background: var(--color-actor-4)">🛟</div>
+          <h4 class="pattern-title">Crash-safe queue</h4>
+          <p class="pattern-desc">The push queue lives in a database with a journal, so a crash or sleeping laptop never loses queued writes.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">🪄</div>
+          <h4 class="pattern-title">The macOS NFS trick</h4>
+          <p class="pattern-desc">Apple removed kernel file drivers, so semfs runs a tiny network file server on your own laptop and mounts that.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">📝</div>
+          <h4 class="pattern-title">Agent hint injection</h4>
+          <p class="pattern-desc">On mount, semfs writes a note into your AI's instruction file telling it to use semfs grep inside that folder.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">🔎</div>
+          <h4 class="pattern-title">Hybrid semantic grep</h4>
+          <p class="pattern-desc">Search fuses meaning with exact words, so it finds the right line whether you recall the gist or the precise term.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">Why you should care</strong>
+          <p>These are exactly the things an AI assistant <em>will not add unless you ask</em>. Knowing they exist turns you from someone who asks for features into someone who asks for <em>robust</em> features.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: COALESCING (THE AHA) ──────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Trick 1 — Batch the deliveries</h2>
+
+      <p>A smart courier does not ride to the warehouse for every single envelope. If five envelopes land for the same address while one trip is in progress, they all merge into the next trip.</p>
+
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="flow-step-num">200</div>
+          <p>Autosaves in 10 seconds (one keystroke each)</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">📦</div>
+          <p><span class="term" data-definition="Coalescing means merging many rapid changes into a single update. Like a courier who waits a beat and carries one combined load instead of riding back and forth for every envelope. To an AI you would say coalesce rapid writes.">Coalescing</span> + <span class="term" data-definition="Debounce means waiting a short, quiet moment before acting, so a burst of rapid events collapses into one. Like an elevator that holds the door a second in case someone else is coming.">debounce</span> merge them</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">2</div>
+          <p>Requests reach the cloud, worst case</p>
+        </div>
+      </div>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">//! Together with the dirty_since flag set at write-time, these loops give</span></span>
+<span class="code-line"><span class="code-comment">//! the mount a durable, coalescing, crash-safe write path: any rapid save</span></span>
+<span class="code-line"><span class="code-comment">//! burst collapses to at-most-2 server requests per filepath (one inflight</span></span>
+<span class="code-line"><span class="code-comment">//! plus one pending), retries survive `wrangler dev` restarts, and an</span></span>
+<span class="code-line"><span class="code-comment">//! unmount drains the queue before releasing the mount.</span></span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">A flag marks a file "dirty" the moment you change it.</p>
+            <p class="tl">Hammer Ctrl-S fifty times and the cloud still gets at most two requests for that file...</p>
+            <p class="tl">...the one currently sending, plus one "latest" waiting its turn.</p>
+            <p class="tl">Even if the dev server restarts, queued <span class="term" data-definition="A retry is simply trying a failed action again. The art is in WHEN you retry — too soon and you pile onto a struggling server; too late and the user waits.">retries</span> survive.</p>
+            <p class="tl">And unmounting waits for the queue to fully drain before letting go.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">The "aha"</strong>
+          <p>The fifty intermediate versions are <em>disposable</em> — only the final state matters. Sending them would be like mailing every rough draft of a letter instead of the finished one.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: BACKOFF CODE↔ENGLISH ──────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Trick 2 — Wait longer each time the buzzer is broken</h2>
+
+      <p>When a building's buzzer is broken, a veteran does not buzz it a thousand times a second — they wait a bit, then a bit longer, giving the resident time to answer. That is <span class="term" data-definition="Exponential backoff means each failed retry waits roughly double the previous delay. It gives an overwhelmed server breathing room to recover instead of being flooded. To an AI you would say add exponential backoff on retries.">exponential backoff</span>.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// Exponential backoff in milliseconds for the Nth failed attempt</span></span>
+<span class="code-line"><span class="code-comment">/// (attempt=0 → first retry, already-failed once).</span></span>
+<span class="code-line"><span class="code-keyword">fn</span> <span class="code-function">backoff_ms</span>(attempt: <span class="code-keyword">i64</span>) -> <span class="code-keyword">i64</span> {</span>
+<span class="code-line">    <span class="code-keyword">match</span> attempt {</span>
+<span class="code-line">        0 => 500,</span>
+<span class="code-line">        1 => 1_000,</span>
+<span class="code-line">        2 => 2_000,</span>
+<span class="code-line">        3 => 5_000,</span>
+<span class="code-line">        4 => 15_000,</span>
+<span class="code-line">        5 => 30_000,</span>
+<span class="code-line">        _ => 60_000,</span>
+<span class="code-line">    }</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">A note: this decides how long to wait before the Nth retry.</p>
+            <p class="tl">"Given how many times we have failed, here is the wait..."</p>
+            <p class="tl">A lookup table from failure-count to milliseconds.</p>
+            <p class="tl">First failure? Wait half a second (500 ms).</p>
+            <p class="tl">Then 1 second, then 2, then 5, then 15, then 30...</p>
+            <p class="tl">...and anything beyond that is capped at 60 seconds.</p>
+            <p class="tl">This gives a struggling <strong>Backend 📚</strong> room to recover.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="flow-steps">
+        <div class="flow-step"><div class="flow-step-num">½s</div><p>fail 1</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">1s</div><p>fail 2</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">2s</div><p>fail 3</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">5s</div><p>fail 4</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="flow-step-num">60s</div><p>capped</p></div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 4: SPOT THE BUG ──────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Spot the bug: the rookie's retry loop</h2>
+
+      <p>Here is what the rookie courier does when a delivery fails. One line will hammer a struggling <strong>Backend 📚</strong> into the ground. Click the line you think is the bug.</p>
+
+      <div class="bug-challenge">
+        <h3>Find the line that takes down the server:</h3>
+        <div class="bug-code">
+          <div class="bug-line" data-line="1" onclick="checkBugLine(this, false)">
+            <span class="line-num">1</span>
+            <code>loop {</code>
+          </div>
+          <div class="bug-line" data-line="2" onclick="checkBugLine(this, false)">
+            <span class="line-num">2</span>
+            <code>    let result = backend.send(&payload);</code>
+          </div>
+          <div class="bug-line" data-line="3" onclick="checkBugLine(this, false)">
+            <span class="line-num">3</span>
+            <code>    if result.is_ok() { break; }</code>
+          </div>
+          <div class="bug-line bug-target" data-line="4" onclick="checkBugLine(this, true)">
+            <span class="line-num">4</span>
+            <code>    continue; // retry immediately, no waiting</code>
+          </div>
+          <div class="bug-line" data-line="5" onclick="checkBugLine(this, false)">
+            <span class="line-num">5</span>
+            <code>}</code>
+          </div>
+        </div>
+        <div class="bug-feedback" id="bug-feedback"></div>
+      </div>
+
+      <div class="callout callout-warning">
+        <div class="callout-icon">⚠️</div>
+        <div class="callout-content">
+          <strong class="callout-title">No backoff = a self-inflicted outage</strong>
+          <p>Retrying instantly in a tight loop fires thousands of requests per second at a server that is already on its knees. The fix is exponential backoff — the lookup table from the previous screen.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: THE NFS TRICK ─────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Trick 5 — The secret shortcut around the toll bridge</h2>
+
+      <p>Apple stopped letting third-party drivers run deep inside macOS. So semfs pulls a magic trick: it runs a tiny network-file-server <em>inside itself</em>, on your own machine, and mounts that.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line">    <span class="code-comment">/// NFSv3 over localhost — works on both macOS and Linux.</span></span>
+<span class="code-line">    <span class="code-comment">///</span></span>
+<span class="code-line">    <span class="code-comment">/// The daemon binds an in-process NFSv3 server on `127.0.0.1:&lt;auto-port&gt;`</span></span>
+<span class="code-line">    <span class="code-comment">/// and asks the operating system's native NFS client to mount it. No</span></span>
+<span class="code-line">    <span class="code-comment">/// kernel extension, no third-party driver — on macOS this is the trick</span></span>
+<span class="code-line">    <span class="code-comment">/// that replaces FUSE entirely.</span></span>
+<span class="code-line">    Nfs,</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">This mode uses <span class="term" data-definition="NFS (Network File System) is a decades-old standard for accessing folders that live on another computer over the network — as if they were on your own. Every Mac and Linux box already ships with an NFS client built in.">NFS</span>, which works on both macOS and Linux.</p>
+            <p class="tl">The background program starts a little file server at <span class="term" data-definition="localhost / 127.0.0.1 is a special address that always means this very computer. Traffic to it never leaves your machine. So a server here is one millimeter away, not across the internet.">127.0.0.1</span> — your own machine.</p>
+            <p class="tl">Then it asks the NFS client macOS already ships with to mount it.</p>
+            <p class="tl">No <span class="term" data-definition="A kernel extension is third-party code that runs deep inside the operating system's core. Powerful but risky, so Apple now blocks most of them — which is exactly why semfs needs another way in.">kernel extension</span>, no third-party driver to install...</p>
+            <p class="tl">...this is what replaces <span class="term" data-definition="FUSE (Filesystem in Userspace) is the classic way to create a custom folder that behaves like a real one. On macOS it required a kernel extension Apple no longer allows, so semfs sidesteps it with the localhost-NFS trick.">FUSE</span> entirely on macOS.</p>
+            <p class="tl">Your <strong>Mount 🚪</strong> is technically a network drive — pointing at a server inside your own laptop.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🪄</div>
+        <div class="callout-content">
+          <strong class="callout-title">The surprise</strong>
+          <p>Your folder looks completely normal, but under the hood it is a network drive whose "remote" server is sitting on the same machine. No install, no kernel hacks — just a clever use of plumbing every Mac already has.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 6: JITTER + HONESTY + QUIZ ───────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Trick 3 — Stagger the departures, and an honest confession</h2>
+
+      <p>If a thousand couriers all leave at exactly 9:00, they jam the same intersection. <span class="term" data-definition="Jitter is a small, deliberate dose of randomness added to a timer so many machines do not all act at the exact same instant. Like asking everyone to leave a few random seconds apart instead of on the dot.">Jitter</span> staggers them — and prevents the dreaded <span class="term" data-definition="A thundering herd (or stampede) is when many clients hit a server at the same instant, overwhelming it. Jitter spreads them out so the herd arrives in a trickle, not a wall.">thundering herd</span>.</p>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">🎲</div>
+          <div>
+            <strong>Adaptive cadence</strong>
+            <p>Check sooner right after activity (never under 10s); slow down to 60s after three idle polls — then sprinkle in random seconds.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">📝</div>
+          <div>
+            <strong>Agent hint injection — a steer, not a contract</strong>
+            <p>On mount, semfs edits your AI's instruction file to say "search this folder with semfs grep." On unmount, it removes the note.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🤝</div>
+        <div class="callout-content">
+          <strong class="callout-title">Honest engineering</strong>
+          <p>The code admits it plainly: <em>"What this is not: a guarantee... Treat as a steer, not a contract."</em> The AI may or may not obey — and good code is upfront about its own limits.</p>
+        </div>
+      </div>
+
+      <h2 class="screen-heading">Check your understanding</h2>
+
+      <div class="quiz-container" id="quiz-module5">
+        <div class="quiz-question-block"
+             data-correct="opt-2"
+             data-explanation-right="Exactly. Write coalescing collapses the whole burst into at most two requests — the one currently in-flight, plus one 'latest' pending. The 198 intermediate versions are disposable; only the final state matters."
+             data-explanation-wrong="Not quite. Coalescing means the intermediate saves are thrown away — only the in-flight request and one pending 'latest' ever reach the cloud for that file.">
+          <h3 class="quiz-question">Your editor autosaves every keystroke — 200 saves in 10 seconds. Worst case, how many of those 200 reach the cloud for that file?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-1" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>All 200 — every save is sent</span></button>
+            <button class="quiz-option" data-value="opt-2" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>At most 2 — one in-flight plus one pending</span></button>
+            <button class="quiz-option" data-value="opt-3" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Exactly 1 — only the very first save</span></button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-2"
+             data-explanation-right="Right. Random jitter spreads independent mounts across different instants, so they do not synchronize into a thundering herd that slams the server all at once."
+             data-explanation-wrong="Think about a thousand laptops running the same clean 30s timer — they would all knock on the server at the same second. Jitter's whole job is to break that synchronization.">
+          <h3 class="quiz-question">Why add RANDOM jitter to the poll interval instead of a clean round number?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-1" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Random numbers are faster to compute</span></button>
+            <button class="quiz-option" data-value="opt-2" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>So many independent mounts do not all hit the server at the same instant</span></button>
+            <button class="quiz-option" data-value="opt-3" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>To make the logs harder to read</span></button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-3"
+             data-explanation-right="Exactly the senior-engineer instinct. A flaky API begs for exponential backoff on retries AND a crash-safe persisted queue so a restart never drops in-flight work — coalescing duplicate calls is a great bonus."
+             data-explanation-wrong="Those are real features, but they do not protect against a flaky API. For unreliable third-party calls you want exponential backoff and a crash-safe/persisted retry queue.">
+          <h3 class="quiz-question">You ask an AI to add a feature that calls a flaky third-party API. Which combination would you explicitly request to make it robust?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-1" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Dark mode and a faster animation</span></button>
+            <button class="quiz-option" data-value="opt-2" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>More logging and a bigger font</span></button>
+            <button class="quiz-option" data-value="opt-3" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Exponential backoff on retries plus a crash-safe persisted queue</span></button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <div class="quiz-question-block"
+             data-correct="opt-1"
+             data-explanation-right="Correct. Apple blocks third-party kernel extensions, so installing a filesystem driver is off the table. The localhost-NFS trick reuses the NFS client every Mac already ships with — zero install required."
+             data-explanation-wrong="Not quite. It is not about speed — it is that Apple no longer allows the kind of kernel-level driver a custom filesystem used to need. Running a localhost NFS server needs no install at all.">
+          <h3 class="quiz-question">Why does semfs run a network file server on your own laptop instead of installing a macOS filesystem driver?</h3>
+          <div class="quiz-options">
+            <button class="quiz-option" data-value="opt-1" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Apple blocks third-party kernel extensions; the localhost-NFS trick needs no driver install</span></button>
+            <button class="quiz-option" data-value="opt-2" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>Network drives are always faster than local folders</span></button>
+            <button class="quiz-option" data-value="opt-3" onclick="selectOption(this)"><div class="quiz-option-radio"></div><span>It lets other people on the internet read your files</span></button>
+          </div>
+          <div class="quiz-feedback"></div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module5')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module5')">Try Again</button>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🔭</div>
+        <div class="callout-content">
+          <strong class="callout-title">Up next</strong>
+          <p>You now know the tricks that keep semfs healthy. Last stop: what to do when something goes wrong anyway — daemon lifecycle, pid and log files, reading the stuck tiers, and how to debug it like an operator.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>
+<section class="module" id="module-6">
+  <div class="module-content">
+
+    <header class="module-header">
+      <span class="module-number">06</span>
+      <h1 class="module-title">When Things Break (and the Big Picture)</h1>
+      <p class="module-subtitle">Your mount is hanging. A file will not sync. Or <code>semfs grep</code> returns nothing. Panicking and re-running random commands is the rookie move — here is the operator&apos;s routine, the same calm one that lets you break an AI out of a doom-loop.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE METAPHOR ───────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The building superintendent&apos;s keyring</h2>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">🧑‍🔧</div>
+          <div>
+            <strong>A tenant says &ldquo;my apartment is acting weird&rdquo;</strong>
+            <p>The super does not panic. They check three things, in order, every single time.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">🔑</div>
+          <div>
+            <strong>Is the caretaker on duty?</strong>
+            <p>Is there an &ldquo;out of order&rdquo; sign left on a door from an old problem nobody cleared? What does the logbook say?</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">📓</div>
+          <div>
+            <strong>Debugging semfs is the same routine</strong>
+            <p>Check the process. Clear the stale state. Read the log. Disciplined, not frantic.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">The whole system is inspectable on purpose</strong>
+          <p>Every semfs mount leaves its entire state in plain files and logs on disk — so a human, or a smarter prompt, can <em>see</em> what is happening and step in.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: THE DAEMON'S FOUR FILES (HERO TREE) ────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The caretaker&apos;s footprint: four little files</h2>
+
+      <p>One mount = one tag = one
+        <span class="term" data-definition="A daemon is a long-running background program with no window — it just sits there doing its job, like a building caretaker who is always on duty. When talking to an AI you would say is the daemon still running.">daemon</span>
+        (🧑‍🔧). That daemon drops exactly four files on disk. Learn these and you can debug almost anything.</p>
+
+      <div class="file-tree">
+        <div class="ft-folder open">
+          <span class="ft-name">&lt;cache_dir&gt;/</span>
+          <span class="ft-desc">Everything one mount needs lives under one folder</span>
+          <div class="ft-children">
+            <div class="ft-file">
+              <span class="ft-name">&lt;tag&gt;.db</span>
+              <span class="ft-desc">🗄️ The Cache — a SQLite database holding your bytes + the write queue</span>
+            </div>
+            <div class="ft-file">
+              <span class="ft-name">sockets/&lt;tag&gt;.sock</span>
+              <span class="ft-desc">The Unix socket — the phone line the CLI uses to talk to the daemon</span>
+            </div>
+            <div class="ft-file">
+              <span class="ft-name">pids/&lt;tag&gt;.pid</span>
+              <span class="ft-desc">The daemon&apos;s process ID — its &ldquo;on duty&rdquo; badge number</span>
+            </div>
+            <div class="ft-file">
+              <span class="ft-name">logs/&lt;tag&gt;.log</span>
+              <span class="ft-desc">The logbook — your first stop when something is wrong</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="badge-list">
+        <div class="badge-item">
+          <code class="badge-code">semfs status</code>
+          <span class="badge-desc">Reads the
+            <span class="term" data-definition="A PID (process ID) is the number the operating system gives every running program — like a badge number. You use it to ask is that program still alive.">pid</span>
+            file and tells you if the caretaker (🧑‍🔧) is alive</span>
+        </div>
+        <div class="badge-item">
+          <code class="badge-code">semfs logs</code>
+          <span class="badge-desc">Prints the logbook for that tag — what the daemon has been doing</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: CODE↔ENGLISH (pid_alive) ───────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">&ldquo;Is the caretaker alive?&rdquo; in real code</h2>
+
+      <p>Here is the exact function semfs uses to check whether the daemon is still running. The trick is delightfully simple — and a little scary-sounding.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// Is the given pid alive? POSIX: shells out to `kill -0 &lt;pid&gt;`, which</span></span>
+<span class="code-line"><span class="code-comment">/// does not actually send a signal — it&apos;s just a liveness probe that</span></span>
+<span class="code-line"><span class="code-comment">/// succeeds iff the process exists and we&apos;re permitted to signal it.</span></span>
+<span class="code-line"><span class="code-keyword">pub fn</span> <span class="code-function">pid_alive</span>(pid: u32) -&gt; bool {</span>
+<span class="code-line">    std::process::Command::<span class="code-function">new</span>(<span class="code-string">"kill"</span>)</span>
+<span class="code-line">        .<span class="code-function">arg</span>(<span class="code-string">"-0"</span>)</span>
+<span class="code-line">        .<span class="code-function">arg</span>(pid.<span class="code-function">to_string</span>())</span>
+<span class="code-line">        .<span class="code-function">stdout</span>(std::process::Stdio::<span class="code-function">null</span>())</span>
+<span class="code-line">        .<span class="code-function">stderr</span>(std::process::Stdio::<span class="code-function">null</span>())</span>
+<span class="code-line">        .<span class="code-function">status</span>()</span>
+<span class="code-line">        .<span class="code-function">map</span>(|s| s.<span class="code-function">success</span>())</span>
+<span class="code-line">        .<span class="code-function">unwrap_or</span>(<span class="code-keyword">false</span>)</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">The comment is the key: this is just a &ldquo;is it alive?&rdquo; probe.</p>
+            <p class="tl">Despite the name,
+              <span class="term" data-definition="kill -0 is a command that sends NO signal at all — it just asks the operating system does a process with this ID exist and may I poke it. The 0 means dont actually do anything.">kill -0</span>
+              does NOT kill anything.</p>
+            <p class="tl">It just asks the OS &ldquo;does a process with this badge number exist?&rdquo;</p>
+            <p class="tl">Define a function that takes a
+              <span class="term" data-definition="A signal is a tiny message the operating system can send to a running program — like a tap on the shoulder telling it to stop, pause, or reload.">signal</span>-free check.</p>
+            <p class="tl">Run the real <code>kill</code> program as a tiny helper&hellip;</p>
+            <p class="tl">&hellip;with the <code>-0</code>
+              <span class="term" data-definition="A flag is an option you add to a command to change what it does — like adding -0 here. When talking to an AI you would say add a flag for that.">flag</span>
+              (the &ldquo;just check&rdquo; mode)&hellip;</p>
+            <p class="tl">&hellip;pointed at the daemon&apos;s badge number.</p>
+            <p class="tl">Throw away whatever it prints — we only want the verdict.</p>
+            <p class="tl">Same for error text — silence it.</p>
+            <p class="tl">Actually run it and grab the result.</p>
+            <p class="tl">Did it succeed? Then yes, the daemon is alive.</p>
+            <p class="tl">If anything went wrong, assume it is dead (safe default).</p>
+            <p class="tl">Done.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🛡️</div>
+        <div class="callout-content">
+          <strong class="callout-title">Why a subprocess instead of doing it directly?</strong>
+          <p>The whole crate forbids
+            <span class="term" data-definition="unsafe is a Rust keyword marking code that bypasses the language safety checks. semfs bans it entirely, so it shells out to the kill program instead of poking the OS directly.">unsafe</span>
+            code, so semfs borrows the operating system&apos;s own <code>kill</code> tool rather than poking the kernel itself. Clean and honest.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 4: STALE STATE + DEBUG ROUTINE ────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The &ldquo;out of order&rdquo; sign nobody cleared</h2>
+
+      <p>When a daemon crashes, it leaves its
+        <span class="term" data-definition="A socket is a software phone line two programs use to talk to each other on the same machine. IPC means inter-process communication — programs chatting locally.">socket</span>
+        and pid files lying around —
+        <span class="term" data-definition="Stale means left over and no longer valid — like an out-of-order sign on a door the worker already left. The file exists but the process behind it is gone.">stale</span>
+        files like a sign on a door nobody is behind anymore. semfs cleans them up automatically on the next mount.</p>
+
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="flow-step-num">1</div>
+          <p>Daemon crashes mid-session 💥</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">2</div>
+          <p>Stale <code>.pid</code> + <code>.sock</code> left behind</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">3</div>
+          <p>You re-run <code>semfs mount</code></p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">4</div>
+          <p><code>cleanup_stale</code> sees the dead pid, deletes the junk ✨</p>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🚚</div>
+        <div class="callout-content">
+          <strong class="callout-title">Your data was never at risk</strong>
+          <p>The Cache (🗄️) is a SQLite database with a
+            <span class="term" data-definition="WAL (write-ahead log) is a safety journal a database writes to first, so even a crash mid-write cant corrupt your data — it just replays the journal on restart.">WAL</span>,
+            so a crash cannot corrupt it. Queued writes simply resume and the SyncEngine (🚚) drives them to the Backend (📚).</p>
+        </div>
+      </div>
+
+      <h3 class="screen-heading" style="font-size: var(--text-xl)">The Operator&apos;s Debug Routine</h3>
+      <div class="step-cards">
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <strong><code>semfs status</code> — is the daemon alive?</strong>
+            <p>This runs <code>pid_alive</code> for you. Dead caretaker? That explains a hung mount instantly.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <strong><code>semfs logs</code> — what does the logbook say?</strong>
+            <p>Read the per-tag log (🗄️). Almost every mystery confesses itself here.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <strong>Read the INFO / WARN / STOP tiers — patient or stuck?</strong>
+            <p>When the Backend (📚) is slowly processing a file, semfs escalates its messages. INFO = normal. WARN = taking a while. STOP = genuinely stuck. This is how you know whether to wait or worry.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <strong>Stale files after a crash? Cleanup runs on next mount.</strong>
+            <p><code>cleanup_stale</code> clears the leftover sign automatically — usually nothing for you to do.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <strong>Still stuck? <code>semfs unmount --force</code></strong>
+            <p>A
+              <span class="term" data-definition="Force unmount tears down a wedged mount even if it is misbehaving — like cutting the power to a stuck elevator so you can reset it cleanly. The --force part overrides the polite shutdown.">force unmount</span>
+              tears down a wedged mount so you can start fresh.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">6</div>
+          <div class="step-body">
+            <strong>Re-mount with the firehose on</strong>
+            <p>Set the
+              <span class="term" data-definition="An environment variable is a named setting you give a program before it starts — like leaving a note that changes how it behaves. RUST_LOG is one of these.">environment variable</span>
+              <span class="term" data-definition="RUST_LOG is the setting that controls how chatty a Rust program is. Crank it up to make semfs narrate nearly everything it does — the single best debugging tool.">RUST_LOG</span>
+              to crank up
+              <span class="term" data-definition="Tracing log levels go info (normal), debug (more detail), trace (everything). Higher levels narrate more of what the program is thinking.">log detail</span>:
+              <code>RUST_LOG=semfs=debug,semfs_core=trace semfs mount …</code></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🔭</div>
+        <div class="callout-content">
+          <strong class="callout-title">The aha: you cannot fix what you cannot see</strong>
+          <p>Good systems externalize their state into files and logs. semfs does this on purpose — that
+            <span class="term" data-definition="Observability is how easily you can understand whats happening inside a system from the outside, by reading its logs and state. A system you can see into is one you can fix and steer.">observability</span>
+            is exactly what makes it debuggable and steerable.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: CAPSTONE QUIZ ──────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Capstone: think like the operator</h2>
+      <p>Four scenarios that tie the whole course together. There are no trick questions — just the calm routine you now own.</p>
+
+      <div class="quiz-container" id="quiz-module6">
+
+        <div class="scenario-block">
+          <div class="scenario-context">
+            <span class="scenario-label">Scenario 1 · Debugging</span>
+            <p><code>semfs grep "budget"</code> returns nothing, but <code>cat notes/budget.md</code> shows your content just fine. Walk the actors — where do you look?</p>
+          </div>
+          <div class="quiz-question-block"
+               data-correct="opt-index"
+               data-explanation-right="Exactly. cat working means the Cache (🗄️) and mount are healthy — the file is there locally. The problem is upstream: has the file finished syncing and being indexed on the Backend (📚)? Check the log for INFO/WARN/STOP on that doc; the inflight poller / SemanticIndex is the suspect."
+               data-explanation-wrong="Not quite. Since cat shows the content, the Cache and mount are clearly healthy — the bytes are local. Search uses the indexed copy on the Backend, so the real suspect is upstream: is the file finished syncing and indexing yet? Check the log tiers on that doc.">
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="opt-cache" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>The Cache is broken — the file must be corrupted</span>
+              </button>
+              <button class="quiz-option" data-value="opt-index" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>The mount is healthy; the file may not have finished syncing/indexing on the Backend yet — check the log tiers</span>
+              </button>
+              <button class="quiz-option" data-value="opt-remount" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>Force-unmount and re-mount immediately, then try again</span>
+              </button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+        </div>
+
+        <div class="scenario-block">
+          <div class="scenario-context">
+            <span class="scenario-label">Scenario 2 · Lifecycle</span>
+            <p>Your machine hard-crashed mid-session. You re-run <code>semfs mount notes</code>. Why does it usually just work?</p>
+          </div>
+          <div class="quiz-question-block"
+               data-correct="opt-cleanup"
+               data-explanation-right="Right. cleanup_stale detects the dead pid and removes the leftover socket/pid files, so a fresh daemon starts cleanly. Meanwhile the SQLite Cache + WAL preserved your data, and queued writes resume syncing — nothing was lost."
+               data-explanation-wrong="Not quite. semfs doesn&apos;t re-download or rebuild everything. On the next mount, cleanup_stale spots the dead pid and deletes the stale socket/pid files; your data survived because the SQLite Cache uses a WAL, and queued writes simply resume.">
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="opt-redownload" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>It re-downloads every file fresh from the Backend each time</span>
+              </button>
+              <button class="quiz-option" data-value="opt-cleanup" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>cleanup_stale clears the dead daemon&apos;s leftover files; the WAL-backed Cache preserved your data; queued writes resume</span>
+              </button>
+              <button class="quiz-option" data-value="opt-lucky" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>It is luck — crashes usually lose data and you got away with it</span>
+              </button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+        </div>
+
+        <div class="scenario-block">
+          <div class="scenario-context">
+            <span class="scenario-label">Scenario 3 · The big payoff — steering AI</span>
+            <p>Your AI agent insists a file it just wrote &ldquo;is not there&rdquo; and wants to rewrite it. Based on everything you learned, what is really going on — and what is the calmest next instruction?</p>
+          </div>
+          <div class="quiz-question-block"
+               data-correct="opt-reread"
+               data-explanation-right="Exactly. The write is durable locally (Cache + WAL) and the SyncEngine (🚚) will push it to the Backend in the background — nothing is lost. The calm move is to tell the agent to re-read the file from the mount or wait for sync, not rewrite it. That breaks the doom-loop."
+               data-explanation-wrong="Not quite. Letting the agent rewrite the file is exactly the doom-loop trap. The write is durable locally and syncing in the background — nothing is lost. Calmly instruct the agent to re-read from the mount or wait for sync instead of rewriting.">
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="opt-rewrite" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>The file is genuinely lost — let the agent rewrite it from scratch</span>
+              </button>
+              <button class="quiz-option" data-value="opt-reread" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>The write is durable locally and syncing in the background — calmly tell the agent to re-read from the mount or wait, not rewrite</span>
+              </button>
+              <button class="quiz-option" data-value="opt-panic" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>Restart the whole machine to be safe</span>
+              </button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+        </div>
+
+        <div class="scenario-block">
+          <div class="scenario-context">
+            <span class="scenario-label">Scenario 4 · Architecture recap</span>
+            <p>In one sentence, why is semfs designed so its entire state lives in inspectable files and logs?</p>
+          </div>
+          <div class="quiz-question-block"
+               data-correct="opt-observe"
+               data-explanation-right="Exactly. So a human — or a better prompt — can SEE what is happening and intervene. Observability is the whole point: it is what makes the system debuggable and steerable."
+               data-explanation-wrong="Not quite. It is not about speed or saving disk space. State lives in files and logs so a human or a smarter prompt can see what is happening and step in — that observability is what makes semfs debuggable and steerable.">
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="opt-speed" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>To make the program run faster</span>
+              </button>
+              <button class="quiz-option" data-value="opt-observe" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>So a human or a better prompt can see what is happening and intervene — observability makes it debuggable and steerable</span>
+              </button>
+              <button class="quiz-option" data-value="opt-disk" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>To save disk space by avoiding memory</span>
+              </button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module6')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module6')">Try Again</button>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 6: COURSE WRAP-UP ─────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">You now understand semfs end-to-end</h2>
+
+      <p>Six modules ago, semfs was a black box. Now you can trace any byte from your keystroke to the cloud and back — and find the problem when it hides.</p>
+
+      <div class="pattern-cards">
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">✍️</div>
+          <h4 class="pattern-title">M1 · The write path</h4>
+          <p class="pattern-desc">What happens to a file the moment you save it into the mount.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">🎭</div>
+          <h4 class="pattern-title">M2 · The cast</h4>
+          <p class="pattern-desc">The Daemon 🧑‍🔧, Cache 🗄️, Backend 📚, and SyncEngine 🚚 — who does what.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">🔌</div>
+          <h4 class="pattern-title">M3 · The trait seam</h4>
+          <p class="pattern-desc">One folder, any storage — the socket that lets backends swap freely.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">📚</div>
+          <h4 class="pattern-title">M4 · Backends &amp; sync</h4>
+          <p class="pattern-desc">The power plants behind the wall and the couriers driving between them.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">🎩</div>
+          <h4 class="pattern-title">M5 · The clever tricks</h4>
+          <p class="pattern-desc">Coalescing, backoff, jitter, the crash-safe queue, the NFS trick.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">🔭</div>
+          <h4 class="pattern-title">M6 · When things break</h4>
+          <p class="pattern-desc">The operator&apos;s routine: check the process, clear stale state, read the log.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🚀</div>
+        <div class="callout-content">
+          <strong class="callout-title">The vibe coder&apos;s real superpower</strong>
+          <p>You do not have to write the fix. The skill is <em>locating</em> the problem and <em>directing</em> the fix — knowing where to look and what question to ask. That is how you steer an AI like an engineer instead of being dragged along by one.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>
+  </main>
+
+</body>
+</html>

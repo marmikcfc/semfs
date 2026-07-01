@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Next 5 Experiments — token metric, accuracy untouched (2026-06-12)</title>
+<style>
+  :root{--bg:#0f1117;--card:#181c25;--ink:#e8eaf0;--dim:#9aa3b5;--red:#e74c3c;--blue:#3498db;--green:#2ecc71;--gold:#f1c40f;--line:#2a3040}
+  body{background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:0;padding:32px 8vw}
+  h1{font-size:26px;margin:0 0 4px} h2{font-size:19px;margin:36px 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{font-size:16px;margin:18px 0 6px}
+  .sub{color:var(--dim);margin-bottom:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 22px;margin:14px 0}
+  .gold{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+  pre{background:#0b0d12;border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#1f2430}
+  .tag{display:inline-block;border-radius:4px;padding:1px 8px;font-size:12px;font-weight:600;margin-right:6px}
+  .t-new{background:#2c3e70} .t-rem{background:#3a2c50} .t-safe{background:#1d4032} .t-80{background:#5c4a09}
+  details{margin:8px 0} summary{cursor:pointer;color:var(--blue);font-weight:600}
+  .legend span{margin-right:18px}
+  .dim{color:var(--dim)}
+  .num{font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+
+<h1>Next 5 experiments — cut tokens, hold accuracy</h1>
+<div class="sub">2026-06-12 · synthesized from <code>RUN_MANIFEST.md</code> + E8/E11 Modal run-2 artifacts + EC2 trace breakdowns ·
+method: first-principles ▸ theory-of-constraints ▸ five-whys-plus ▸ analyze-benchmark-results (nested combination)</div>
+
+<h2>ELI5 → Expert in 5 steps</h2>
+<div class="card">
+<ol>
+<li><b>ELI5:</b> The agent pays for its whole conversation again on every tool call. Long conversations are what's expensive — not big search results anymore.</li>
+<li><b>Why:</b> <code>cached_input=0</code> ⇒ <code>Tokens ≈ T·S + Σ(T−s)·oₛ + G</code>. Codex also clips every tool output at ~10 KB before the model sees it (E6), so per-call payload <i>oₛ</i> is already bounded. The only unbounded term left is <b>T, the turn count</b>.</li>
+<li><b>Evidence:</b> the 30-cell E8 scatter below — tokens track calls superlinearly; the cell <i>means</i> are dominated by right-tail runs (18–27 calls → 400–900K). Score is nearly independent of tokens within an arm (289 nokg: 113K→0/15, 659K→9/15; E9w2: 49K and 238K both 4/15).</li>
+<li><b>Where tails come from (trace-verified):</b> the 17-call v4_i2 run contains only <b>40K chars of total tool output</b> — no blob. Its bill is 4 consecutive near-empty <code>semfs grep</code> retries (~400 chars each) + ~8 python <code>rglob</code> crawls, each re-paying 8–10K of context. <b>Empty results breed turns; crawls breed turns.</b></li>
+<li><b>Expert framing:</b> post-grep-cap, the constraint (ToC) moved from payload to <b>turn-tail</b>. Every proposed experiment must collapse T's right tail — on the hit path (search answers in 1 turn, trusted), the miss path (a miss is terminal, not an invitation to retry), or the discovery path (the map is pre-paid in S, not re-derived imperatively).</li>
+</ol>
+</div>
+
+<h2>The physics in one picture (E8, all 30 cells, real data)</h2>
+<div class="card">
+<svg viewBox="0 0 620 400" width="100%" style="max-width:760px">
+  <line x1="60" y1="360" x2="580" y2="360" stroke="#445" stroke-width="1"/>
+  <line x1="60" y1="360" x2="60" y2="30" stroke="#445" stroke-width="1"/>
+  <text x="300" y="392" fill="#9aa3b5" font-size="12" text-anchor="middle">tool calls (T)</text>
+  <text x="18" y="200" fill="#9aa3b5" font-size="12" transform="rotate(-90 18 200)" text-anchor="middle">total tokens</text>
+  <text x="60" y="375" fill="#667" font-size="10">0</text><text x="310" y="375" fill="#667" font-size="10">15</text><text x="560" y="375" fill="#667" font-size="10">30</text>
+  <text x="38" y="364" fill="#667" font-size="10">0</text><text x="30" y="200" fill="#667" font-size="10">450K</text><text x="30" y="44" fill="#667" font-size="10">900K</text>
+  <line x1="60" y1="352" x2="580" y2="352" stroke="#2ecc71" stroke-dasharray="4 4" stroke-width="1"/>
+  <text x="565" y="346" fill="#2ecc71" font-size="10" text-anchor="end">floor band ~21K (measured twice)</text>
+  <circle cx="327" cy="286" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 16 calls, 208,715 tok</title></circle>
+  <circle cx="360" cy="42" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 18 calls, 894,726 tok</title></circle>
+  <circle cx="243" cy="226" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 11 calls, 375,816 tok</title></circle>
+  <circle cx="193" cy="307" r="6" fill="#3498db" opacity="0.75"><title>plain 8 calls, 147,998 tok</title></circle>
+  <circle cx="277" cy="222" r="6" fill="#3498db" opacity="0.75"><title>plain 13 calls, 389,474 tok</title></circle>
+  <circle cx="277" cy="186" r="6" fill="#3498db" opacity="0.75"><title>plain 13 calls, 490,612 tok</title></circle>
+  <circle cx="243" cy="315" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 11 calls, 126,681 tok</title></circle>
+  <circle cx="193" cy="318" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 8 calls, 118,285 tok</title></circle>
+  <circle cx="210" cy="329" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 9 calls, 86,256 tok</title></circle>
+  <circle cx="160" cy="327" r="6" fill="#3498db" opacity="0.75"><title>plain 6 calls, 93,926 tok</title></circle>
+  <circle cx="143" cy="338" r="6" fill="#3498db" opacity="0.75"><title>plain 5 calls, 61,629 tok</title></circle>
+  <circle cx="277" cy="289" r="6" fill="#3498db" opacity="0.75"><title>plain 13 calls, 200,978 tok</title></circle>
+  <circle cx="377" cy="218" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 19 calls, 399,355 tok</title></circle>
+  <circle cx="227" cy="320" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 10 calls, 113,589 tok</title></circle>
+  <circle cx="510" cy="126" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 27 calls, 659,333 tok</title></circle>
+  <circle cx="210" cy="323" r="6" fill="#3498db" opacity="0.75"><title>plain 9 calls, 104,161 tok</title></circle>
+  <circle cx="210" cy="314" r="6" fill="#3498db" opacity="0.75"><title>plain 9 calls, 130,220 tok</title></circle>
+  <circle cx="160" cy="328" r="6" fill="#3498db" opacity="0.75"><title>plain 6 calls, 88,823 tok</title></circle>
+  <circle cx="210" cy="327" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 9 calls, 92,666 tok</title></circle>
+  <circle cx="210" cy="322" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 9 calls, 105,789 tok</title></circle>
+  <circle cx="193" cy="332" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 8 calls, 78,944 tok</title></circle>
+  <circle cx="193" cy="331" r="6" fill="#3498db" opacity="0.75"><title>plain 8 calls, 81,967 tok</title></circle>
+  <circle cx="193" cy="319" r="6" fill="#3498db" opacity="0.75"><title>plain 8 calls, 114,914 tok</title></circle>
+  <circle cx="160" cy="321" r="6" fill="#3498db" opacity="0.75"><title>plain 6 calls, 110,872 tok</title></circle>
+  <circle cx="427" cy="256" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 22 calls, 291,698 tok</title></circle>
+  <circle cx="293" cy="296" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 14 calls, 179,754 tok</title></circle>
+  <circle cx="460" cy="204" r="6" fill="#e74c3c" opacity="0.75"><title>nokg 24 calls, 438,482 tok</title></circle>
+  <circle cx="377" cy="296" r="6" fill="#3498db" opacity="0.75"><title>plain 19 calls, 178,701 tok</title></circle>
+  <circle cx="160" cy="340" r="6" fill="#3498db" opacity="0.75"><title>plain 6 calls, 57,412 tok</title></circle>
+  <circle cx="227" cy="318" r="6" fill="#3498db" opacity="0.75"><title>plain 10 calls, 118,381 tok</title></circle>
+</svg>
+<div class="legend"><span style="color:#e74c3c">● nokg</span><span style="color:#3498db">● plain</span>
+<span class="dim">hover points for exact values · note both arms have tails; nokg's tail is fatter and further right</span></div>
+</div>
+
+<h2>Five-whys chain (condensed, evidence per step)</h2>
+<div class="card">
+<table>
+<tr><th>#</th><th>Why</th><th>Answer</th><th>Evidence</th></tr>
+<tr><td>1</td><td>Why is nokg mean-tokens &gt; plain on 3/5 E8 cases?</td><td>Right-tail runs (659K, 894K, 438K) dominate n=3 means; medians are far closer.</td><td>30-cell table above</td></tr>
+<tr><td>2</td><td>Why do tail runs cost 3–6× the low mode?</td><td>18–27 calls vs 8–10; cost is superlinear in T (context re-pay).</td><td>cost equation, verified §1.1 TOKEN_ECONOMY</td></tr>
+<tr><td>3</td><td>Why 18–27 calls?</td><td>Re-query loops after thin/empty search results + imperative filesystem crawls (and on 289, the hunt for the 403-stub files).</td><td>v4_i2 trace: 4 near-identical re-greps @ ~400 chars + 8 python rglob crawls</td></tr>
+<tr><td>4</td><td>Why do misses breed retries instead of stopping?</td><td>The render has no terminal miss semantics; the HIGH stop-signal never fires (RRF spread compression; agent often bypasses grep entirely).</td><td>E9w2 kill condition 3/3; E9w1 calibration bug</td></tr>
+<tr><td>5</td><td>Why is discovery re-done imperatively every run?</td><td>No pre-paid workspace map; semfs grep is one probabilistic surface among many; hint compliance ~2/3 — the system never makes the first search <i>sufficient and final</i>.</td><td>LEARNINGS §3/§5</td></tr>
+</table>
+<p><b>Root causes:</b> RC1 miss-path waste (retry loops) · RC2 unpre-paid discovery (crawls) · RC3 hit-path distrust (excerpt not trusted / not sliceable) · RC4 measurement (n=3 means read tails as the config) · RC5 (289-only) accuracy is <i>coupled</i> to exploration via the 403-discovery rubrics — turn-cutting must not hide source-file status.</p>
+<details><summary>Counter-analysis / what else was considered</summary>
+<ul>
+<li><b>Infra?</b> Run-2 log has zero <code>malformed</code>/<code>falling back to cloud</code> markers; the <code>.semfs</code>-marker and provider fixes were applied; smoke passed. Not infra this time.</li>
+<li><b>Payload blobs?</b> Killed by grep-cap + codex clip; v4_i2's total tool output was 40K chars in a 158K-token run. The blob era is over.</li>
+<li><b>Variance only?</b> Tails recur in every cell ever measured (5↔16, 2↔12, 5–6↔14, 8–10↔27). Bimodality is structural, but n≥5 + medians are still mandatory.</li>
+</ul></details>
+</div>
+
+<h2>The 5 experiments (priority order)</h2>
+
+<div class="card">
+<h3>1 · E16 — Terminal-miss + repeat-query guard <span class="tag t-new">NEW</span><span class="tag t-safe">accuracy-proof</span></h3>
+<p><b>What:</b> render-side miss semantics. (a) When a query returns 0 hits or only sub-floor scores: one authoritative line — <i>“No indexed content matches; nearest terms: …; best next action: read &lt;top dir&gt;”</i> — instead of a thin noise render. (b) Daemon session memory: if a query embeds ≥0.9 similar to a previous one, return a ~50-token <i>“identical results to query #N”</i> stub.</p>
+<p><b>Why:</b> attacks RC1, the literal trace pattern (4 consecutive re-greps). Case 15 is the perfect arena: its task references a missing file, both arms burn 78–894K hunting, and accuracy is <b>provably frozen at 1/16 in all 6 cells</b> — any token saved is free.</p>
+<p><b>Prediction:</b> tail-mode frequency halves on 15/95; case-15 nokg mean −40%+. <b>Kill:</b> tails persist with miss-stubs in trace → tails are crawl-driven, weight shifts to E13. <b>Cost:</b> ~1 day (render + daemon session table).</p>
+</div>
+
+<div class="card gold">
+<h3>2 · E14 — <code>semfs slice</code> / search-session artifact <span class="tag t-rem">REMAINING</span><span class="tag t-80">THE 80% ONE</span></h3>
+<p><b>What:</b> <code>semfs grep</code> stores the full ranked result server-side, returns ≤1KB (top-1 answer-bearing excerpt + paths + result-id); <code>semfs slice &lt;id&gt; --file N --range a:b | --grep term</code> fetches exact verbatim rows on demand.</p>
+<p><b>Why this is the 80% lever:</b> the floor flow <code>search → slice → write</code> is T=3 ≈ <b>21–30K tokens</b> — and it has already happened naturally twice (21,473 / 21,743, incl. the 2-call w1 run measured in this analysis at 20.7K). Against E8's plain-289 bar of ~107K that is <b>−75–80%</b>; against current nokg-289 mean (390K) it is −92%. E14's job is to make the floor run the <i>modal outcome</i> instead of a 1-in-3 coin flip: the slice affordance is what makes a small first payload <i>safe to trust</i> (the agent knows it can fetch exact rows without re-searching or re-reading whole files). Field priors: Firetiger artifacts 94% one-shot; Anthropic code-exec −98.7%; SWE-grep context isolation.</p>
+<p><b>Accuracy guard:</b> slice returns verbatim rows (dual-store lesson: tables never compressed); PwC's file-based collapse doesn't apply — the excerpt still carries the answer inline. <b>Kill:</b> agent ignores <code>slice</code> in ≥2/3 runs (affordance unused → hint/UX problem, not architecture). <b>Cost:</b> the one real code investment; scope ~2–3 days.</p>
+</div>
+
+<div class="card">
+<h3>3 · E9-final — render-mode duel settled properly: paths vs two-tier, all 5 cases, n≥5, median-judged <span class="tag t-rem">REMAINING</span></h3>
+<p><b>What:</b> the E9 duel run to completion with the discipline the campaign now mandates (n≥5, medians + tail-rate reported separately), plus a third arm on 289 only: per-hit <b>factual metadata line</b> (size, detected content-kind e.g. <i>“HTML error page, 321B”</i>).</p>
+<p><b>Why:</b> paths mode is the most consistent arm ever measured (85.5K ±1K, 7–8 calls, ×2) — consistency IS tail-killing; but it crawled on the multi-file synthesis case (95: 32 calls/424K). The duel decides the per-case-shape default. The metadata line moves 289's 403-discovery from a 20-turn hunt to turn 1 — token win that can only <i>help</i> the 403 rubrics (RC5), and it's delivery design (the defensible form per the integrity-banner line), not coaching.</p>
+<p><b>Prediction:</b> paths wins QA-shaped (289/175) on median + tail-rate; two-tier wins synthesis (95/15). <b>Kill:</b> no arm separates on medians at n=5 → render mode is exhausted as a lever. <b>Cost:</b> runs only, no code (metadata line ~2h).</p>
+</div>
+
+<div class="card">
+<h3>4 · E13 — ≤1KB workspace map in the hint <span class="tag t-rem">REMAINING</span><span class="tag t-safe">accuracy-proof</span></h3>
+<p><b>What:</b> top-level dirs + file-type census + “where things live” one-liners injected at mount (S grows ~250 tokens; pre-paid once per turn instead of re-derived imperatively).</p>
+<p><b>Why:</b> attacks RC2 — v4_i2 spent ~8 turns on python crawls <i>locating directories the index already knows</i>. Pure S-for-T trade: +1KB scaffold to delete 2–6 discovery turns. Retrieval-free, so accuracy can't move. Aider repo-map / hermesagent lazy-bootstrap precedent.</p>
+<p><b>Prediction:</b> discovery probes 4–8 → 1–2; −15–30% median tokens on crawl-heavy cases (95/15). <b>Kill:</b> probe count unchanged → maps don't steer codex; drop. <b>Cost:</b> half-day.</p>
+</div>
+
+<div class="card">
+<h3>5 · E11-v2 — discovery corpus that actually stresses discovery <span class="tag t-new">REDESIGN</span><span class="tag t-safe">accuracy-proof</span></h3>
+<p><b>What:</b> rebuild the E11 corpus so linear scanning is genuinely expensive: ≥1,000 files and/or ≥10KB per file (padded realistic prose), unnamed answer files, many near-duplicate siblings, tasks stay cross-lingual (zh task ↔ en files).</p>
+<p><b>Why:</b> E11-v1's null result is a corpus artifact, not a thesis failure — 200×1KB files cost only ~70K to scan, so there was nothing for retrieval to save. The token <i>delta</i> vs plain scales with scan cost (plain grows linearly with corpus; semfs stays flat); this is the arena where the −97% discovery-phase numbers (GrepAI) live, and where the already-proven #417→#1 cross-lingual rewrite becomes decisive. semfs already won 1/2 cells even on the trivial corpus (−28% tokens).</p>
+<p><b>Prediction:</b> plain tokens ≥2× semfs at equal accuracy on ≥2/3 cases. <b>Kill:</b> semfs ≤ plain here → the problem is deeper than arena choice (O8's falsifier). <b>Cost:</b> 1 day authoring (fix the rubric name-strictness — accept “Widget-Sigma (variant 42)” — while in there).</p>
+</div>
+
+<div class="card">
+<h3>Honorable mention · E15 — caveman-compressed prose siblings <span class="tag t-rem">REMAINING</span></h3>
+<p>Real input-side lever for synthesis cases (whole doc in one clipped read), but it carries a pre-registered accuracy kill-condition (exact-value loss) — it fails the “accuracy untouched, period” bar this list was selected under. Run it after E9-final, gated exactly as specced.</p>
+</div>
+
+<h2>The 80% math, explicitly</h2>
+<div class="card gold">
+<pre>
+floor (T=3: search → slice → write)      ≈ 21–30K   (measured twice: 21,473 / 21,743 / 20,754)
+plain bar, case 289, E8 Modal n=3 mean   ≈ 107,734
+current nokg, case 289, E8 mean          ≈ 390,759
+
+E14 proven  ⇒  ~21–25K typical run
+   vs plain         : −77% … −80%
+   vs current nokg  : −94%
+accuracy: unchanged by construction (verbatim rows; same files surfaced;
+          289's 403-status preserved via E9-final's metadata line)
+</pre>
+<p>The 80% claim is not an extrapolation — the floor runs already exist in the artifacts. E14 (with E16 guarding the miss path) converts them from luck into the design.</p>
+</div>
+
+<h2>Protocol guards (non-negotiable, learned the hard way)</h2>
+<div class="card">
+<ul>
+<li><b>Archive traces on Modal.</b> Run-2 saved only summary JSONs — per-call attribution for E8 was impossible locally. Persist <code>codex_stdout.jsonl</code> per cell before the next run.</li>
+<li><b>n≥5, report median + tail-rate (runs &gt;2× median) separately.</b> Means at n=3 measure the lottery, not the config.</li>
+<li><b>Score axes:</b> case 95 = token/call axis only (filename lottery); 15/44 = ceilings; 289 accuracy includes the 403-discovery coupling — diff rubrics, not totals.</li>
+<li><b>Infra checklist per cell</b> (malformed db / cloud-fallback / 0-result greps) before reading any number as a result.</li>
+<li>Prompt-cache re-scoring stays descoped per the 2026-06-11 decision; raw input tokens remain the metric.</li>
+</ul>
+</div>
+
+<div class="dim" style="margin-top:28px">Sources: RUN_MANIFEST.md · LEARNINGS.md · TOKEN_ECONOMY.md · EXPERIMENTS_NEXT.md · EXPERIMENT_RUN_2.md · RESEARCH_NOTES_EXTERNAL.md · artifacts/run2/e8/*.json (30 cells) · matrix_artifacts/e95v4/v4_i2 &amp; e8seq/w1 trace breakdowns · rcas/2026-06-11-*.md</div>
+</body>
+</html>

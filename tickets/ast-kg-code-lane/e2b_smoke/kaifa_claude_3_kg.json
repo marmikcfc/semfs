@@ -1,0 +1,41 @@
+{
+  "label": "kaifa_claude_3_kg",
+  "agent": "claude",
+  "case": "3",
+  "arm": "kg",
+  "work_dir": "/home/user/run/kaifa_claude_3_kg",
+  "auth_used": "openrouter",
+  "status": "ok",
+  "wall_s": 182,
+  "calls": 12,
+  "used_semfs_grep": true,
+  "tokens": 431443,
+  "usage": {
+    "prompt_tokens": 18,
+    "completion_tokens": 2771,
+    "total_tokens": 431443,
+    "cache_read": 344126,
+    "cache_write": 84528
+  },
+  "deliverables": [
+    "project_dependency_deduplication_list.md"
+  ],
+  "deliverable_content": {
+    "project_dependency_deduplication_list.md": "# Project Dependency Deduplication List\n\n**Generated:** 2026-06-14  \n**Sources:** `dependency-management/pom-parent.xml`, `project-code/pom.xml`, `build/build.gradle`, `dependency-management/requirements.txt`, `dependency-management/python_requirements_dev.txt`, `dependency-management/package.json`, `dependency-management/dependency-audit-2025Q1.md`\n\n---\n\n## Java / Maven / Gradle Dependencies\n\n| Library / Artifact | Category |\n|---|---|\n| spring-boot-starter-parent | Framework – Spring Boot |\n| spring-boot-starter-web | Framework – Spring Boot |\n| spring-boot-starter-data-jpa | Framework – Spring Boot |\n| spring-boot-starter-security | Framework – Spring Boot |\n| spring-boot-starter-validation | Framework – Spring Boot |\n| spring-boot-starter-data-redis | Framework – Spring Boot |\n| spring-boot-starter-cache | Framework – Spring Boot |\n| spring-boot-starter-actuator | Framework – Spring Boot |\n| spring-boot-starter-test | Framework – Spring Boot |\n| spring-cloud-dependencies | Framework – Spring Cloud |\n| spring-security-test | Testing – Spring Security |\n| spring-session-data-redis | Session Management |\n| hibernate-core | ORM – Data Layer |\n| mysql-connector-java / mysql-connector-j | Database Driver |\n| postgresql | Database Driver |\n| flyway-core | Database Migration |\n| redisson | Redis Client |\n| jjwt-api | Authentication – JWT |\n| jjwt-impl | Authentication – JWT |\n| jjwt-jackson | Authentication – JWT |\n| springdoc-openapi-starter-webmvc-ui / springdoc-openapi-ui | API Documentation |\n| lombok | Code Generation |\n| commons-lang3 | Utility – Apache Commons |\n| h2 | Database – Testing |\n| jacoco | Test Coverage |\n| checkstyle | Code Quality |\n| maven-enforcer-plugin | Build Quality |\n| maven-compiler-plugin | Build Tool |\n| maven-surefire-plugin | Build Tool |\n\n---\n\n## Python Dependencies\n\n| Library | Category |\n|---|---|\n| requests | HTTP Client |\n| httpx | HTTP Client |\n| urllib3 | HTTP Client |\n| fastapi | Web Framework |\n| pydantic | Data Validation |\n| SQLAlchemy | ORM – Data Layer |\n| alembic | Database Migration |\n| PyMySQL | Database Driver |\n| psycopg2-binary | Database Driver |\n| celery | Task Queue |\n| redis | Redis Client |\n| pandas | Data Analysis |\n| numpy | Data Analysis |\n| matplotlib | Data Visualization |\n| seaborn | Data Visualization |\n| scipy | Scientific Computing |\n| jupyter | Notebook Environment |\n| jupyterlab | Notebook Environment |\n| ipykernel | Notebook Environment |\n| locust | Performance Testing |\n| pytest | Testing Fra"
+  },
+  "tool_commands": [
+    "semfs grep \"project dependencies requirements package.json setup.py pyproject.toml\" /home/user/ws/mnt/ 2>&1 | head -200",
+    "semfs grep \"requirements.txt pip python packages libraries\" /home/user/ws/mnt/ 2>&1 | head -150",
+    "semfs grep \"Maven pom.xml dependencies Spring Boot artifactId\" /home/user/ws/mnt/ 2>&1 | head -150",
+    "semfs grep \"npm package.json dependencies Node.js frontend JavaScript\" /home/user/ws/mnt/ 2>&1 | head -150",
+    "semfs grep \"Gradle build dependencies implementation compile\" /home/user/ws/mnt/ 2>&1 | head -150",
+    "cat /home/user/ws/mnt/build/settings.gradle 2>/dev/null | head -100",
+    "semfs grep \"build.gradle implementation testImplementation Spring Boot dependencies\" /home/user/ws/mnt/build/ 2>&1 | head -150",
+    "cat /home/user/ws/mnt/dependency-management/maven_bom_config.xml 2>/dev/null | head -100",
+    "cat /home/user/ws/mnt/Desktop/dependency-management/dependency_item_1.md 2>/dev/null | head -80",
+    "semfs grep \"frontend React Vue TypeScript package.json dependencies\" /home/user/ws/mnt/ 2>&1 | head -100",
+    "mkdir -p /home/user/run/kaifa_claude_3_kg/model_output"
+  ],
+  "err": "",
+  "mount_kg_listing": "[root]\nAGENTS.md\nCLAUDE.md\nkg\n[kg]\nGRAPH_REPORT.md\nKNOWLEDGE_GRAPH.md\ngraph.json\n"
+}

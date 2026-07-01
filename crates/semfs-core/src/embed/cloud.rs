@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use super::Embedder;
 
+/// Max inputs per `/embeddings` request. Keeps each HTTP call bounded so a large
+/// file's chunk set is embedded as a sequence of finite requests rather than one
+/// request that could blow the bounded HTTP timeout.
+const EMBED_BATCH: usize = 96;
+
 /// An OpenAI-compatible embeddings client. The same wire format serves OpenAI,
 /// OpenRouter, and other gateways — only `base_url`/`model`/`dims` differ.
 pub struct OpenAiEmbedder {
@@ -79,20 +84,31 @@ impl Embedder for OpenAiEmbedder {
         if texts.is_empty() {
             return Ok(vec![]);
         }
+        // Batch into bounded request sizes. The write path embeds a whole file's
+        // chunk set in one `embed()` call; sending all of it as ONE HTTP request
+        // could exceed the bounded HTTP timeout for a large file (a fresh 30s cap
+        // lives in `crate::http`), leaving the index silently stale. Splitting into
+        // fixed-size batches keeps each request finite so large files index as a
+        // sequence of bounded calls instead of one all-or-nothing request.
         let url = format!("{}/embeddings", self.base_url);
-        let body = EmbedRequest {
-            model: &self.model,
-            input: texts,
-            dimensions: self.dims,
-        };
-        let resp: EmbedResponse = ureq::post(&url)
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .set("Content-Type", "application/json")
-            .send_json(body)
-            .map_err(|e| anyhow::anyhow!("embeddings request failed: {e}"))?
-            .into_json()
-            .map_err(|e| anyhow::anyhow!("decode embeddings response: {e}"))?;
-        Ok(resp.data.into_iter().map(|d| d.embedding).collect())
+        let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+        for batch in texts.chunks(EMBED_BATCH) {
+            let body = EmbedRequest {
+                model: &self.model,
+                input: batch,
+                dimensions: self.dims,
+            };
+            let resp: EmbedResponse = crate::http::timeout_agent()
+                .post(&url)
+                .set("Authorization", &format!("Bearer {}", self.api_key))
+                .set("Content-Type", "application/json")
+                .send_json(body)
+                .map_err(|e| anyhow::anyhow!("embeddings request failed: {e}"))?
+                .into_json()
+                .map_err(|e| anyhow::anyhow!("decode embeddings response: {e}"))?;
+            out.extend(resp.data.into_iter().map(|d| d.embedding));
+        }
+        Ok(out)
     }
 }
 

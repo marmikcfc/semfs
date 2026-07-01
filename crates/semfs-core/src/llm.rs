@@ -36,6 +36,12 @@ impl LlmClient {
         self.chat(system, user, None, 256)
     }
 
+    /// [`complete`] with an explicit output-token budget (compression needs room
+    /// proportional to its input; 256 would truncate mid-document).
+    pub fn complete_n(&self, system: &str, user: &str, max_tokens: u32) -> anyhow::Result<String> {
+        self.chat(system, user, None, max_tokens)
+    }
+
     /// One-shot completion constrained to a JSON Schema via structured outputs
     /// (`response_format: json_schema`, `strict: true`). The provider constrains
     /// decoding to the schema, so the returned string is guaranteed valid JSON of
@@ -46,11 +52,24 @@ impl LlmClient {
         user: &str,
         schema: serde_json::Value,
     ) -> anyhow::Result<String> {
+        self.complete_structured_n(system, user, schema, 512)
+    }
+
+    /// Same as [`complete_structured`] but with an explicit output token budget —
+    /// graph extraction (entities + typed relations) needs more than the 512
+    /// default or the JSON truncates and fails to parse.
+    pub fn complete_structured_n(
+        &self,
+        system: &str,
+        user: &str,
+        schema: serde_json::Value,
+        max_tokens: u32,
+    ) -> anyhow::Result<String> {
         let response_format = serde_json::json!({
             "type": "json_schema",
             "json_schema": { "name": "extraction", "strict": true, "schema": schema }
         });
-        self.chat(system, user, Some(response_format), 512)
+        self.chat(system, user, Some(response_format), max_tokens)
     }
 
     fn chat(
@@ -76,7 +95,8 @@ impl LlmClient {
             ],
             response_format,
         };
-        let resp: ChatResponse = ureq::post(&format!("{}/chat/completions", self.base_url))
+        let resp: ChatResponse = crate::http::llm_agent()
+            .post(&format!("{}/chat/completions", self.base_url))
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json")
             .send_json(body)
@@ -135,13 +155,42 @@ struct ChoiceMessage {
 /// abbreviations, add synonyms/related terms). Output is the rewritten query
 /// only. Callers use this **opt-in** and fail-open to the original on error.
 pub fn rewrite_query(client: &LlmClient, query: &str) -> anyhow::Result<String> {
-    let system = "You rewrite a user's search query to maximize semantic document retrieval. \
-        Expand abbreviations, add closely-related terms and synonyms, and keep it one concise line. \
+    let system =
+        "You rewrite a user's search query to maximize semantic document retrieval over a \
+        possibly MULTILINGUAL corpus (documents may be in Chinese, English, or other languages). \
+        Expand abbreviations and add closely-related terms and synonyms. CRITICALLY: if the query \
+        is in one language but documents may be in another, also append the key search terms \
+        TRANSLATED into the other likely document language(s) — especially Chinese (e.g. \
+        'conversion rate'→'转化率', 'transaction amount'→'成交金额', 'best-selling'→'畅销'). \
+        Keep it to one concise line. \
         Output ONLY the rewritten query — no quotes, no preamble, no explanation.";
     let out = client.complete(system, query)?;
     let out = out.trim().trim_matches('"').trim().to_string();
     if out.is_empty() {
         anyhow::bail!("empty rewrite");
+    }
+    Ok(out)
+}
+
+/// E9(d)/E15 pilot: caveman-style telegraphic compression of a PROSE excerpt
+/// before inline render. Connective prose is compressed; every number, date,
+/// amount, name, identifier, and table-like line is preserved VERBATIM (the
+/// format-trap guard). Callers fail-open to the original text on any error.
+/// The call runs in the semfs process: its tokens bill to semfs's key, never
+/// to the agent — the agent only ever receives the smaller excerpt.
+pub fn compress_excerpt(client: &LlmClient, text: &str) -> anyhow::Result<String> {
+    let system = "Compress the document text the user provides, telegraphic style: drop filler \
+        words, connective prose, pleasantries, and repetition. PRESERVE VERBATIM, never reword: \
+        every number, percentage, amount, date, version, product/person/file name, identifier, \
+        and any table-like or `key: value` line (copy such lines unchanged). Keep the content's \
+        original language(s) and its order. Target 40-60% of the original length. \
+        Output ONLY the compressed text — no preamble, no commentary.";
+    // Output budget proportional to input (~chars/3 ≈ tokens), clamped sane.
+    let max_tokens = ((text.len() / 3) as u32).clamp(512, 4096);
+    let out = client.complete_n(system, text, max_tokens)?;
+    let out = out.trim().to_string();
+    if out.is_empty() {
+        anyhow::bail!("empty compression");
     }
     Ok(out)
 }

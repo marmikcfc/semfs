@@ -1,0 +1,3 @@
+/srv/semfs-benchmark/Workspace-Bench/evaluation/filesys/chanpin_workdir_Codex_GPT-5.4/desktop/fashion_ecommerce/product_data/top10_product_status_table.xlsx
+/srv/semfs-benchmark/Workspace-Bench/evaluation/filesys/chanpin_workdir_Codex_GPT-5.4/desktop/fashion_ecommerce/product_data/apparel_product_shooting_sheet.xlsx
+/srv/semfs-benchmark/Workspace-Bench/evaluation/filesys/chanpin_workdir_Codex_GPT-5.4/desktop/fashion_ecommerce/product_data/problem_product_tracking.xlsx

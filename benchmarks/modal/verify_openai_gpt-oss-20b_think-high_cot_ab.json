@@ -1,0 +1,310 @@
+{
+  "model": "openai/gpt-oss-20b",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "PARSE_ERROR",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "",
+      "usage": {
+        "in": 2074,
+        "out": 16000,
+        "reasoning": 18958
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "shower curtains billow inwards"
+      ],
+      "qwen_reason": "The compressed version introduces the factual claim 'shower curtains billow inwards', which is not present in the original passage. No facts from the original were omitted.",
+      "usage": {
+        "in": 2204,
+        "out": 6159,
+        "reasoning": 6815
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements (numbers, dates, names, decisions, descriptors) from the original are preserved verbatim or in equivalent wording in the compressed version. No facts are omitted and no new, unsupported facts are added. The reformatting into lists, bullet points, and different phrasings is acceptable, and non-facts such as questions, filler, or stylistic changes are legitimately omitted.",
+      "usage": {
+        "in": 2358,
+        "out": 9295,
+        "reasoning": 11509
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Association, as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omitted the fact that 'Association' was the Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1). No additional facts were introduced in the compressed text.",
+      "usage": {
+        "in": 2444,
+        "out": 7640,
+        "reasoning": 8116
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "34.22"
+      ],
+      "qwen_reason": "The compressed version adds a numeric identifier (34.22) for the first association entry that was not present in the original. No other facts were omitted or altered.",
+      "usage": {
+        "in": 2477,
+        "out": 9525,
+        "reasoning": 10667
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements—speaker attributions, role responsibilities, key statements about requirements, and agenda items—are preserved. Filler and back‑channel material (e.g., \"Ah ri\", \"Right. Right.\", \"And I'm marketing.\", and disfluencies) are omitted, which is allowed. No new facts appear in the compressed version, nor are any substantive facts from the original missing. Therefore the compression is lossless.",
+      "usage": {
+        "in": 1990,
+        "out": 14654,
+        "reasoning": 17483
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "PARSE_ERROR",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "",
+      "usage": {
+        "in": 2167,
+        "out": 16000,
+        "reasoning": 18692
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts present in the original are preserved in the compressed version. The compression removed only non‑factual filler and altered wording but did not omit any data, add new data, or change any factual value.",
+      "usage": {
+        "in": 2375,
+        "out": 4425,
+        "reasoning": 5375
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "PARSE_ERROR",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "",
+      "usage": {
+        "in": 2522,
+        "out": 16000,
+        "reasoning": 21293
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Fitness Tracking: Most smartwatches come with sensors and built-in apps that track your workouts, steps, heart rate, and other fitness-related metrics.",
+        "Sleep Tracking: Some smartwatches can track your sleep patterns, including your REM cycles, deep sleep stages, and overall sleep quality."
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compression omitted the distribution qualifiers ‘Most’ and ‘Some’ for fitness tracking and sleep tracking, thus dropping two facts.",
+      "usage": {
+        "in": 2086,
+        "out": 13712,
+        "reasoning": 16628
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts (names, dates, numbers, designations, and relationships) in the original are preserved verbatim in the compressed version; differences involve only wording or formatting such as the omission of the adverb \"thereunto\" and \"duly\"—none of which affect factual content.",
+      "usage": {
+        "in": 2508,
+        "out": 4101,
+        "reasoning": 4449
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts—including section titles, bullet points, numerical identifiers, legal citations, names, and detailed clauses—are preserved exactly; only formatting and line‑break differences were removed, which is acceptable.",
+      "usage": {
+        "in": 2406,
+        "out": 4520,
+        "reasoning": 5472
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts from the original passage are preserved verbatim in the compressed version – numbers, percentages, dates, names, and statements of fact remain unchanged, with only formatting differences. No facts are omitted or fabricated.",
+      "usage": {
+        "in": 2411,
+        "out": 5100,
+        "reasoning": 6078
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts from the original passage are preserved in the compressed version. No facts are omitted or fabricated; only wording, formatting, and punctuation changes occurred.",
+      "usage": {
+        "in": 1984,
+        "out": 4793,
+        "reasoning": 4737
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual details, including numeric values, names, dates, measurements, treatment specifics, figure references, and percentages present in the original are preserved verbatim (aside from formatting and wording changes). No facts were omitted, added, or altered.",
+      "usage": {
+        "in": 2557,
+        "out": 9282,
+        "reasoning": 9847
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All quantified facts (percentages, frequencies, citation references), clinical outcomes, and statements about HPV status, prognosis, mortality, survival, and future research were preserved in the compressed version. The compression only restructured the prose, omitted filler and repeated segments, and did not add new facts or omit any existing ones.",
+      "usage": {
+        "in": 2315,
+        "out": 15404,
+        "reasoning": 17307
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "Identified two support frameworks: work-related management strategies and personal strategies."
+      ],
+      "qwen_reason": "The compressed text states that the authors identified two support frameworks (work-related management strategies and personal strategies), whereas the original states they identified work‑related management strategies and personal strategies as their main support framework (i.e., one framework). This adds an unsupported fact and changes the scope of the original fact.",
+      "usage": {
+        "in": 2282,
+        "out": 10970,
+        "reasoning": 14821
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version retains all factual content (speaker labels, statements, and extracted ideas). Removed elements such as \"yeah\", \"{disfmarker}\", \"{vocalsound}\", filler words, repetitions, and non‑factual utterances like \"Great.\", \"Alright.\" were omitted. No new facts were introduced, and none of the original facts are missing. Thus the compression is lossless.",
+      "usage": {
+        "in": 2092,
+        "out": 2769,
+        "reasoning": 3061
+      }
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information – names, dates, list structures, code details, and user comments – remains identical in both texts.  The compression removed only filler words (“Unfortunately”, “really”) and minor case/formatting differences, which do not alter any facts. Hence the compression is lossless.",
+      "usage": {
+        "in": 2595,
+        "out": 6230,
+        "reasoning": 7384
+      }
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements (names, numbers, specifications, and statements) present in the original passage are also present in the compressed text. No facts were omitted or added, and only formatting/wording differences were made.",
+      "usage": {
+        "in": 2465,
+        "out": 14759,
+        "reasoning": 14936
+      }
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All names, numbers, dates, and factual statements present in the original are retained in the compressed version; only wording, punctuation, and formatting have changed, which does not affect the facts.",
+      "usage": {
+        "in": 2139,
+        "out": 7455,
+        "reasoning": 9411
+      }
+    }
+  ]
+}

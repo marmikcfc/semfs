@@ -83,76 +83,101 @@ _SEMFS_B_EOF
 
 const MARKER: &str = "semfs grep wrapper";
 
-/// Append the wrapper to ~/.zshrc if no marker is present. No-op if any
-/// wrapper block already exists — this is the cheap path used by `mount`.
-/// Returns true when a fresh install happened.
-pub fn ensure_grep_wrapper_present() -> Result<bool> {
+/// The shell startup files the wrapper must live in so `grep` resolves to
+/// `semfs grep` for EVERY shell an agent (or human) might use:
+///   - `~/.zshrc`  — zsh interactive.
+///   - `~/.bashrc` — bash *interactive* (e.g. a human terminal tab).
+///   - bash LOGIN file — what `bash -lc '…'` sources. Codex/Claude run commands
+///     via `bash -lc`, a *non-interactive login* shell. The Ubuntu-default
+///     `~/.bashrc` early-returns when non-interactive (`case $- in *i*) ;;
+///     *) return;;`), so the wrapper there never runs for an agent. The login
+///     file (`~/.bash_profile`|`~/.bash_login`|`~/.profile`) has no such guard,
+///     so the wrapper placed there DOES run for `bash -lc` — this is the line
+///     that makes a plain `grep` semantic for codex inside a mount.
+/// The wrapper body is POSIX `sh` (no bashisms), so it is safe in `~/.profile`.
+fn target_rc_files() -> Result<Vec<std::path::PathBuf>> {
     let home = std::env::var("HOME").map(std::path::PathBuf::from)?;
-    let zshrc = home.join(".zshrc");
-
-    if let Ok(content) = std::fs::read_to_string(&zshrc) {
-        if content.contains(MARKER) {
-            return Ok(false);
-        }
-    }
-
-    append_wrapper(&zshrc)?;
-    Ok(true)
+    let mut files = vec![home.join(".zshrc"), home.join(".bashrc")];
+    files.push(bash_login_file(&home));
+    Ok(files)
 }
 
-/// Strip any existing wrapper block and append a fresh copy. This is the
-/// force path used by `semfs init` — run it after upgrading the binary so
-/// the shell integration matches the current version.
-pub fn reinstall_grep_wrapper() -> Result<()> {
-    let home = std::env::var("HOME").map(std::path::PathBuf::from)?;
-    let zshrc = home.join(".zshrc");
-
-    if let Ok(content) = std::fs::read_to_string(&zshrc) {
-        if content.contains(MARKER) {
-            let mut cleaned = String::new();
-            let mut skip = false;
-            for line in content.lines() {
-                if line.contains(MARKER) {
-                    skip = true;
-                    continue;
-                }
-                if skip && line.trim() == "}" {
-                    skip = false;
-                    continue;
-                }
-                if !skip {
-                    cleaned.push_str(line);
-                    cleaned.push('\n');
-                }
-            }
-            std::fs::write(&zshrc, cleaned)?;
+/// The file a bash *login* shell sources: the first of `~/.bash_profile`,
+/// `~/.bash_login`, `~/.profile` that exists. We must NOT create
+/// `~/.bash_profile` when only `~/.profile` exists — doing so would shadow
+/// `~/.profile` and change the user's login behavior. Default to `~/.profile`
+/// (the universal fallback bash reads when no bash-specific login file exists).
+fn bash_login_file(home: &std::path::Path) -> std::path::PathBuf {
+    for name in [".bash_profile", ".bash_login", ".profile"] {
+        let p = home.join(name);
+        if p.is_file() {
+            return p;
         }
     }
+    home.join(".profile")
+}
 
-    append_wrapper(&zshrc)?;
+/// Append the wrapper to each target shell file that lacks it. No-op for any
+/// file that already has the wrapper — this is the cheap path used by `mount`.
+/// Returns true when at least one fresh install happened.
+pub fn ensure_grep_wrapper_present() -> Result<bool> {
+    let mut installed = false;
+    for rc in target_rc_files()? {
+        if let Ok(content) = std::fs::read_to_string(&rc) {
+            if content.contains(MARKER) {
+                continue;
+            }
+        }
+        append_wrapper(&rc)?;
+        installed = true;
+    }
+    Ok(installed)
+}
+
+/// Strip any existing wrapper block and append a fresh copy to every target
+/// shell file. Force path used by `semfs init` — run after upgrading the binary
+/// so the shell integration matches the current version.
+pub fn reinstall_grep_wrapper() -> Result<()> {
+    for rc in target_rc_files()? {
+        if let Ok(content) = std::fs::read_to_string(&rc) {
+            if content.contains(MARKER) {
+                let mut cleaned = String::new();
+                let mut skip = false;
+                for line in content.lines() {
+                    if line.contains(MARKER) {
+                        skip = true;
+                        continue;
+                    }
+                    if skip && line.trim() == "}" {
+                        skip = false;
+                        continue;
+                    }
+                    if !skip {
+                        cleaned.push_str(line);
+                        cleaned.push('\n');
+                    }
+                }
+                std::fs::write(&rc, cleaned)?;
+            }
+        }
+        append_wrapper(&rc)?;
+    }
     Ok(())
 }
 
-fn append_wrapper(zshrc: &std::path::Path) -> Result<()> {
+fn append_wrapper(rc: &std::path::Path) -> Result<()> {
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
-        .open(zshrc)?;
+        .open(rc)?;
     file.write_all(SHELL_WRAPPER.as_bytes())?;
     Ok(())
 }
 
 pub async fn run(_args: Args) -> Result<()> {
     reinstall_grep_wrapper()?;
-    use std::io::IsTerminal;
-    let color = std::io::stderr().is_terminal();
-    let cmd = if color {
-        "\x1b[1;36msource ~/.zshrc\x1b[0m"
-    } else {
-        "source ~/.zshrc"
-    };
-    eprintln!("semantic grep (re)installed.");
-    eprintln!("run: {cmd}");
+    eprintln!("semantic grep (re)installed for zsh + bash (interactive and login shells).");
+    eprintln!("open a new terminal, or `source` your shell rc to use it now.");
     Ok(())
 }

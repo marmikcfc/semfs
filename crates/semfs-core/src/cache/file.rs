@@ -24,6 +24,15 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Whether flush should materialize `<file>.extracted.md` siblings for binary
+/// documents (`SEMFS_EXTRACT_SIBLING`). Off unless explicitly enabled; the
+/// shipped delivery path inlines extracted text in `semfs grep` instead.
+fn extract_sibling_enabled() -> bool {
+    std::env::var("SEMFS_EXTRACT_SIBLING")
+        .map(|v| matches!(v.as_str(), "on" | "1" | "true"))
+        .unwrap_or(false)
+}
+
 /// A handle to an open file backed by chunked SQLite storage.
 ///
 /// Each read/write operates directly on `fs_data` chunks. The handle
@@ -283,15 +292,99 @@ impl crate::vfs::File for SqliteFile {
 
     async fn flush(&self) -> VfsResult<()> {
         // Local semantic index — maintained on flush, independent of cloud sync.
-        // Re-index the file's current content (replaces its prior chunks). Only
-        // valid UTF-8 is indexed; binary files are skipped. Each lock is taken
-        // and released separately so we never hold the conn across index().
+        // Re-index the file's current content (replaces its prior chunks).
+        //
+        // Routing is by content: valid UTF-8 (text/code/markdown/HTML/CSV) is
+        // indexed as-is on the unchanged text path — its bytes already ARE the
+        // searchable text, so there's nothing to extract. Only NON-UTF-8 bytes
+        // are binary documents (docx/xlsx/pptx are zip, pdf/jpeg/OLE2 are binary
+        // — none are valid UTF-8), so those go through `extract::extract_text`,
+        // which sniffs the true format and parses. A UTF-8 "extension lie" (e.g.
+        // an HTML error page named `.xlsx`) is correctly indexed as its source
+        // text — searchable, never dropped — rather than mis-sent to a binary
+        // parser. Each lock is taken/released separately so we never hold the
+        // conn across `index()`.
         if let Some(indexer) = &self.indexer {
             if let Some(filepath) = &self.filepath {
                 let content = self.db.read_all_content(self.ino);
-                if let Ok(text) = String::from_utf8(content) {
-                    if let Err(e) = indexer.index(self.ino, filepath, &text) {
-                        tracing::warn!(filepath, "local index on flush failed: {e}");
+                match String::from_utf8(content) {
+                    // Valid UTF-8 text/code — index directly (unchanged path).
+                    // Only clear a prior unindexed marker on a CONFIRMED index;
+                    // on index error keep the file's state untouched (it retries
+                    // on the next flush) rather than masking it as indexed.
+                    Ok(text) => match indexer.index(self.ino, filepath, &text).await {
+                        Ok(()) => self.db.clear_unindexed(self.ino),
+                        Err(e) => tracing::warn!(filepath, "local index on flush failed: {e}"),
+                    },
+                    // Binary — try in-process document extraction (L1 parse).
+                    // Recover the bytes from the failed decode (no re-read).
+                    Err(e) => {
+                        let bytes = e.into_bytes();
+                        let fmt = crate::extract::sniff(&bytes);
+                        match crate::extract::extract_text(filepath, &bytes).await {
+                            // Extracted text recovered. When `SEMFS_EXTRACT_SIBLING=on`,
+                            // materialize a read-only `<file>.extracted.md` sibling so
+                            // agents can `cat`/`head` a few lines instead of shelling out
+                            // to openpyxl/pandas/zipfile (the format trap). Off by default
+                            // — the shipped path inlines extracted text in `semfs grep`.
+                            // Either way we index the text below.
+                            Some(text) => {
+                                if extract_sibling_enabled() {
+                                    // Dual-store: the index embeds `text` (a per-sheet
+                                    // summary for xlsx), but the readable sibling must
+                                    // hold the RAW table so the agent answers from
+                                    // ground truth (summary FINDS, table ANSWERS). For
+                                    // non-spreadsheets `text` already IS the extracted
+                                    // text, so fall back to it.
+                                    let sibling = crate::extract::raw_table_for_sibling(&bytes)
+                                        .unwrap_or_else(|| text.clone());
+                                    if let Err(e) =
+                                        self.db.upsert_extracted_sibling(filepath, &sibling)
+                                    {
+                                        tracing::warn!(
+                                            filepath,
+                                            "extracted sibling materialize failed: {e}"
+                                        );
+                                    }
+                                }
+                                match indexer.index(self.ino, filepath, &text).await {
+                                    Ok(()) => self.db.clear_unindexed(self.ino),
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            filepath,
+                                            "local index on flush failed: {e}"
+                                        );
+                                        self.db.mark_unindexed(
+                                            self.ino,
+                                            filepath,
+                                            &format!("{fmt:?}"),
+                                        );
+                                    }
+                                }
+                            }
+                            // No recoverable text — deindex any STALE prior content
+                            // for this path (e.g. a text file overwritten by a
+                            // binary) so search can't return it, then account it.
+                            // The deindex is best-effort like all local-index
+                            // maintenance here (cf. unlink): the durable part is
+                            // the `mark_unindexed` accounting below. If `remove`
+                            // fails, the file stays binary so EVERY later flush
+                            // retries the deindex, and the whole local index is
+                            // rebuilt from scratch on remount — so any stale row
+                            // is transient and self-healing, never permanent.
+                            None => {
+                                if let Err(e) = indexer.remove(filepath).await {
+                                    tracing::warn!(filepath, "deindex stale content failed: {e}");
+                                }
+                                tracing::warn!(
+                                    filepath,
+                                    ?fmt,
+                                    "binary file not extractable; recording as unindexed"
+                                );
+                                self.db
+                                    .mark_unindexed(self.ino, filepath, &format!("{fmt:?}"));
+                            }
+                        }
                     }
                 }
             }

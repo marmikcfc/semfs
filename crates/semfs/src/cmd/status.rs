@@ -33,6 +33,9 @@ pub async fn run(args: Args) -> Result<()> {
             user_id,
             user_name,
             org_name,
+            backend,
+            graph_queue_depth,
+            unindexed_files,
         } => {
             if args.json {
                 let out = serde_json::json!({
@@ -45,6 +48,9 @@ pub async fn run(args: Args) -> Result<()> {
                     "user_id": user_id,
                     "user_name": user_name,
                     "org_name": org_name,
+                    "backend": backend,
+                    "graph_queue_depth": graph_queue_depth,
+                    "unindexed_files": unindexed_files,
                 });
                 println!("{}", serde_json::to_string(&out)?);
             } else {
@@ -54,6 +60,15 @@ pub async fn run(args: Args) -> Result<()> {
                 println!("uptime:       {uptime_secs}s");
                 println!("push queue:   {queue_len} pending");
                 println!("pull enabled: {pull_enabled}");
+                if let Some(b) = &backend {
+                    println!("backend:      {b}");
+                }
+                if let Some(d) = graph_queue_depth {
+                    println!("graph queue:  {d} pending");
+                }
+                if let Some(n) = unindexed_files {
+                    println!("unindexed:    {n} files");
+                }
                 if let Some(u) = &user_name {
                     println!("user:         {u}");
                 }

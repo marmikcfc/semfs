@@ -1,0 +1,21 @@
+{
+  "id": "e11-001",
+  "absolute_id": "e11-001",
+  "task": "请分析工作区 data/ 目录下的产品季报文件（英文），找出 2023 年第四季度（October–December）退货率（return_rate）最高的产品，将该产品的名称（product_name）和退货率（百分比，保留两位小数）写入文件 model_output/q4_2023_highest_return.txt，格式为：Product: <name>, Return Rate: <rate>%",
+  "output_files": ["q4_2023_highest_return.txt"],
+  "rubrics": [
+    "output file model_output/q4_2023_highest_return.txt exists and is non-empty",
+    "output file contains exactly one product entry",
+    "output file contains the correct product name (Widget-Sigma from product_report_042.txt with return_rate=8.73%)",
+    "output file format matches 'Product: <name>, Return Rate: <rate>%' exactly",
+    "return rate value is 8.73% (the highest Q4-2023 return rate in the corpus)",
+    "agent demonstrates use of semantic search or keyword search to locate the target file among 200+ data files"
+  ],
+  "rubric_diffs": [],
+  "rubric_types": ["format", "format", "content", "format", "content", "process"],
+  "rubric_importance": [7, 6, 10, 8, 10, 5],
+  "notes": "E11 discovery-stressed + cross-lingual case. Task is in Chinese; source files are English CSVs. The target file (product_report_042.txt) is buried among 200 files with similar names. Plain agent must scan 200 files or give up; semfs agent can query in Chinese and the cross-lingual rewrite maps 退货率最高/2023 Q4 to English index terms.",
+  "corpus": "e11_discovery_corpus",
+  "corpus_size": 200,
+  "design_version": "1.0"
+}

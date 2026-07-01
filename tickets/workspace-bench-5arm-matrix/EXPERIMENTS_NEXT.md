@@ -1,0 +1,362 @@
+# EXPERIMENTS E6–E14 — validate/invalidate the opinions (2026-06-11)
+
+> Continues E1–E5 ([`ANALYSIS.md`](ANALYSIS.md) → [`RESULTS.md`](RESULTS.md)). Each
+> experiment targets a numbered opinion in [`OPINIONS.md`](OPINIONS.md) and was generated
+> under the constraints in [`constraint-based-creativity.md`](constraint-based-creativity.md).
+> **Protocol for ALL experiments** (lessons already paid for):
+> - n≥3 per cell before quoting any number (±30% token / ±1-pt variance).
+> - Health-gated driver `run_case_e.sh` (disk guard, quick_check, dummy SM key,
+>   .fastembed_cache strip, daemon-inner kill).
+> - One artifact dir per run label — never share `<case>_<arm>` dirs (the E3 overwrite trap).
+> - Archive per-call breakdowns (`trace_breakdown.py`) and, for cloud arms, the daemon log
+>   (`~/.semfs/logs/<tag>.log`) — scores aren't archived otherwise.
+> - Record binary md5 + knob env in the results JSONL line.
+
+## Priority order & decision tree
+
+```
+E6 (clip calibration, 30min) ──► E7a (hint-render feasibility, 10min)
+                                      │
+                       ┌──────────────┴───────────────┐
+                       ▼                              ▼
+              E7b hint ladder ×3            E7c KG-digest arm
+                       └──────────────┬───────────────┘
+                                      ▼
+                         E8 SCOUT STACK (headline, 5 cases × n=3)
+                          │ win (≥3/5 both-axes)        │ miss (<2/5)
+                          ▼                             ▼
+                E9 delivery duel (refine)      O8 path: E11 discovery-stressed
+                E14 slice tool (extend)        cases + cross-lingual (re-aim arena)
+   Anytime, cheap, parallel: E13 (workspace map)
+   Descoped 2026-06-11 (input-tokens-only focus): E10 (caching is automatic API-side) · E12 (output-side)
+```
+
+---
+
+### E6 — Calibrate the codex clip layer  *(tests O1's foundation; RUN FIRST)*
+
+The 95_cloud anomaly (830K chars emitted → 138K tokens billed) proves codex truncates tool
+output before the model sees it; the 289-compact run (142K-char grep in a 139K-token run)
+says the clip is not small/constant. Until measured, every delivery A/B is confounded.
+
+- **Method:** on the box, run codex on a trivial task whose tool calls `cat` controlled
+  files of 1K/4K/16K/64K/256K/1M chars (ASCII and CJK variants); read `turn.completed`
+  usage + what the model echoes back. No semfs involved.
+- **Prediction:** a per-call clip exists in the 8–32K-char band; CJK halves the char budget.
+- **Decides:** how much of the grep-cap win is "fewer bytes" vs "better bytes"; whether
+  `SEMFS_GREP_RESULT_CAP=6KB` should move (cap just under the clip = semfs chooses the bytes).
+- **Kill condition for O1's mechanism:** if codex clips at ≤4K chars, payload knobs above
+  4K are dead weight — delivery optimization collapses into "which 4K".
+- **Cost:** ~30 min, no code.
+- **✅ PARTIALLY ANSWERED FROM DOCS (2026-06-11):** [openai/codex#6426](https://github.com/openai/codex/issues/6426)
+  documents the mechanism: **256 lines OR 10 KiB per tool call, whichever first, head+tail
+  (128+128 lines, middle dropped)**, applied to exec + MCP tools since v0.56; a ~25K-token
+  limit is proposed, not implemented. E6 narrows to: (a) confirm the box's codex version
+  behaves per the docs (~10 min); (b) measure the **behavioral vs payload split** of the
+  grep-cap win — with blobs always clipped to ≤10 KiB visible, most of 111–145K→76.8K must
+  be *turn-count behavior*, not bytes. Design rules adopted now: payloads ≤10 KiB AND
+  ≤256 lines; answer-bearing content in the HEAD (head+tail keeps both ends); watch the
+  line cap on ranked-path lists.
+
+- **✅✅ RUN (2026-06-11, codex 0.133.0 on the box) — empirical numbers differ from BOTH
+  the docs and the prediction.** Marker-file probes (`/tmp/e6/` on the box, traces
+  `runA/runB/runCD.jsonl`):
+  | probe | size / lines | result |
+  |---|---|---|
+  | B | 5.4 KB / 300 lines | **passed whole** (⇒ no 256-line cap on this build) |
+  | C | 9.8 KB / 200 lines | **passed whole** |
+  | D | 15.5 KB / 330 lines | passed with a trailing truncation notice (boundary) |
+  | A | 49 KB / 1000 lines | clipped to lines 1–49 + 952–1000 ≈ **~1.2K visible tokens**, notice "…11050 tokens truncated…" (token-denominated) |
+  **Design conclusions:** (1) pass-through budget ≈ **≤10 KB is safe**, cliff lands
+  ~15 KB+; (2) **overflow is catastrophic, not graceful** — only ~0.5K+0.5K tokens survive
+  a clip, so a 12 KB "slightly over" payload loses ~85% of its content silently;
+  (3) `SEMFS_GREP_RESULT_CAP=6144` is comfortably inside the window — keep it;
+  (4) put answer content first (head survives); (5) the notice is token-denominated —
+  this build already implements (a variant of) the proposal in #6426.
+  Also observed: `cached_input_tokens > 0` on these codex-exec probes — prompt caching is
+  live on this path (the WB harness's `cached_input=0` is endpoint-specific, per the
+  scope decision we ignore caching either way).
+
+### E7 — Hint surgery ladder  *(tests O2, O7)*
+
+- **E7a (feasibility, 10 min):** patch one word in `agent_hint.rs`/`render_workspace_root`,
+  rebuild, mount the existing clean seed, `cat AGENTS.md` in the mount. Question: does the
+  mount re-render the baked hint from the new binary, or is the seed copy authoritative?
+  (RESULTS assumed un-fixable; the KG-refresh materialization path suggests otherwise.)
+  If seed-authoritative → fallback: test via codex harness-level AGENTS.md in `$WORKDIR`
+  (higher-precedence instruction file), which needs no semfs change at all.
+- **E7b (ladder, case 289 + 15, n=3 each):**
+  | arm | hint |
+  |---|---|
+  | H-current | baked KG-first + trust-the-excerpt |
+  | H-scout | "grep 2–4 key terms → READ the single top hit for exact values → never crawl, never read kg/" |
+  | H-zero | no hint at all (the C3 control — never measured) |
+- **E7c:** KG as ≤4KB digest (topic→dir table + inaccessible-files list) vs no KG.
+- **Prediction (O2):** H-scout cuts ≥25% tokens vs H-current at accuracy ≥ parity;
+  H-zero lands between (mount affordances alone are worth something — O8 input).
+- **Falsifier:** <10% spread across hint arms → O2 dies, behavior isn't instruction-driven,
+  pivot to E13 (affordances) as the behavior lever.
+- **Cost:** 1 evening if E7a says binary-rendered; +seed rebuild risk if not.
+
+### E8 — The scout stack (headline)  *(tests O3 — pre-registered kill condition)*
+
+- **Config:** clean seed + `SEARCH_ONLY=off` + `SEMFS_GREP_RESULT_CAP` per E6 +
+  `RESULT_LIMIT=3` + H-scout hint (E7 winner) + KG digest-or-off (E7c winner).
+- **Run:** all 5 cases × n=3, vs plain's bar (46% @ 89K mean; per-case bars in issue.md §4).
+- **Prediction (O3, ~60%):** ≥3/5 cases mean tokens < plain at accuracy ≥ plain−1;
+  289 lands ≤70K (the discovery-replacement math in TOKEN_ECONOMY §1.3).
+- **Kill condition (pre-committed):** <2/5 cases → **stop optimizing WB-chanpin tokens**;
+  declare grep-friendly small corpora out-of-thesis, execute O8 via E11.
+- **Cost:** ~1 day of box time (15 runs + reps).
+
+### E9 — Delivery-form duel: capped-inline vs two-tier vs path-first  *(tests O1 vs PwC's warning)*
+
+> **✅ WAVE 1 RUN (2026-06-11 night, case 289, leanhint2 seed, binary `2cd0a507`,
+> artifacts `matrix_artifacts/e9w1/`).** Code: `SEMFS_GREP_RENDER_MODE`
+> (inline|two-tier|paths) + `SEMFS_GREP_TOTAL_CAP` (global 10KB budget) — commit `a14bdbf`.
+>
+> | arm | runs (tokens/calls/score) | read |
+> |---|---|---|
+> | two-tier | 22.5K/2/4 · 93.9K/10/5 · 22.5K/2/⊘* | bimodality persists; render shrank 13.2KB→2.3KB; 2 of 3 runs floor-band |
+> | paths | **85.5K/7-8 calls/6/15 ×2 — clean, ±1K tokens** | most consistent arm ever measured; NO PwC collapse (SEARCH_ONLY=off gave it self-reads); natural provenance — the agent trips over the 403 stubs itself |
+>
+> *e9b3 deliverable byte-identical to e9b1's; judge parse-fails reproducibly (the `_1`
+> collection duplicate) — second member of the p1 unjudgeable class. Judge hardening
+> escalates.
+>
+> **Calibration bug found:** the confidence verdict said MIXED in every run — RRF-fused
+> similarity scores are range-compressed, so the relative top-vs-#2 margin never clears
+> 15%. The HIGH stop-signal path is UNTESTED. Wave 2: spread-normalized margin
+> `(s1−s2)/(s1−sN)` + gate HIGH on the top hit being COMPLETE FILE; rerun two-tier ×3.
+> **E14 (slice) is unblocked** by paths' no-collapse result.
+
+- **Arms (same scout stack otherwise):** (a) inline 6KB (E8 default); (b) two-tier
+  (top-1 hit ~800B excerpt + paths for 2–5 + stop-signal line); (c) path-first 1KB
+  (paths + 1-line snippets only — the C1 pure form); (d) **caveman-compressed excerpts**
+  (same 6KB budget as (a), but the excerpt prose is telegraphically compressed at render —
+  denser facts per surviving byte/line under the codex 10 KiB/256-line clip; verbatim
+  numbers/names/versions preserved; spreadsheets exempt — raw rows only).
+- **Why:** PwC measured codex collapsing on file-based delivery (93.1→55.2) — (c) flirts
+  with that failure mode but `SEARCH_ONLY=off` keeps reads cheap. This decides whether the
+  excerpt should carry the answer or just point at it.
+- **Prediction:** (b) wins tokens with accuracy parity; (c) loses ≥1 rubric point on
+  exact-value cases (15/44) — matching the paper.
+- **Cost:** 2 cases (289, 15) × 3 arms × n=3.
+
+### 🔴 BENCHMARK BUG (2026-06-11 night) — case 95's score axis is a judge lottery
+
+The agent-visible task says only *"generate a comprehensive follow-up iteration report,
+and save it to the desktop"* — **no filename**. The expected name
+`system_version_full_lifecycle_iteration_report.doc` exists ONLY in judge-side fields
+(`output_files` + all 12 rubrics). Agents rationally name the file after the task's own
+words (`followup_iteration_report.*` — six independent runs converged on it); the score
+then depends on the judge instance: lenient → grades content (11/12, 12/12), strict →
+zeroes everything on the name (four 0/12s tonight from agents that wrote real reports).
+Second mismatch: task says "desktop", harness convention is `model_output/`.
+**Final clean-hint (v4.1) table:** v4_i1 206K/14 calls/0 · **v4_i2 164K/17/12 — first
+local perfect score** · v4_p1 424K/32/0 · v4_p2 163K/16/0. Three of four wrote real
+reports under the task-derived name; one judge instance graded content, three enforced
+the name. **The clincher:** v4_i1 and v4_i2 — identical config, identical seed, identical
+deliverable filename (`followup_iteration_report.md`) — scored **0/12 and 12/12**.
+v4_i2 is also the first local PERFECT score on 95 (matches cloud's all-time best),
+achieved under the fully de-tuned v4.1 hint with zero coaching.
+**Consequences:** (1) every case-95 SCORE in the campaign carries this asterisk — use
+the token/call axis only until fixed; (2) fix = rubric accepts task-consistent names OR
+the task states the filename; (3) clean-hint (v4.1) token measurement stands: inline
+206K/164K vs steered 105K at comparable calls — the de-tuned hint pays ~1.5–2× on this
+case; paths mode on a multi-file synthesis case crawled (32 calls / 424K), unlike its
+tight 289 behavior — pointer delivery suits single-answer QA better than N-file synthesis.
+
+### E10 — Cache-adjusted re-scoring  *(tests O5; analysis-only, zero runs)*
+
+> **⏸ DESCOPED 2026-06-11 (user decision):** focus is INPUT tokens only. OpenAI prompt
+> caching is automatic at the API layer (https://developers.openai.com/api/docs/guides/prompt-caching)
+> — no engineering action on our side; raw input tokens remain the benchmark metric.
+> Revisit only if a production-cost story is needed later.
+
+- **Method:** re-price every archived run: `cost = unique_input×1.0 + repeated_input×0.1 +
+  output×4` (approximating production cache pricing). Repeated-input is reconstructable
+  per-turn from the traces (context prefix = scaffold + prior turns).
+- **Prediction:** high-turn arms' penalty shrinks ~5–8×; KG/blob arms keep theirs (unique
+  bytes don't cache-discount); at least one arm ordering flips.
+- **Falsifier:** all orderings unchanged → drop the metric complaint, raw tokens stand.
+- **Cost:** ~2h scripting against existing JSONLs/traces.
+
+### E11 — Discovery-stressed case set (+ the only valid summary test)  *(tests O4, O8)*
+
+- **Method:** author 3–5 new WB-style cases on the existing chanpin corpus where the
+  answer file is **not named** in the task and lives among ~200 similar xlsx ("find the
+  sheet that tracks Q3 returns for apparel" style), incl. ≥1 **cross-lingual** task
+  (zh task ↔ en filenames — grep cannot bridge this; semfs rewrite is proven #417→#1).
+  Arms: plain / scout-stack raw / scout-stack + dual-store summaries (the 2026-06-11 fix:
+  summary FINDS, `.extracted.md` raw table ANSWERS).
+- **Prediction (O4/O8):** plain's find|grep degrades hard (filename semantics gone);
+  summary arm beats raw arm by ≥2 rubric points on ≥2 cases; cross-lingual case is a
+  clean semfs win on BOTH axes.
+- **Falsifier:** summary ≤ raw on these cases kills O4; semfs ≤ plain here kills the
+  discovery half of O8 (the problem would be deeper than arena choice).
+- **Cost:** 1 day authoring + rubrics, 1 day runs. Highest strategic value per O8.
+
+### E12 — Caveman output-compression A/B  *(bounds O6; existing ticket)*
+
+> **⏸ DEPRIORITIZED 2026-06-11 (user decision):** caveman targets the OUTPUT-token stream;
+> current focus is input tokens only. Keep the ticket; don't schedule runs for it now.
+
+- **Method:** per `tickets/caveman-agent-output-compression/issue.md` — env-gated hint
+  section; 2 cases × n=3 on the scout stack.
+- **Prediction (O6):** ≤8% total-token delta on WB; accuracy unchanged.
+- **Falsifier:** >10% delta → output stream bigger than traces show; promote it.
+- **Cost:** small (hint-section + reruns) once E7a establishes the hint path.
+
+### E13 — ≤1KB workspace map  *(O2's alternative if hints underperform; C2/C3 child)*
+
+- **Method:** inject a ~1KB map (top-level dirs, file-type census, "where things live"
+  one-liners) into the hint/AGENTS.md; optionally per-dir 3-line README manifests.
+  Measure discovery turns (find/ls/grep-probe count) vs without.
+- **Prediction:** discovery probes 4–8 → 1–2 on plain-like behavior; helps *both* arms
+  (it's retrieval-free — pure S-for-T trade: +1KB scaffold to delete ~2 turns).
+- **Falsifier:** probe count unchanged → maps don't steer codex; drop.
+- **Cost:** half-day.
+
+### E14 — `semfs slice` / artifact pattern prototype  *(O1 extension; gated on E9)*
+
+- **Method:** `semfs grep` stores the full ranked result, returns ≤1KB + a result-id;
+  new `semfs slice <id> --file N --range a:b | --grep term` retrieves precise pieces
+  (Firetiger artifacts: 94% one-shot; Anthropic code-exec: filter before context, −98.7%).
+- **Gate:** build only if E9 shows path-first/two-tier ≥ inline on tokens without accuracy
+  loss — slice is the affordance that makes small-payload delivery safe.
+- **Prediction:** the 289-class QA flow becomes search(1KB) → slice(2KB) → write ≈ 25–30K
+  tokens — the first floor-adjacent run (TOKEN_ECONOMY §1.3).
+- **Cost:** the only real code investment on this list; scope after E9.
+
+### E9(d) — query-time compression pilot  *(✅ RUN 2026-06-11 night — mechanism PROVEN, bench CONFOUNDED, major hint bug found)*
+
+- **Code shipped:** `SEMFS_GREP_COMPRESS=on` (+`_MIN`, `SEMFS_COMPRESS_MODEL`) — render-time
+  caveman compression of prose excerpts via OpenRouter, spreadsheets+siblings exempt,
+  honest `COMPRESSED RENDITION` marker, fail-open; hooks on ALL render sites incl. the
+  daemon `memory` path (where local hits actually flow). **The LLM cost bills to semfs's
+  key — the agent's context (and the benchmark token metric) never sees it.**
+- **Smoke (mounted seed, same query ±compress):** render 158.7KB → 62.5KB (**−61%**);
+  per-excerpt −15% to −70%; **25/25 salient numbers preserved**; spreadsheets untouched.
+- **Bench A/B (case 95 ×2×2): CONFOUNDED — not a compression result.**
+  c1 11/12@105K (best local 95 ever) · x1 0/12@128K · c2 0/12@75K · x2 0/12@86K.
+  Forensics: (1) x2 never compressed anything (no eligible hits) and still scored 0 —
+  zeros are arm-independent; (2) the zeros' agents declared the task-named
+  `description_N.txt` files MISSING (they exist, elsewhere) — **hint v3's provenance
+  check backfires when named files aren't at the guessed path**: the agent obeys
+  "report inaccessible, don't substitute" and writes a missing-sources memo (0/12);
+  (3) judge filename-strictness inconsistent (c1's accepted name = x1's rejected name);
+  (4) with both arms capped 6KB/10KB the visible render is size-identical — compression
+  changes density, not bytes, so the token effect can only appear via fewer follow-up
+  reads (none observed, n=1 valid pair).
+- **Resolution (2026-06-11, user decision — supersedes the v3.1 plan): the PROVENANCE
+  CHECK is REMOVED from the shipped hint entirely (`81fc27d`).** Principle: the 403
+  rubrics measure the AGENT'S honesty; prompting honesty is teaching to the test (same
+  line as the reverted integrity banner). Consequences accepted: wp1's +2 on 289 was
+  partly coached and will regress for excerpt-trusting runs; the case-95 backfire
+  disappears. **The legitimate lever for surfacing corruption is DELIVERY DESIGN — the
+  paths render arm scored 6/15 with zero coaching** (the agent reads files itself and
+  finds the 403s structurally). Seed note: `chanpin-leanhint2.db` (v3, coached) is
+  DEPRECATED for benchmarks — use `chanpin-leanhint.db` (v2) or rebuild from the new
+  default render. E9(d) rerun should use the v2-class hint + consider the paths arm
+  as the honest-accuracy configuration.
+
+### E15 — Caveman-compressed `.extracted.md` siblings for prose documents  *(input-side caveman; proposed 2026-06-11; gated on E6 + one synthesis-case pilot)*
+
+> Distinct from the parked E12: E12 compresses what the agent *writes* (output stream);
+> E15 compresses what the agent *reads* (input stream) — squarely in scope.
+
+- **Idea (user, 2026-06-11):** for **non-spreadsheet** documents (docx/pdf/html prose —
+  anything whose readable form semfs materializes), store a caveman-compressed rendition
+  (~35–65% of original; telegraphic but fact-preserving) so a single clipped read carries
+  the whole document. Spreadsheets stay EXEMPT — the dual-store lesson stands: rubrics
+  need exact rows; tables are returned verbatim, never compressed.
+- **Why the clip makes this matter:** codex clips every read at 10 KiB/256 lines head+tail.
+  A 30 KB prose doc loses its middle on every `cat`; compressed to ~12 KB it nearly fits —
+  the agent gets the *whole* document in one clipped read instead of paging with `sed`
+  (each page = a new turn that re-pays all context).
+- **Where it should win / lose:** wins on synthesis cases that need whole-document
+  understanding (95/175-shape); should NOT help (and must not hurt) localized-answer QA
+  (289-shape) where selection beats compression. Plain-text corpus files are NOT mutated —
+  compression lives in semfs-materialized renditions only; the original stays readable.
+- **Risks (pre-registered):** (1) compression drops an exact value a rubric needs — the
+  format-trap failure reborn; mitigation: instruct verbatim preservation of all numbers/
+  names/versions/dates + spot-check 10 docs before any run. (2) Index-time LLM pass cost +
+  the summary-seed silent-drop failure mode — dual-store discipline mandatory (original
+  recoverable). (3) Embedding the compressed text changes retrieval — decouple: embed
+  unchanged, compress only the returned rendition.
+- **Prediction:** on a 95-style case, acquisition tokens drop 30–50% with accuracy held;
+  **kill condition:** ANY exact-value rubric regression vs raw siblings on the pilot case,
+  or E9(d) showing compressed excerpts already losing accuracy at the delivery layer.
+- **Cost:** prompt + render-path change + pilot reruns; do AFTER E9 signals (d) is safe.
+
+---
+
+### E16 — Confidence-adaptive delivery (adaptive-K)  *(USER DECISION 2026-06-12 — the slice/delivery direction, done right)*
+
+> **Decision recorded:** arena/corpus engineering ("forced-grep" corpora that block the agent's
+> shortcuts) is REJECTED — that's benchmark-gaming, not product. The E11-v2 "forced arena" draft
+> is dead; do not rebuild it. The product change is: **grep decides HOW MANY results to return
+> from the confidence curve.** One clear winner → return exactly 1, rendered as THE answer with
+> top confidence. Nothing solid → return 0 (honest empty, no noise dump). In between → the small
+> head-cluster before the score cliff. **Hard ceiling K=10** (`RESULT_LIMIT` stays the pool size;
+> adaptive-K trims the *render*). This supersedes the stopped E9w2 stop-signal path: the
+> spread-normalized margin already ships in `confidence_line` (grep.rs:575) but today it only
+> changes the advice TEXT — it never changes K. That's the gap.
+
+- **Mechanism (render layer — backend-agnostic, scores ride on `SearchHit` for local AND cloud):**
+  - reuse the spread-normalized margin `m_k = (s1−sk)/(s1−sN)` from `confidence_line`;
+  - **K=1 (ANSWER):** `m_2 ≥ T_high` AND top hit is COMPLETE FILE or has a line-range →
+    render ONE hit: `path:line_start-line_end` + capped excerpt +
+    `# confidence: HIGH — this is the answer; use directly, no further search needed.`
+  - **K=0 (EMPTY):** `s1` below a calibrated floor → render
+    `# no high-confidence match in the index for this query — do not re-search variants; <one bounded next action>`
+    (this folds in the terminal-miss idea; it removes NOISE, not information — honest, not blocking);
+  - **K=cliff (CLUSTER):** otherwise include hits up to the score cliff (largest k≤K_MAX with
+    `m_k ≤ T_cluster`), header `# confidence: MEDIUM — k closely-scored results`.
+  - env: `SEMFS_ADAPTIVE_K=on` (default off → A/B-able), `SEMFS_K_MAX=10`,
+    `SEMFS_CONF_HIGH` / `SEMFS_CONF_CLUSTER` / `SEMFS_CONF_FLOOR` (set from E16a, never guessed).
+
+- **Code changes:**
+  1. `crates/semfs/src/cmd/grep.rs` — `adaptive_k(hits) -> (k, tier)` + two new render shapes
+     (ANSWER / EMPTY); existing inline/two-tier/paths untouched when the flag is off; unit tests on
+     synthetic score curves + render snapshots.
+  2. **Contingency (decided BY E16a, not upfront):** if RRF-fused similarity can't separate
+     answer/no-answer, plumb the L5 cross-encoder score through (`SearchHit.rerank_score:
+     Option<f64>`, semfs-core backend + daemon protocol) and gate on that instead.
+
+- **E16a — score calibration (no agent, ~1h, sets the thresholds):** ~20 answerable queries
+  (chanpin cases + e11 needles) + ~20 unanswerable (fabricated topics) against the existing seeds
+  (`chanpin-clean`/`gemma-q4`, `e11_seed`). Dump the score curves. Choose thresholds such that:
+  answer-present → the right file is inside K and median K ≤ 3; answer-absent → K=0 in ≥80%.
+  **Kill:** the two distributions overlap so much no threshold achieves both → similarity is not a
+  confidence signal → switch to the rerank-score contingency or stop the whole direction.
+
+- **E16b — agent A/B:** arm A = current render (fixed K), arm B = adaptive-K. Same seed, binary,
+  model. Platforms: **Modal mountless** for breadth (5 WB cases × n≥5 — `run_case` harness exists)
+  + **E2B real-mount spot-check** (template `semfs-mount`, built 2026-06-12 — see
+  `artifacts/run2/e2b_mount/RESULTS_E2B_MOUNT.md`; real FUSE + daemon + matched gemma-q4 proven).
+  Metrics: median tokens + tail-rate (runs >2× median), calls, re-grep count, judge accuracy,
+  HIGH-fire rate, **false-HIGH rate** (HIGH on a wrong file — the accuracy guard).
+
+- **Predictions:** HIGH fires on ≥50% of answerable grep-using runs; K=1 runs land in the
+  ≤5-call floor band; median tokens −30%+ vs arm A at accuracy parity; K=0 kills the
+  re-grep-variants loop (the 4-consecutive-~400-char-greps pattern in the v4_i2 trace).
+- **Kill conditions:** net accuracy −1 rubric point from false-HIGH → raise `T_high` or kill;
+  token medians move <10% → K was not the binding constraint, return to turn-count levers.
+- **Safety rails:** `SEARCH_ONLY=off` stays (worst case = agent ignores the render and behaves
+  like plain — the "never remove the fallback" rule). All thresholds from calibration data, not
+  intuition. n≥5 per cell, medians + tail-rate, never means at n<5.
+
+## Opinion ↔ experiment map
+
+| Opinion | Credence | Validated/killed by |
+|---|---|---|
+| O1 delivery form = #1 token lever | 85% | E6 (mechanism), E9, E14, E15, **E16 (adaptive-K)** |
+| O2 hint outweighs the pipeline | 80% | E7a/b, E13 (alternative), E16 (render replaces hint-coaching) |
+| O3 scout stack beats plain both-axes ≥3/5 | 60% | **E8 (pre-registered kill)** |
+| O4 summaries = accuracy-only lever, unmeasurable on current cases | 75% | E11 |
+| O5 cache-blind metric distorts | 70% | E10 |
+| O6 caveman ≤8% on WB | 70% | E12 |
+| O7 KG/by-topic net-negative; digest-or-kill | 85% | E7c |
+| O8 wrong arena; win = format-trap + cross-lingual + discovery-stress | 70% | E8 miss + E11 |

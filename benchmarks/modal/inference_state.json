@@ -1,0 +1,46 @@
+{
+  "_comment": "Source-of-truth for GLM-5.1 Modal endpoints. UPDATE whenever you deploy/stop/change. Can go stale — verify live with how_to_check.",
+
+  "active_variant": "nvfp4",
+
+  "nvfp4": {
+    "app": "glm51-nvfp4-vllm",
+    "litellm_app": "glm51-nvfp4-litellm",
+    "workspace": "ada-diffusion-llm",
+    "endpoint": "https://ada-diffusion-llm--glm51-nvfp4-vllm-serve.modal.run",
+    "litellm_endpoint": "https://ada-diffusion-llm--glm51-nvfp4-litellm-serve.modal.run",
+    "model": "nvidia/GLM-5.1-NVFP4",
+    "served_model_name": "glm-5.1-nvfp4",
+    "litellm_client_names": ["glm-5.1-nvfp4", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    "_names_note": "vLLM serves ONLY glm-5.1-nvfp4. LiteLLM exposes the 4 client names above and forwards all to glm-5.1-nvfp4 upstream (VLLM_SERVED_NAME in glm51_nvfp4_litellm.py). Clients using the FP8 name 'glm-5.1' against this NVFP4 box will 404.",
+    "litellm_request_timeout_s": 1800,
+    "gpu": "B200:4",
+    "cost_per_hr": 25.00,
+    "status": "up",
+    "kernel_cache_seeded": true,
+    "estimated_cold_start_min": "8-14",
+    "reasoning_note": "GLM-5.1 emits verbose reasoning (~190 tokens even for 'say hello') BEFORE content; set benchmark max_tokens high enough or content comes back empty.",
+    "claude_code_recipe": "ANTHROPIC_BASE_URL=https://ada-diffusion-llm--glm51-nvfp4-litellm-serve.modal.run ANTHROPIC_API_KEY=<key> ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-6 claude -p ...",
+    "codex_recipe": "CODEX_HOME=<dir with codex config: base_url=litellm_endpoint/v1> codex exec --disable multi_agent ...",
+    "how_to_start": "modal deploy benchmarks/modal/glm51_nvfp4_vllm.py",
+    "how_to_stop": "modal app stop glm51-nvfp4-vllm --yes",
+    "how_to_check": "curl -sf -H 'Authorization: Bearer <key>' https://ada-diffusion-llm--glm51-nvfp4-vllm-serve.modal.run/health"
+  },
+
+  "fp8": {
+    "app": "glm51-vllm",
+    "litellm_app": "glm51-litellm",
+    "workspace": "ada-diffusion-llm",
+    "endpoint": "https://ada-diffusion-llm--glm51-vllm-serve.modal.run",
+    "litellm_endpoint": "https://ada-diffusion-llm--glm51-litellm-serve.modal.run",
+    "model": "zai-org/GLM-5.1-FP8",
+    "served_model_name": "glm-5.1",
+    "gpu": "H200:8",
+    "cost_per_hr": 36.32,
+    "status": "stopped",
+    "estimated_cold_start_min": "30-43",
+    "how_to_start": "modal deploy benchmarks/modal/glm51_vllm.py",
+    "how_to_stop": "modal app stop glm51-vllm --yes",
+    "how_to_check": "curl -s -H 'Authorization: Bearer <key>' https://ada-diffusion-llm--glm51-vllm-serve.modal.run/v1/models"
+  }
+}

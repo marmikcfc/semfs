@@ -86,21 +86,129 @@ fn render_block(tag: &str, mount_path: &Path) -> String {
     let begin = begin_marker(tag);
     let end = end_marker(tag);
     let path_str = mount_path.display();
+    // KG-on: name the knowledge graph as the orientation artifact. KG-off
+    // (SEMFS_KG=off): the original grep-only contract — used as the A/B baseline.
+    let graph_fs_line = if crate::cache::graph_fs::graph_fs_enabled() {
+        format!(
+            "- It ALSO exposes a `{path_str}/by-topic/` overlay. Each top-level dir under\n\
+             \u{0020} `by-topic/` is a TOPIC (a cluster of related files) named by its central\n\
+             \u{0020} concept; inside are the files about that topic. How traversal calls behave:\n\
+             \u{0020} `ls by-topic/` lists TOPICS — read this to orient before searching.\n\
+             \u{0020} `ls`/`find`/`os.walk` under `by-topic/` walk a BOUNDED topic tree, not a\n\
+             \u{0020} flat file dump. Prefer `by-topic/` to orient, `semfs grep` to pinpoint.\n"
+        )
+    } else {
+        String::new()
+    };
+    // KG-on: name the kg/ files but never command reading them first — the
+    // WB E-runs measured a hint-commanded turn-1 KG read as the dominant token
+    // sink (35.7K read + crawl cascade; see tickets/workspace-bench-5arm-matrix).
+    let kg_line = if crate::cache::graph_file::kg_enabled() {
+        format!(
+            "A knowledge-graph summary lives in `{path_str}/kg/` —\n\
+             \u{0020} `kg/KNOWLEDGE_GRAPH.md` (topic clusters + dir map), `kg/GRAPH_REPORT.md`\n\
+             \u{0020} (typed relations + knowledge gaps, incl. inaccessible / error-page source\n\
+             \u{0020} files), `kg/graph.json` (the full graph). Read kg/ files ONLY when the task\n\
+             \u{0020} needs whole-workspace orientation; for any specific question go straight to\n\
+             \u{0020} `semfs grep` — do not read kg/ first.\n\
+             {graph_fs_line}\
+             - To FIND content, semantic search is available:\n"
+        )
+    } else {
+        format!(
+            "It answers semantic search over its contents.\n\
+             \n\
+             {graph_fs_line}\
+             - To FIND content, semantic search is available:\n"
+        )
+    };
     format!(
         "{begin}\n\
          <!-- managed by `semfs mount`; auto-removed on `semfs unmount` -->\n\
-         The directory `{path_str}/` is a Supermemory mount with semantic search.\n\
-         When searching inside this directory, use:\n\
+         The directory `{path_str}/` is a dynamic semantic index (Supermemory mount).\n\
+         {kg_line}\
          \n\
-         \u{0020}   semfs grep \"<natural language query>\" {path_str}/\n\
+         \u{0020}   semfs grep \"<2-4 key terms>\" {path_str}/\n\
          \n\
-         instead of grep, rg, find, or your built-in search tool. It returns\n\
-         semantically relevant excerpts via a vector index. For a quick high-\n\
-         level overview before searching, read `{path_str}/profile.md` — it's\n\
-         a reserved virtual file at the mount root with a summary of what\n\
-         this container holds. Files outside this directory behave normally —\n\
-         this rule is scoped to that path only.\n\
+         \u{0020} It returns ranked excerpts: each result names WHICH file and shows its\n\
+         \u{0020} content. A line marked `# ^ COMPLETE FILE` is that file's entire content.\n\
+         \u{0020} A line marked `# ^ TRUNCATED` means more exists — open that file with a\n\
+         \u{0020} normal read (cat / sed -n) for the rest. Cost note: a broad crawl\n\
+         \u{0020} (find / os.walk / rg over the tree) or opening many files costs far more\n\
+         \u{0020} context than a focused search plus the reads you actually need.\n\
+         Files outside this directory behave normally — this rule is scoped to that path.\n\
+         <!-- semfs:delivery=home-level -->\n\
          {end}\n"
+    )
+}
+
+/// Body for a workspace-root `AGENTS.md` / `CLAUDE.md` (materialized *inside*
+/// the mount by the KG refresh). Unlike [`render_block`] this is the WHOLE file,
+/// not a tagged block (the file is wholly ours), and it uses workspace-relative
+/// `kg/` paths because the agent reads it from the workspace root. This is the
+/// robust delivery path: any agent that reads the working tree's AGENTS.md sees
+/// it regardless of `$HOME`, so it does not depend on the home-dir global hint
+/// reaching the agent's environment.
+pub fn render_workspace_root() -> String {
+    // KG-on: name the kg/ files but never command reading them first — the
+    // WB E-runs measured a hint-commanded turn-1 KG read as the dominant token
+    // sink (35.7K read + crawl cascade; see tickets/workspace-bench-5arm-matrix).
+    let kg_section = if crate::cache::graph_file::kg_enabled() {
+        "A knowledge-graph summary lives in `kg/` — `kg/KNOWLEDGE_GRAPH.md` (topic\n\
+         clusters + dir map), `kg/GRAPH_REPORT.md` (typed relations + knowledge gaps,\n\
+         incl. inaccessible / error-page source files), `kg/graph.json` (the full\n\
+         graph). Read kg/ files ONLY when the task needs whole-workspace orientation;\n\
+         for any specific question go straight to `semfs grep` — do not read kg/ first.\n\
+         \n"
+    } else {
+        "It answers semantic search over its contents.\n\n"
+    };
+    // Graph-as-filesystem overlay: describe `by-topic/` and how traversal calls
+    // behave there, so the agent's reflexive `ls`/`find`/`os.walk` becomes a
+    // guided, bounded topic walk instead of a flat file dump.
+    let graph_section = if crate::cache::graph_fs::graph_fs_enabled() {
+        "It ALSO exposes a `by-topic/` knowledge-graph overlay. Each top-level dir under\n\
+         `by-topic/` is a TOPIC (a cluster of related files) named by its central concept;\n\
+         inside are the files about that topic. How calls behave there:\n\
+         - `ls by-topic/` lists the workspace's TOPICS — read this to orient.\n\
+         - `ls`/`find`/`os.walk` under `by-topic/` walk a BOUNDED, topic-organized tree\n\
+         \u{0020} (the knowledge graph), not a flat dump of every file — cheap to crawl.\n\
+         - `cat by-topic/<topic>/<file>` reads the REAL file (normal bytes + annotations).\n\
+         - The real directory tree is still present for exact paths; `semfs grep` still\n\
+         \u{0020} reaches every file. Prefer `by-topic/` to orient, `semfs grep` to pinpoint.\n\
+         \n"
+    } else {
+        ""
+    };
+    format!(
+        "# This workspace is a semfs semantic-search mount\n\
+         \n\
+         <!-- generated by `semfs mount`; read-only, regenerated automatically -->\n\
+         \n\
+         {kg_section}\
+         {graph_section}\
+         To FIND content, semantic search is available:\n\
+         \n\
+         \u{0020}   semfs grep \"<2-4 key terms>\" .\n\
+         \n\
+         It returns ranked excerpts: each result names WHICH file and shows its\n\
+         content. A line marked `# ^ COMPLETE FILE` is that file's entire content. A\n\
+         line marked `# ^ TRUNCATED` means more exists — open that file with a normal\n\
+         read (cat / sed -n) for the rest. Cost note: a broad crawl (find / os.walk /\n\
+         rg over the tree) or opening many files costs far more context than a focused\n\
+         search plus the reads you actually need.\n\
+         \n\
+         How many results: by default grep returns just the most confident few (often\n\
+         one, when there is a clear winner) — ideal for a single-answer lookup. If your\n\
+         task must cover MANY files (write a report, summarize/compare across files,\n\
+         \u{0022}list all X\u{0022}), add `--all` (or `-n <count>`) so you get the full\n\
+         set in one call instead of re-searching.\n\
+         \n\
+         Be token-frugal: start with ONE focused search and read only the files it\n\
+         points to; widen (`--all`) only if the task truly needs more. Do NOT repeat a\n\
+         search you already ran with reworded queries — the files it returned are\n\
+         already in your context; re-grepping just re-reads them and burns tokens.\n\
+         <!-- semfs:delivery=workspace-root -->\n"
     )
 }
 
@@ -353,6 +461,50 @@ mod tests {
     fn fake_home(tmp: &Path) {
         env::set_var("HOME", tmp);
         env::remove_var("CLAUDE_CONFIG_DIR");
+    }
+
+    // graph_fs_enabled() reads SEMFS_GRAPH_FS (process-global) — serialize.
+    #[test]
+    fn workspace_root_describes_by_topic_overlay_when_graph_fs_on() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::set_var("SEMFS_GRAPH_FS", "1");
+        let body = render_workspace_root();
+        env::remove_var("SEMFS_GRAPH_FS");
+        assert!(body.contains("by-topic/"), "names the overlay path");
+        assert!(
+            body.to_lowercase().contains("topic"),
+            "explains topic-organized dirs"
+        );
+    }
+
+    #[test]
+    fn home_block_includes_by_topic_when_graph_fs_on() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::set_var("SEMFS_GRAPH_FS", "1");
+        env::set_var("SEMFS_KG", "1");
+        let block = render_block("t", Path::new("/m/ws"));
+        env::remove_var("SEMFS_GRAPH_FS");
+        env::remove_var("SEMFS_KG");
+        assert!(
+            block.contains("/m/ws/by-topic/"),
+            "home block names overlay with absolute path"
+        );
+    }
+
+    #[test]
+    fn home_block_omits_by_topic_when_graph_fs_off() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::remove_var("SEMFS_GRAPH_FS");
+        let block = render_block("t", Path::new("/m/ws"));
+        assert!(!block.contains("by-topic/"), "no overlay mention when off");
+    }
+
+    #[test]
+    fn workspace_root_omits_by_topic_when_graph_fs_off() {
+        let _g = ENV_LOCK.lock().unwrap();
+        env::remove_var("SEMFS_GRAPH_FS");
+        let body = render_workspace_root();
+        assert!(!body.contains("by-topic/"), "no overlay mention when off");
     }
 
     #[test]

@@ -225,7 +225,19 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
   };
 
   const env = buildEnv(task.customProvider);
-  if (task.cwd) env.HOME = task.cwd;
+  // Per-task isolated HOME, but OUTSIDE the workspace. Setting HOME = task.cwd
+  // (the old behavior) put Claude Code's ~/.claude/projects/*.jsonl SESSION
+  // TRANSCRIPTS *inside* the workspace the agent searches — so the agent's
+  // own (growing) transcript leaked into find/ls/grep and got Read back,
+  // replaying in cache_read every turn (a self-referential token blowup;
+  // measured 47K+36K-char transcript Reads → ~95% of a 1.23M-token run).
+  // A sibling dir keeps isolation without polluting the searchable tree.
+  if (task.cwd) {
+    const homeDir = path.join(path.dirname(path.resolve(task.cwd)), '.cchome_' + path.basename(task.cwd));
+    try { fs.mkdirSync(homeDir, { recursive: true }); } catch { /* best effort */ }
+    env.HOME = homeDir;
+    process.stderr.write(`[semfs] HOME set OUTSIDE workspace: ${homeDir}\n`);
+  }
   const timeoutSec = task.timeout ?? 300;
   const abortController = new AbortController();
 
@@ -238,11 +250,24 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
 
   try {
     const cwdRoot = path.resolve(task.cwd ?? process.cwd());
-    const isUnderCwd = (p) => {
-      if (typeof p !== 'string' || !p.trim()) return false;
+    // semfs: the mount Claude is allowed to READ / SEARCH (writes stay confined to
+    // cwd). Set explicitly via SEMFS_MOUNT_PATH so semantic search works even when
+    // cwd is OUTSIDE the mount (the write-outside benchmark design) — codex gets the
+    // equivalent affordance from its cwd-independent ~/.codex/AGENTS.md. Falls back
+    // to the cwd-under-mount auto-detection below when the env var is unset.
+    let semfsMountPath = process.env.SEMFS_MOUNT_PATH ? path.resolve(process.env.SEMFS_MOUNT_PATH) : null;
+    // Extra read/search roots beyond cwd (colon-separated), e.g. the PLAIN arm's raw
+    // workspace tree which lives outside the per-cell work_dir. Does NOT trigger the
+    // semfs kit (that stays gated on SEMFS_MOUNT_PATH); it only widens read access so
+    // the same guard that protects writes doesn't lock the agent out of its workspace.
+    const extraReadRoots = String(process.env.WB_READ_PATHS || '').split(':').filter(Boolean).map((p) => path.resolve(p));
+    const underRoot = (p, root) => {
+      if (!root || typeof p !== 'string' || !p.trim()) return false;
       const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(cwdRoot, p);
-      return abs === cwdRoot || abs.startsWith(cwdRoot + path.sep);
+      return abs === root || abs.startsWith(root + path.sep);
     };
+    const isUnderCwd = (p) => underRoot(p, cwdRoot);
+    const isReadable = (p) => underRoot(p, cwdRoot) || underRoot(p, semfsMountPath) || extraReadRoots.some((r) => underRoot(p, r));
     const commandLooksSafe = (cmd) => {
       if (typeof cmd !== 'string') return false;
       const s = cmd;
@@ -252,15 +277,84 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
       for (const m of s.matchAll(re)) {
         const p = m[2];
         if (allowed.some((pre) => p === pre.slice(0, -1) || p.startsWith(pre))) continue;
-        if (!isUnderCwd(p)) return false;
+        if (!isReadable(p)) return false;   // allow paths under cwd OR the semfs mount
       }
       return true;
     };
+
+    // semfs: if this workdir is under a semfs mount, tell Claude how to reach
+    // semantic search — its native Grep/Glob bypass the shell grep wrapper, so it
+    // otherwise just crawls the tree. semfs writes the `.semfs` marker in the PARENT
+    // of the mount (it can't drop a plain file inside its own FUSE fs), so we walk UP
+    // from cwd to find it and confirm cwd is under one of its mount_path= entries —
+    // mirroring semfs's own read_semfs_marker_for_path. Delivered via
+    // appendSystemPrompt so it is independent of HOME and of the SDK's settingSources
+    // default ([]). Scoped to semfs runs only, so the plain baseline is unaffected.
+    let semfsHint;
+    try {
+      const cwdAbs = path.resolve(task.cwd ?? process.cwd());
+      let dir = cwdAbs;
+      // SEMFS_MOUNT_PATH (env, set above) takes precedence; otherwise walk UP from
+      // cwd for a .semfs marker whose mount_path contains cwd (legacy cwd-in-mount).
+      for (let i = 0; i < 40 && !semfsMountPath; i++) {
+        const mf = path.join(dir, '.semfs');
+        if (fs.existsSync(mf)) {
+          for (const blk of fs.readFileSync(mf, 'utf8').split('\n\n')) {
+            const m = blk.match(/^mount_path=(.+)$/m);
+            if (!m) continue;
+            const mp = path.resolve(m[1].trim());
+            if (cwdAbs === mp || cwdAbs.startsWith(mp + path.sep)) { semfsMountPath = mp; break; }
+          }
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+      const mountPath = semfsMountPath;
+      if (mountPath) {
+        semfsHint =
+          `IMPORTANT — read fully before acting.\n` +
+          `The directory ${mountPath}/ is NOT a normal filesystem. Every file in it is indexed in a ` +
+          `semantic knowledge graph. To find anything, run ONE command via your Bash tool:\n` +
+          `    semfs grep "<natural-language description of what you need>" ${mountPath}/\n` +
+          `It returns the most relevant files AND their content excerpts, ranked by meaning (not literal text). ` +
+          `Do NOT explore with ls / find / grep / Glob or read files one by one — that is slow and unnecessary here; ` +
+          `start with semfs grep, then open only the top-ranked results.\n` +
+          `ACKNOWLEDGEMENT REQUIRED: to confirm you received these instructions, your VERY FIRST line of output ` +
+          `must be exactly "[SEMFS-ACK]" followed by, on the same line, the semfs grep query you will run.`;
+        // Deliver via a PROJECT CLAUDE.md written to the agent's cwd — the project
+        // root the SDK loads with settingSources:['project'] (it IGNORES the
+        // user-level ~/.claude/CLAUDE.md that semfs writes). Writing to cwd (NOT the
+        // mount) works whether cwd is the mount (legacy) or outside it (write-outside)
+        // and never mutates the mount, so no deliverable leaks into the index.
+        try {
+          fs.writeFileSync(path.join(cwdAbs, 'CLAUDE.md'), semfsHint + '\n');
+          process.stderr.write(`[semfs] wrote project CLAUDE.md at ${cwdAbs}/CLAUDE.md (mount=${mountPath})\n`);
+        } catch (e) { process.stderr.write(`[semfs] CLAUDE.md write failed: ${e}\n`); }
+
+        // Transparent semantic search: point Claude's native Grep tool (and Bash
+        // grep) at our rg/grep shim, which routes content searches under the mount
+        // to `semfs grep` and passes everything else through to real ripgrep.
+        // USE_BUILTIN_RIPGREP=0 makes the native Grep tool resolve `rg` from PATH
+        // instead of the SDK's bundled binary — so Claude greps normally and gets
+        // semantic results without ever invoking `semfs grep` itself.
+        const shimDir = process.env.SEMFS_SHIM_DIR || '/srv/semfs-benchmark/semfs-shims';
+        if (fs.existsSync(path.join(shimDir, 'rg'))) {
+          env.PATH = `${shimDir}:${env.PATH || process.env.PATH || ''}`;
+          env.USE_BUILTIN_RIPGREP = '0';
+          process.stderr.write(`[semfs] rg/grep shim enabled (USE_BUILTIN_RIPGREP=0, PATH+=${shimDir})\n`);
+        }
+      }
+    } catch (e) { process.stderr.write(`[semfs] hint detection failed: ${e}\n`); }
 
     const q = query({
       prompt: task.prompt,
       options: {
         cwd: task.cwd ?? process.cwd(),
+        // The hint lives in the project CLAUDE.md (written above). The SDK loads
+        // CLAUDE.md ONLY when settingSources includes 'project'; the claude_code
+        // preset ensures that loaded project memory is applied to the system prompt.
+        ...(semfsHint ? { settingSources: ['project'], systemPrompt: { type: 'preset', preset: 'claude_code' } } : {}),
         abortController,
         env,
         pathToClaudeCodeExecutable: getClaudeCodePath(),
@@ -276,12 +370,23 @@ async function _runTaskImpl(task, opts, startedAt, startMs) {
           const cmd = typeof inp.command === 'string' ? inp.command : null;
 
           const pathToCheck = fp ?? p;
-          const isFileTool = ['Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep', 'LS', 'DeleteFile'].includes(tool);
-          if (isFileTool && pathToCheck !== null && !isUnderCwd(pathToCheck)) {
-            log(`${c.red}[deny]${c.reset} ${tool} ${pathToCheck}`);
+          // Reads/searches may target cwd OR the semfs mount; writes stay confined to
+          // cwd (so a deliverable never lands inside the mount and leaks into the index).
+          const readTools = ['Read', 'Glob', 'Grep', 'LS'];
+          const writeTools = ['Write', 'Edit', 'NotebookEdit', 'DeleteFile'];
+          if (writeTools.includes(tool) && pathToCheck !== null && !isUnderCwd(pathToCheck)) {
+            log(`${c.red}[deny-write]${c.reset} ${tool} ${pathToCheck}`);
             return {
               behavior: 'deny',
-              message: `${tool} is not allowed outside the task working directory: ${pathToCheck}`,
+              message: `${tool} (write) is not allowed outside the task working directory: ${pathToCheck}`,
+              toolUseID,
+            };
+          }
+          if (readTools.includes(tool) && pathToCheck !== null && !isReadable(pathToCheck)) {
+            log(`${c.red}[deny-read]${c.reset} ${tool} ${pathToCheck}`);
+            return {
+              behavior: 'deny',
+              message: `${tool} is not allowed outside the task working directory or the semfs mount: ${pathToCheck}`,
               toolUseID,
             };
           }

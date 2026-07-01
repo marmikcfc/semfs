@@ -1,0 +1,26 @@
+# Codex provider config for GLM-5.1-FP8 — VERIFIED WORKING end-to-end (2026-06-17).
+#
+# Architecture (Codex can't talk to vLLM directly — vLLM's /v1/responses crashes on GLM
+# tool calls, and Codex 0.139 only speaks /v1/responses):
+#
+#   Codex --/v1/responses--> LiteLLM proxy --/v1/chat/completions--> vLLM (GLM-5.1, 8xH200)
+#          (glm51-litellm Modal app, use_chat_completions_api bridge)   (glm51-vllm Modal app)
+#
+# So base_url points at the LiteLLM proxy, NOT vLLM. Merge into ~/.codex/config.toml (or use
+# a dedicated CODEX_HOME), then:
+#   export MODAL_VLLM_API_KEY=sk-glm51-...     # value in Modal secret `glm-vllm-key`
+#   codex exec --disable multi_agent "..."     # --disable multi_agent is REQUIRED (see below)
+
+model = "glm-5.1"
+model_provider = "glm-litellm"
+
+[model_providers.glm-litellm]
+name = "GLM-5.1 via LiteLLM (responses->chat bridge)"
+base_url = "https://ada-diffusion-llm--glm51-litellm-serve.modal.run/v1"
+env_key = "MODAL_VLLM_API_KEY"
+wire_api = "responses"
+
+# REQUIRED at launch: `codex exec --disable multi_agent ...`
+# Codex 0.139 sends a `type:"namespace"` tool (multi_agent_v1, for sub-agents) that vLLM's
+# chat-completions schema rejects with 400 ("Input should be 'function'"). drop_params does
+# NOT strip it (it's a malformed tool entry, not a top-level param), so disable the feature.

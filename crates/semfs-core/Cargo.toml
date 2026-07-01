@@ -13,11 +13,13 @@ name = "semfs_core"
 path = "src/lib.rs"
 
 [features]
-# Postgres/pgvector backend (Phase 6). Behind a flag so the default build stays
-# lean and MSRV-1.80-compatible; pglite-oxide raises the effective MSRV to 1.92.
-# We bind vectors as text cast to `::vector` (no `pgvector` crate) to keep a
-# single sqlx version aligned with pglite-oxide.
-pg-local = ["dep:sqlx", "dep:pglite-oxide"]
+# Postgres/pgvector backend (Phase 6). `pg` is the PRODUCTION feature — sqlx only,
+# for a real Postgres server (what the CLI uses). `pg-local` adds the embedded
+# pglite-oxide test server on top, for the gated unit tests; it raises the
+# effective MSRV to 1.92 and shouldn't ship in a production binary. We bind
+# vectors as text cast to `::vector` (no `pgvector` crate) to keep one sqlx version.
+pg = ["dep:sqlx"]
+pg-local = ["pg", "dep:pglite-oxide"]
 
 [dependencies]
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring"], optional = true }
@@ -47,6 +49,39 @@ directories = { workspace = true }
 lru = { workspace = true }
 fs2 = "0.4"
 
+# Local document text extractors (L1 parse) — pure-Rust, no native libs.
+# `zip` with the miniz_oxide deflate backend (no C). docx/pptx are zip+XML;
+# we unzip and join the text runs with quick-xml.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
+# Spreadsheets: calamine reads both OOXML xlsx and legacy OLE2 xls (pure-Rust).
+calamine = "0.26"
+# Content-addressed cache key for per-sheet LLM summaries (cost + re-seed
+# determinism). Already in the lockfile transitively; fast, no C.
+blake3 = "1"
+# PDF text layer (pure-Rust). Scanned/image-only PDFs have no text layer and
+# remain a gap (routed to the unindexed bucket, never silently dropped).
+pdf-extract = "0.7"
+# Temp file/dir for the headless-LibreOffice extract fallback (private per-call
+# UserInstallation profile + convert-to output dir); Drop-cleaned. Also used by tests.
+tempfile = "3"
+tree-sitter = "0.25"
+tree-sitter-language = "0.1"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-scala = "0.26"
+tree-sitter-php = "0.24"
+tree-sitter-kotlin-ng = "1"
+streaming-iterator = "0.1"
+
 # Mount backends — target-gated (M3a)
 # nfsserve compiles on both macOS and Linux (pure Rust).
 # fuser is Linux-only because on macOS it would require macFUSE,
@@ -57,5 +92,3 @@ nfsserve = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 fuser = { workspace = true }
 
-[dev-dependencies]
-tempfile = "3"

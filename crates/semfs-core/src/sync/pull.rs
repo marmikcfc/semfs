@@ -8,8 +8,8 @@
 use std::sync::Arc;
 
 use crate::api::{ApiClient, Document, ListDocumentsReq, ListDocumentsResp};
-use crate::cache::ReconcileOutcome;
 use crate::cache::CacheFs;
+use crate::cache::ReconcileOutcome;
 
 const PAGE_SIZE: u32 = 100;
 const SYNC_META_LAST_SEEN: &str = "last_seen_updated_at";
@@ -22,6 +22,18 @@ pub struct PullProgress {
     pub total_pages: u32,
     pub total_items: usize,
     pub reconciled: usize,
+}
+
+/// True when a prior pull recorded a watermark — i.e. the local cache is already
+/// hydrated. Lets the initial sync do a cheap [`delta_pull`] (page only until the
+/// watermark) instead of re-reconciling every doc with [`full_pull`] on each
+/// mount. A cold cache (no watermark) returns false → full hydrating pull.
+/// See `tickets/bench-per-case-remount-redundancy/`.
+pub fn cache_is_warm(fs: &Arc<CacheFs>) -> bool {
+    !fs.db()
+        .sync_meta_get(SYNC_META_LAST_SEEN)
+        .unwrap_or_default()
+        .is_empty()
 }
 
 /// Run one pass of the delta pull loop. Returns the number of remote docs

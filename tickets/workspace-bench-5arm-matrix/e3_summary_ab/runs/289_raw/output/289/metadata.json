@@ -1,0 +1,75 @@
+{
+  "absolute_id": 289,
+  "persona": "Product Manager",
+  "task": "Please extract _top10_product title_transaction amount_conversion rate information from the store's best-selling product data file_organize and output it as best_selling_product_core_data_list.txt.",
+  "task_diff": "easy",
+  "output_files": [
+    "best_selling_product_core_data_list.txt"
+  ],
+  "rubrics": [
+    "Is the output file best_selling_product_core_data_list.txt generated successfully?",
+    "Is it clear in the output file that the notes source file top10_product_status_table.xls is inaccessible and returns a 403 Forbidden error?",
+    "Are you sure you want to return a 403 Forbidden HTTP error status code when reading the source file?",
+    "Does the output file contain the text \"403 Forbidden\" indicating that the data could not be read?",
+    "Is the output file in plain text format, which can be read and viewed directly?",
+    "Are the input files read from the ./data directory and the files in the ./output directory are not read?",
+    "Is the output file saved to the ./output_cc directory, with the file name consistent with metadata?",
+    "Did the Top10 product data extraction task correctly handle the exception that the input file was not available?",
+    "is the rubric_importance array supplemented in metadata.json, providing a 0-10 importance score for each rubric?",
+    "are the four array lengths of rubrics, rubric_diffs, rubric_types, and rubric_importance consistent in metadata.json?",
+    "does metadata.json retain the original task semantics without modifying other irrelevant fields?",
+    "Does the output file contain only Top10 product-related information and no other irrelevant file data?",
+    "Is the output file legible in plain text manifest format?",
+    "Is the input file correctly identified as being in HTML format rather than Excel format?",
+    "Is the error type correctly indicated in the output file that file access is denied and not that the file does not exist?"
+  ],
+  "rubric_types": [
+    "Basic Evaluation",
+    "Outcome Evaluation",
+    "Process Evaluation",
+    "Outcome Evaluation",
+    "Basic Evaluation",
+    "Process Evaluation",
+    "Basic Evaluation",
+    "Process Evaluation",
+    "Basic Evaluation",
+    "Basic Evaluation",
+    "Basic Evaluation",
+    "Outcome Evaluation",
+    "Basic Evaluation",
+    "Process Evaluation",
+    "Outcome Evaluation"
+  ],
+  "file_dep_graph": [
+    {
+      "from": "top10_product_status_table.xlsx",
+      "to": "apparel_product_shooting_sheet.xlsx"
+    },
+    {
+      "from": "top10_product_status_table.xlsx",
+      "to": "problem_product_tracking.xlsx"
+    }
+  ],
+  "data_manifest": [
+    {
+      "filename": "top10_product_status_table.xlsx",
+      "stored_relpath": "data/539346a46f15f64e_top10_product_status_table.xlsx"
+    },
+    {
+      "filename": "apparel_product_shooting_sheet.xlsx",
+      "stored_relpath": "data/a2d99e0ad53db64f_apparel_product_shooting_sheet.xlsx"
+    },
+    {
+      "filename": "problem_product_tracking.xlsx",
+      "stored_relpath": "data/abe56cdbcab9c628_problem_product_tracking.xlsx"
+    }
+  ],
+  "tested_capabilities": [
+    "Workspace Exploration"
+  ],
+  "id": "289",
+  "file_system": "产品人员",
+  "user_profit": "产品人员",
+  "job": "Product Manager",
+  "__metadata_path": "/srv/semfs-benchmark/Workspace-Bench/evaluation/tasks_lite/289/metadata.json"
+}

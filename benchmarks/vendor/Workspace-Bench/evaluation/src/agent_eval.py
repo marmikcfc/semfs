@@ -1009,7 +1009,10 @@ def _build_grading_prompt(
             }
         )
 
-    truncated_outputs = _truncate_outputs(outputs.get("files", []), max_output_files, max_str_len)
+    # P0/SEM-42: the DELIVERABLE must be shown to the judge in full — max_str_len=2000 starved the
+    # judge of evidence (it false-failed rubrics it couldn't verify, ~80% of run-to-run variance).
+    # Trace stays at max_str_len so huge agent traces don't explode the prompt.
+    truncated_outputs = _truncate_outputs(outputs.get("files", []), max_output_files, 100_000)
     truncated_trace = _truncate_trace(trace, max_trace_items, max_str_len)
 
     prompt = {

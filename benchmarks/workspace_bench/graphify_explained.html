@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>How graphify works — step by step, and how each step buys efficiency</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --a:#d2a8ff; --b:#3fb950; --bridge:#f0883e; --eff:#56d4dd; --god:#f0c674; --dim:#3a4250;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:26px 18px 70px}
+  h1{font-size:23px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 16px;max-width:880px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  .steps{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 14px}
+  .stepbtn{flex:1;min-width:96px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:8px 6px;cursor:pointer;text-align:center;transition:.15s}
+  .stepbtn b{display:block;font-size:13px}.stepbtn small{color:var(--mut);font-size:10.5px}
+  .stepbtn.active{border-color:var(--a);background:var(--panel2);box-shadow:0 0 0 1px var(--a) inset}
+
+  .stage{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  @media(max-width:820px){.stage{grid-template-columns:1fr}}
+  .diagram{background:#0b0f14;border:1px solid var(--line);border-radius:12px;padding:10px;position:relative}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .panel h2{margin:0 0 8px;font-size:18px}
+  .blk{margin:10px 0}
+  .blk .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:3px}
+  .intuition .lbl{color:var(--god)} .what .lbl{color:var(--a)} .eff .lbl{color:var(--eff)}
+  .eff{border-left:3px solid var(--eff);padding-left:12px;background:#0e2025;border-radius:0 8px 8px 0;padding:8px 12px}
+
+  /* svg graph */
+  svg{width:100%;height:auto;display:block}
+  .edge{stroke:var(--dim);stroke-width:2;opacity:0;transition:.4s}
+  .node circle{fill:#30363d;stroke:#6e7681;stroke-width:1.5;transition:.4s}
+  .node text{fill:var(--mut);font:10px ui-monospace,Menlo,monospace;text-anchor:middle;transition:.4s}
+  .badge{opacity:0;transition:.4s}
+
+  /* step 2+: edges visible */
+  body[data-s="2"] .edge, body[data-s="3"] .edge, body[data-s="4"] .edge, body[data-s="5"] .edge, body[data-s="6"] .edge, body[data-s="7"] .edge{opacity:1}
+  /* step 3: confidence styling */
+  body[data-s="3"] .e-ext,body[data-s="4"] .e-ext,body[data-s="5"] .e-ext,body[data-s="6"] .e-ext,body[data-s="7"] .e-ext{stroke:#8b949e;stroke-dasharray:none}
+  body[data-s="3"] .e-inf,body[data-s="4"] .e-inf,body[data-s="5"] .e-inf,body[data-s="6"] .e-inf,body[data-s="7"] .e-inf{stroke:#8b949e;stroke-dasharray:6 4}
+  body[data-s="3"] .e-amb,body[data-s="4"] .e-amb,body[data-s="5"] .e-amb,body[data-s="6"] .e-amb,body[data-s="7"] .e-amb{stroke:var(--bridge);stroke-dasharray:2 5}
+  /* step 4+: communities + god nodes */
+  body[data-s="4"] .cA circle,body[data-s="5"] .cA circle,body[data-s="6"] .cA circle,body[data-s="7"] .cA circle{fill:rgba(210,168,255,.25);stroke:var(--a)}
+  body[data-s="4"] .cB circle,body[data-s="5"] .cB circle,body[data-s="6"] .cB circle,body[data-s="7"] .cB circle{fill:rgba(63,185,80,.22);stroke:var(--b)}
+  body[data-s="4"] .god circle,body[data-s="5"] .god circle,body[data-s="6"] .god circle,body[data-s="7"] .god circle{r:26;stroke-width:3}
+  body[data-s="4"] .god text,body[data-s="5"] .god text,body[data-s="6"] .god text,body[data-s="7"] .god text{fill:var(--ink);font-weight:700}
+  /* step 5: saved badge */
+  body[data-s="5"] #savedBadge{opacity:1}
+  /* step 6: shortest path highlight */
+  body[data-s="6"] .edge{opacity:.18}
+  body[data-s="6"] .path{opacity:1 !important;stroke:var(--eff);stroke-width:4;stroke-dasharray:none}
+  body[data-s="6"] .node circle{opacity:.4}
+  body[data-s="6"] .onpath circle{opacity:1;stroke:var(--eff);stroke-width:3}
+</style>
+</head>
+<body data-s="1">
+<div class="wrap">
+  <h1>How <span style="color:var(--a)">graphify</span> works — step by step, and how each step buys efficiency</h1>
+  <p class="sub">graphify turns files into a queryable <b>knowledge graph</b>. The whole trick for efficiency: <b>do the expensive reading once at ingest, persist it, then answer questions by walking a map</b> — instead of re-reading the library on every query (which is what Claude did, 31 commands × 600k tokens). Click through the steps.</p>
+
+  <div class="steps" id="steps">
+    <button class="stepbtn active" data-s="1"><b>1 · Extract</b><small>files→entities</small></button>
+    <button class="stepbtn" data-s="2"><b>2 · Connect</b><small>edges</small></button>
+    <button class="stepbtn" data-s="3"><b>3 · Tag trust</b><small>confidence</small></button>
+    <button class="stepbtn" data-s="4"><b>4 · Cluster</b><small>communities</small></button>
+    <button class="stepbtn" data-s="5"><b>5 · Persist</b><small>build once</small></button>
+    <button class="stepbtn" data-s="6"><b>6 · Query</b><small>traverse</small></button>
+    <button class="stepbtn" data-s="7"><b>7 · Why cheap</b><small>the principle</small></button>
+  </div>
+
+  <div class="stage">
+    <div class="diagram">
+      <svg viewBox="0 0 600 320" aria-label="evolving knowledge graph">
+        <!-- edges -->
+        <line class="edge e-ext path" x1="90" y1="90" x2="200" y2="170"/>
+        <line class="edge e-ext" x1="230" y1="70" x2="200" y2="170"/>
+        <line class="edge e-ext" x1="90" y1="90" x2="230" y2="70"/>
+        <line class="edge e-inf path" x1="200" y1="170" x2="330" y2="130"/>
+        <line class="edge e-amb path" x1="330" y1="130" x2="450" y2="90"/>
+        <line class="edge e-ext path" x1="450" y1="90" x2="510" y2="190"/>
+        <line class="edge e-inf" x1="450" y1="90" x2="410" y2="250"/>
+        <line class="edge e-ext" x1="510" y1="190" x2="410" y2="250"/>
+        <!-- nodes -->
+        <g class="node cA onpath"><circle cx="90" cy="90" r="16"/><text x="90" y="93">f1</text></g>
+        <g class="node cA"><circle cx="230" cy="70" r="16"/><text x="230" y="73">f2</text></g>
+        <g class="node cA god onpath"><circle cx="200" cy="170" r="16"/><text x="200" y="173">hub A</text></g>
+        <g class="node cA onpath"><circle cx="330" cy="130" r="16"/><text x="330" y="133">f4</text></g>
+        <g class="node cB god onpath"><circle cx="450" cy="90" r="16"/><text x="450" y="93">hub B</text></g>
+        <g class="node cB onpath"><circle cx="510" cy="190" r="16"/><text x="510" y="193">f6</text></g>
+        <g class="node cB"><circle cx="410" cy="250" r="16"/><text x="410" y="253">f7</text></g>
+        <g id="savedBadge" class="badge"><rect x="430" y="280" width="150" height="28" rx="6" fill="#0e2025" stroke="var(--eff)"/><text x="505" y="298" fill="var(--eff)" font-family="ui-monospace,Menlo" font-size="12" text-anchor="middle">💾 graph.json</text></g>
+      </svg>
+      <div style="color:var(--mut);font-size:11px;padding:4px 6px">legend: <span style="color:#8b949e">— extracted</span> · <span style="color:#8b949e">– – inferred</span> · <span style="color:var(--bridge)">··· ambiguous (bridge)</span> · big = god node</div>
+    </div>
+    <div class="panel" id="panel"></div>
+  </div>
+</div>
+
+<script>
+const STEPS={
+ 1:{t:"Extract — files become entities",
+    intuition:"Read every file and jot each important <b>thing</b> on an index card: a function, a class, a concept, a table, even a <code># WHY:</code> comment.",
+    what:"Code is parsed <b>locally</b> with tree-sitter AST (32 languages, <b>no API cost</b>) → function/class/module nodes. Non-code (docs, PDF, <b>.xlsx</b>, images, audio) is sent to an LLM, which extracts concept nodes + a clean text representation.",
+    eff:"Extraction happens <b>once, at ingest, offline</b>. At query time the agent reads clean <b>cards</b> (normalized content) — it never re-opens or re-parses the raw file. <b>This is exactly our #1 efficiency artifact</b>: it would have killed Claude's <code>openpyxl→pandas→HTMLParser</code> fight on the HTML-disguised .xlsx."},
+ 2:{t:"Connect — entities become a property graph",
+    intuition:"Pin the cards on a board and draw a string between any two that relate (a function that <i>calls</i> another; a doc that <i>mentions</i> a concept).",
+    what:"Nodes = entities, edges = relationships (calls, imports, mentions, references, derived-from). The result is a <b>property graph</b> (undirected by default, <code>--directed</code> optional).",
+    eff:"\"What's related to X?\" becomes <b>follow X's strings — one hop</b>, instead of grepping the whole corpus and guessing filenames. This is the single op POSIX/semfs can't do today (no edges); it replaces the dozen-<code>find</code> flail with a <code>get_neighbors(X)</code>."},
+ 3:{t:"Tag trust — every edge carries confidence",
+    intuition:"Label each string: <b>solid</b> = \"I literally saw this in the code\", <b>dashed</b> = \"I'm inferring it from meaning\", <b>dotted</b> = \"a guess, unsure\".",
+    what:"Each edge is tagged <code>EXTRACTED</code> / <code>INFERRED</code> / <code>AMBIGUOUS</code>. Code-derived edges are EXTRACTED (high trust); LLM-semantic edges are INFERRED; weak ones AMBIGUOUS.",
+    eff:"The agent can <b>trust EXTRACTED edges and skip verifying them</b>, and only double-check INFERRED/AMBIGUOUS ones. Recall Claude re-read the raw file because it <i>didn't trust</i> the excerpt — confidence tags tell it what's safe to act on, cutting the re-read-to-verify tokens."},
+ 4:{t:"Cluster — communities reveal the digest",
+    intuition:"Step back from the board. Densely-strung cards form <b>neighborhoods</b> (topics). The most-connected card in each neighborhood is the <b>\"god node\"</b> — the central idea.",
+    what:"<b>Leiden community detection</b> partitions nodes into communities; the hubs are god nodes. The report ranks <b>surprising</b> connections and lists the communities + suggested questions.",
+    eff:"The communities + god nodes <b>are the workspace digest</b> — one read tells you \"what this workspace is about,\" replacing the <code>ls -R</code>/<code>find</code> crawl. <b>This is the fix for our empty <code>profile.md</code></b>: a digest <i>computed from structure</i>, not the blank user-profile semfs returns today."},
+ 5:{t:"Persist — build once, query forever",
+    intuition:"Photograph the whole board and save it. Tomorrow you query the <b>photo</b>, not the files. Re-take the photo only when something changes.",
+    what:"The graph is saved to <code>graph.json</code> and committed to git. It auto-rebuilds on commit (AST-only → no API cost), with a union-merge driver so teammates share one graph.",
+    eff:"The expensive extraction is <b>amortized</b>: done once, queried thousands of times. Cost moves from <b>per-query</b> (Claude crawling + parsing on <i>every</i> run) to <b>per-ingest</b> (once). The agent loads the graph; it never re-extracts or re-crawls."},
+ 6:{t:"Query — answer by traversal, not by reading",
+    intuition:"Ask the board: \"what connects f1 to f6?\" → it traces the <b>shortest chain of strings</b> (highlighted). \"what's near hub A?\" → the cards one hop away. You read a path, not the library.",
+    what:"<code>query_graph</code>, <code>get_node</code>, <code>get_neighbors</code>, <code>shortest_path</code> — exposed as <b>MCP tools</b> (<code>--budget</code> caps the token cost; <code>--dfs</code> tunes traversal).",
+    eff:"A graph query returns a <b>precise sub-answer</b> (a few nodes/edges), not a pile of files → tiny context. And because they're <b>MCP tools</b>, the agent actually calls them — the channel we proved Claude uses reliably (vs prose hints it ignores)."},
+ 7:{t:"Why it's cheap — the principle",
+    intuition:"Do the hard reading <b>once, up front</b>; then answer questions by <b>walking a map</b> — never by re-reading the library each time.",
+    what:"Every step above moves work <b>out of the per-query loop</b>: extract→normalize (once), connect→edges (once), cluster→digest (once), persist (once). Queries become lookups + short traversals with capped budgets.",
+    eff:"That's the whole efficiency thesis, and the inverse of what Claude did: <b>cost moved from PER-QUERY crawl+parse (31 cmds, 600k tok) to PER-INGEST build</b>, with <b>small results</b> (nodes/edges/excerpts) instead of whole files. semfs already does this for <i>search</i> (embed once → query); graphify shows how to extend it to <b>structure</b> (edges), <b>orientation</b> (community digest), and <b>clean reads</b> (normalized cards)."}
+};
+function render(s){
+  document.body.dataset.s=s;
+  document.querySelectorAll('.stepbtn').forEach(b=>b.classList.toggle('active', b.dataset.s==s));
+  const d=STEPS[s];
+  document.getElementById('panel').innerHTML=
+    `<h2>${d.t}</h2>
+     <div class="blk intuition"><div class="lbl">🧠 Intuition</div>${d.intuition}</div>
+     <div class="blk what"><div class="lbl">⚙️ What it actually is</div>${d.what}</div>
+     <div class="blk eff"><div class="lbl">⚡ How it buys efficiency (→ semfs)</div>${d.eff}</div>`;
+}
+document.getElementById('steps').addEventListener('click',e=>{const b=e.target.closest('.stepbtn'); if(b) render(b.dataset.s);});
+render(1);
+</script>
+</body>
+</html>

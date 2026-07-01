@@ -1,0 +1,326 @@
+{
+  "model": "openai/gpt-oss-120b",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements—dates (Jan 27 1967, late Jan 1986, Feb 1 2003), names (Jim Bridenstine, Mike Wallace, Gus Grissom, Ed White, Roger Chaffee, Ronald Reagan, George W. Bush), events (Apollo fire, Challenger disaster, Columbia disaster), numbers of astronauts killed (3, 7, 7), the partial government shutdown delay, and the reform actions—are retained. Quotes and attributions are preserved, and no new unsupported facts are introduced. Formatting changes and removal of narrative filler do not affect factual content.",
+      "usage": {
+        "in": 1897,
+        "out": 7074,
+        "reasoning": 8588
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "please remember this final thought"
+      ],
+      "qwen_added": [
+        "shower curtains billow inwards"
+      ],
+      "qwen_reason": "The compression omitted the directive 'please remember this final thought' from the original. It also introduced the verb 'billow' in the question about shower curtains ('shower curtains billow inwards'), which was not present in the original phrasing.",
+      "usage": {
+        "in": 2038,
+        "out": 7285,
+        "reasoning": 8073
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements, attributions, and claims from the original (including the self‐expression claim, the reflection of identity, reasons people wear baggy clothes, user sentiments, AI's lack of emotions, comfort, fashion trend, rebellion, empowerment, confidence, versatility, and the list of current clothing trends) are preserved in the compressed version. No facts were omitted or introduced.",
+      "usage": {
+        "in": 2168,
+        "out": 6336,
+        "reasoning": 8010
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Association as Primary Servicer of the Related Home Depot Mortgage Loan (see Exhibit 34.1)"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omitted the fact that 'Association' is the Primary Servicer of the Related Home Depot Mortgage Loan (Exhibit 34.1). All other facts are preserved.",
+      "usage": {
+        "in": 2270,
+        "out": 4092,
+        "reasoning": 4474
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "34.22 (enumeration label for Association)"
+      ],
+      "qwen_reason": "The compressed version adds the identifier '34.22' before the Association entry, which was not present in the original text. All other facts are otherwise preserved.",
+      "usage": {
+        "in": 2302,
+        "out": 6361,
+        "reasoning": 6341
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [],
+      "qwen_added": [
+        "Project Manager asks '_V_I_D_N_M_E_ stand for?' (speaker attribution not present in original)",
+        "Qualifier 'the last' added to UI's task description"
+      ],
+      "qwen_reason": "The compressed version adds a speaker attribution for the opening question (the original question had no speaker label) and inserts the word 'the last' describing the UI designer's task, neither of which appear in the original. All other factual statements are preserved.",
+      "usage": {
+        "in": 1811,
+        "out": 7147,
+        "reasoning": 8407
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "User Interface: Consensus on the, what we're gonna do"
+      ],
+      "qwen_added": [
+        "Project Manager: We need a consensus on what we're going to do"
+      ],
+      "qwen_reason": "The original UI utterance expressing a consensus request was omitted and its speaker attribution was changed to the Project Manager, resulting in a dropped fact (the UI statement) and an added fact (PM stating a consensus).",
+      "usage": {
+        "in": 1982,
+        "out": 10457,
+        "reasoning": 12354
+      }
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements—NPR News & NOTES host Farai Chideya, the West Virginia investigation, 20‑year‑old African‑American victim Megan Williams held captive for a week, her alleged stabbing, beating, and forced sexual acts, six white suspects arrested (including a mother‑son pair, a mother‑daughter pair, and two others), the list of charges, the release of the victim's name and her mother Carmen Williams's quote, Sheriff W.E. Hunter's name, title, location, 30+ years law‑enforcement experience, lack of prior similar crimes, release of suspects' names, community cooperation, racial relations in Logan County, no known racial tension, no motive yet, FBI pursuing a person of interest in another county, and plans for further interviews and statements—are all present in the compressed version unchanged. No factual information was omitted or added.",
+      "usage": {
+        "in": 2193,
+        "out": 7003,
+        "reasoning": 8314
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements about the role of intention, the step‑by‑step guidance for setting a clear intention, and the discussion of visualization for materialistic goals are retained. The compression only rewrote phrasing and removed filler language, without omitting or inventing any facts.",
+      "usage": {
+        "in": 2345,
+        "out": 767,
+        "reasoning": 890
+      }
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original—list of leading smartwatch brands, the eight popular features and their specific details, price range facts (under $100 for entry‑level, over $1,000 for premium Apple and Samsung models), and the advice that affordable options exist via older or lesser‑known models, with caveats about quality and the recommendation to read reviews and compare prices—are present in the compressed version. No facts were omitted or introduced.",
+      "usage": {
+        "in": 1908,
+        "out": 2837,
+        "reasoning": 3362
+      }
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "LNR Partners, LLC, as Special Servicer of the Miracle Mile Shops Mortgage Loan (Omitted. See Explanatory Notes.)"
+      ],
+      "qwen_added": [
+        "LNR Partners, LLC, as Special Servitor of the Miracle Mile Shops Mortgage Loan (Omitted. See Explanatory Notes.)"
+      ],
+      "qwen_reason": "The role title for LNR Partners, LLC was changed from \"Special Servicer\" in the original to \"Special Servitor\" in the compressed version, altering a factual identifier.",
+      "usage": {
+        "in": 2328,
+        "out": 3973,
+        "reasoning": 4251
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original (purpose, construction, amendment details, statutory citations, and the specific language of the limitations and advertising restrictions) are present in the compressed version. Only formatting changes and a trivial omission of the word \"that\" occurred, which does not alter any fact.",
+      "usage": {
+        "in": 2233,
+        "out": 2699,
+        "reasoning": 3294
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information (percentages, counts, dollar amounts, dates, names and statements) from the original passage is retained in the compressed version; only formatting and wording were altered, with no missing or added facts.",
+      "usage": {
+        "in": 2226,
+        "out": 4276,
+        "reasoning": 5135
+      }
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual elements—section references, timeframes (30 days, 15 days), requirements to submit and publish results, comment and bid procedures, qualification criteria, and waiver conditions—are present in the compressed version. Wording and formatting changes do not alter any facts.",
+      "usage": {
+        "in": 1794,
+        "out": 3250,
+        "reasoning": 4216
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual information from the original (patient age, presentation, lesion size, puncta location, lack of regurgitation, treatment dose and duration, imaging findings, epidemiology percentages, citation details, developmental anatomy, and figure references) is present unchanged in the compressed version; only formatting and minor wording were altered.",
+      "usage": {
+        "in": 2380,
+        "out": 5858,
+        "reasoning": 6079
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All percentages, stage information, citation numbers, study findings (recurrence rates, mortality percentages, OS/DFS differences, prognosis statements, tobacco/alcohol intake, prevalence of HPV DNA, high‑risk subtypes, HPV 6/11 variants, and the call for further investigation) are present in the compressed version. Formatting changes, removal of OCR fragment \"were n0 .\", and rephrasing do not alter any factual content.",
+      "usage": {
+        "in": 2130,
+        "out": 6360,
+        "reasoning": 7085
+      }
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements from the original text are preserved in the compressed version; only formatting, minor rephrasing, and derivable counts (e.g., \"3 systems\", \"2 support frameworks\") were added, which is allowed.",
+      "usage": {
+        "in": 2114,
+        "out": 6524,
+        "reasoning": 0
+      }
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements (speaker attributions, design facts about sensors, meeting action items, plan decision, etc.) are preserved; only filler, hesitations, and non‑fact fragments were removed.",
+      "usage": {
+        "in": 1907,
+        "out": 5131,
+        "reasoning": 5995
+      }
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Joined: Aug 10, 2001"
+      ],
+      "qwen_added": [
+        "Joined: Aug 2001"
+      ],
+      "qwen_reason": "The original passage includes the specific join date 'Aug 10, 2001' which is omitted (day removed) in the compressed version, resulting in a change of factual date specificity. All other facts are preserved.",
+      "usage": {
+        "in": 2405,
+        "out": 5112,
+        "reasoning": 5685
+      }
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSY",
+      "qwen_dropped": [
+        "Height: 6.25 inches",
+        "Width: 17 inches",
+        "Depth: 12.75 inches"
+      ],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version omitted the inch units for the Height, Width, and Depth specifications, dropping those facts.",
+      "usage": {
+        "in": 2280,
+        "out": 8104,
+        "reasoning": 8431
+      }
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All factual statements—including numeric values (600 Euro per m², nearly 50 countries), company name (Riviera Invest), market claims (Turkey’s vibrant property market, affordable housing, Alanya’s price‑increase leadership), property types offered, service details, and location attributes—are retained in the compressed version. Only non‑factual filler, opinion phrasing, and minor stylistic changes were removed or altered, without dropping or adding any facts.",
+      "usage": {
+        "in": 1958,
+        "out": 6841,
+        "reasoning": 8702
+      }
+    }
+  ]
+}

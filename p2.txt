@@ -1,0 +1,19 @@
+    /// Live test (skips without `OPENROUTER_API_KEY`): a numeric sheet summarizes
+    /// to non-empty prose that the raw cells alone could never produce.
+    #[test]
+    fn summarize_one_produces_prose_live() {
+        if api_key().is_none() {
+            eprintln!("skipping: OPENROUTER_API_KEY not set");
+            return;
+        }
+        let key = api_key().unwrap();
+        let s = summarize_one(
+            &key,
+            "/desktop/product-sales/q3_sales.xlsx",
+            "Q3 Sales",
+            "Product\tUnits\nWidget\t1978\nGadget\t1335\n",
+        )
+        .expect("summary with a key set");
+        assert!(!s.trim().is_empty(), "summary should be non-empty prose");
+    }
+}

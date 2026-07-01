@@ -12,6 +12,11 @@ FILESYS_ROOT="${FILESYS_ROOT:-${EVAL_ROOT}/filesys}"
 TELEMETRY_ROOT="${TELEMETRY_ROOT:-${OUTPUT_ROOT}/_telemetry}"
 RUN_STAMP="${RUN_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 SKIP_PREPARE="${SKIP_PREPARE:-0}"
+# SEMFS_FRESH=1 → start every run cold: wipe the semfs local cache DB (forces a
+# fresh pull from supermemory) and remove this target's prior output dir (avoids
+# the grader's stale-resume skip). Off by default; warm cache is faster.
+SEMFS_FRESH="${SEMFS_FRESH:-0}"
+SEMFS_CACHE_ROOT="${SEMFS_CACHE_ROOT:-${HOME}/.cache/semfs}"
 
 cleanup_stale_mounts() {
   local target=""
@@ -24,6 +29,42 @@ cleanup_stale_mounts() {
       $2 == "on" && index($3, root) == 1 && $4 == "type" && $5 == "fuse" { print $3 }
     '
   )
+}
+
+# Cold-start a run when SEMFS_FRESH=1: drop the semfs local cache (re-pull from
+# supermemory) and remove this target's prior output dir. No-op otherwise.
+fresh_clear() {
+  [[ "${SEMFS_FRESH}" == "1" ]] || return 0
+  local target="$1"
+
+  # 1. semfs local cache DBs. Scope to SEMFS_CONTAINER_TAG when set, else all.
+  local cache_glob="*.db"
+  [[ -n "${SEMFS_CONTAINER_TAG:-}" ]] && cache_glob="${SEMFS_CONTAINER_TAG}.db"
+  if [[ -d "${SEMFS_CACHE_ROOT}" ]]; then
+    while IFS= read -r f; do
+      [[ -n "${f}" ]] || continue
+      log "fresh: rm cache ${f}*"
+      rm -f "${f}" "${f}-shm" "${f}-wal"
+    done < <(find "${SEMFS_CACHE_ROOT}" -type f -name "${cache_glob}" 2>/dev/null)
+  fi
+
+  # 2. prior output for this target's label prefix (anchored — plain labels do
+  #    not match the SEMFS* prefixes, so plain runs never delete semfs output).
+  local prefix=""
+  case "${target}" in
+    codex)            prefix="Codex--" ;;
+    semfs-codex)      prefix="SEMFSCodex--" ;;
+    claudecode)       prefix="ClaudeCode--" ;;
+    semfs-claudecode) prefix="SEMFSClaudeCode--" ;;
+  esac
+  if [[ -n "${prefix}" ]]; then
+    local d
+    for d in "${OUTPUT_ROOT}/${prefix}"*/; do
+      [[ -d "${d}" ]] || continue
+      log "fresh: rm output ${d}"
+      rm -rf "${d}"
+    done
+  fi
 }
 
 snapshot_workspace() {
@@ -250,6 +291,38 @@ print(json.dumps(summary, indent=2))
 PY
 }
 
+# Archive per-case command traces into the (persistent) per-run telemetry dir.
+# The case output dir (OUTPUT_ROOT/<prefix>*/<case>/raw/) is OVERWRITTEN by every
+# subsequent run, so without this the codex_stdout.jsonl / agent.json command
+# traces are lost — making cross-run comparison (e.g. cloud vs local tool calls)
+# impossible. Copies are cheap and keyed by RUN_STAMP, so every run is preserved.
+archive_traces() {
+  local telemetry_dir="$1" target="$2"
+  local prefix=""
+  case "${target}" in
+    codex)            prefix="Codex--" ;;
+    semfs-codex)      prefix="SEMFSCodex--" ;;
+    claudecode)       prefix="ClaudeCode--" ;;
+    semfs-claudecode) prefix="SEMFSClaudeCode--" ;;
+  esac
+  [[ -n "${prefix}" ]] || return 0
+  local arch="${telemetry_dir}/traces"
+  mkdir -p "${arch}"
+  while IFS= read -r aj; do
+    [[ -n "${aj}" ]] || continue
+    local casedir label
+    casedir="$(dirname "${aj}")"
+    label="$(basename "$(dirname "${casedir}")")__$(basename "${casedir}")"
+    mkdir -p "${arch}/${label}"
+    cp -f "${aj}" "${arch}/${label}/agent.json" 2>/dev/null || true
+    local f
+    for f in codex_stdout.jsonl chat_adapter_log.jsonl codex_invocation.json last_message.txt; do
+      [[ -f "${casedir}/raw/${f}" ]] && cp -f "${casedir}/raw/${f}" "${arch}/${label}/${f}" 2>/dev/null || true
+    done
+  done < <(find "${OUTPUT_ROOT}/${prefix}"*/ -name agent.json 2>/dev/null)
+  log "archived traces → ${arch}"
+}
+
 main() {
   if [[ $# -ne 1 ]]; then
     usage
@@ -259,6 +332,7 @@ main() {
   mkdir -p "${OUTPUT_ROOT}"
   cd "${EVAL_ROOT}"
   cleanup_stale_mounts
+  fresh_clear "$1"
   local telemetry_dir="${TELEMETRY_ROOT}/${RUN_STAMP}-$1-${DATASET}"
   local narrative_prefix="${telemetry_dir}/run_narrative"
   local timing_json="${telemetry_dir}/timing_breakdown.json"
@@ -342,6 +416,7 @@ payload = {
 path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
   narrative_workspace "${telemetry_dir}" "${narrative_prefix}"
+  archive_traces "${telemetry_dir}" "$1"
 
   log "run complete"
   emit_summary "${telemetry_dir}" "${narrative_prefix}" "${timing_json}"

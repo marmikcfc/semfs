@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>semfs · storage backends, pglite vs Postgres, and the grep question</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --ink:#e6edf3; --dim:#8b949e;
+    --line:#30363d; --accent:#58a6ff; --green:#3fb950; --amber:#d29922; --red:#f85149;
+    --violet:#bc8cff; --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 20px 120px}
+  h1{font-size:30px;margin:.2em 0 .1em;letter-spacing:-.02em}
+  h2{font-size:22px;margin:2.2em 0 .4em;letter-spacing:-.01em;border-bottom:1px solid var(--line);padding-bottom:.25em}
+  h3{font-size:17px;margin:1.4em 0 .3em;color:var(--accent)}
+  p{color:var(--ink)} .dim{color:var(--dim)}
+  code,.mono{font-family:var(--mono);font-size:.92em}
+  code{background:#1f2630;padding:.1em .4em;border-radius:5px;color:#c9d6e2}
+  .lede{font-size:18px;color:var(--dim);margin-top:.2em}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);color:var(--dim);vertical-align:middle}
+  .ok{color:var(--green);border-color:#23502f} .no{color:var(--red);border-color:#5c2220} .warn{color:var(--amber);border-color:#5c4a16}
+  /* stepper */
+  .steps{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .steps button{flex:1;min-width:90px;background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+    padding:8px 6px;border-radius:8px;cursor:pointer;font-size:12px;transition:.15s;font-family:var(--mono)}
+  .steps button.on{background:var(--accent);color:#06101f;border-color:var(--accent);font-weight:600}
+  .stepbody{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-height:90px}
+  .stepbody .k{color:var(--violet);font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+  /* tabs */
+  .tabs{display:flex;gap:6px;margin:14px 0 0}
+  .tabs button{background:var(--panel2);border:1px solid var(--line);border-bottom:none;color:var(--dim);
+    padding:9px 16px;border-radius:8px 8px 0 0;cursor:pointer;font-size:14px}
+  .tabs button.on{background:var(--panel);color:var(--ink);font-weight:600;border-color:var(--accent)}
+  .tabpane{background:var(--panel);border:1px solid var(--line);border-radius:0 12px 12px 12px;padding:18px 20px}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  /* diagram */
+  .diagram{background:#0a0e14;border:1px solid var(--line);border-radius:12px;padding:20px;margin:14px 0}
+  .procrow{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap}
+  .box{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;text-align:center;min-width:150px;position:relative}
+  .box.proc{border-color:var(--accent)} .box.store{border-color:var(--green)}
+  .box .t{font-weight:700;font-family:var(--mono);font-size:14px} .box .s{font-size:12px;color:var(--dim);margin-top:3px}
+  .pipe{font-family:var(--mono);color:var(--dim);font-size:13px;text-align:center}
+  .demo button{background:var(--accent);color:#06101f;border:none;padding:9px 16px;border-radius:8px;font-weight:600;cursor:pointer;margin:4px 6px 4px 0}
+  .demo button.alt{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  .conn{height:8px;border-radius:4px;background:#2a3340;margin:6px 0;overflow:hidden;position:relative}
+  .conn .fill{height:100%;width:0;background:var(--green);transition:width .5s}
+  .log{font-family:var(--mono);font-size:12.5px;background:#0a0e14;border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;margin-top:10px;white-space:pre-wrap;min-height:64px;color:#c9d6e2}
+  .log .g{color:var(--green)} .log .r{color:var(--red)} .log .a{color:var(--amber)} .log .d{color:var(--dim)}
+  details{border:1px solid var(--line);border-radius:10px;padding:0 16px;margin:10px 0;background:var(--panel)}
+  summary{cursor:pointer;padding:14px 0;font-weight:600}
+  .pill{font-family:var(--mono);font-size:12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:680px){.grid2{grid-template-columns:1fr}}
+  .foot{color:var(--dim);font-size:13px;margin-top:40px;border-top:1px solid var(--line);padding-top:16px}
+  .hl{background:#1f2a18;border-left:3px solid var(--green);padding:10px 14px;border-radius:0 8px 8px 0;margin:10px 0}
+  .hlr{background:#2a1818;border-left:3px solid var(--red);padding:10px 14px;border-radius:0 8px 8px 0;margin:10px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>semfs storage: pglite, Postgres, and "can <code>grep</code> use it?"</h1>
+  <p class="lede">Why there are two kinds of "Postgres" in this project, why a real one got installed,
+  and the one finding that decides the whole design.</p>
+
+  <div class="hl"><b>One-line answer:</b> a mount and <code>semfs grep</code> are <b>two separate processes</b>.
+  pglite serves <b>one connection at a time</b> — held by the daemon — so a separate <code>grep</code> process can't
+  open its own. With an <i>external</i> Postgres it can (tested ✓); with <i>embedded</i> pglite, <code>grep</code> must
+  ask the daemon over IPC.</p>
+
+  <!-- ───────────────────────── 5-STEP LADDER ───────────────────────── -->
+  <h2>Understand it in 5 steps</h2>
+  <p class="dim">From plain-English to the wire-level detail. Click through.</p>
+  <div class="steps" id="steps"></div>
+  <div class="stepbody" id="stepbody"></div>
+
+  <!-- ───────────────────────── ARCHITECTURE ───────────────────────── -->
+  <h2>The shape of the system</h2>
+  <p>semfs mounts a folder. Behind it, a <b>daemon</b> keeps a local <b>cache</b> (file metadata + content) and a
+  <b>semantic index</b> (vectors). Searching is a <i>separate</i> command, <code>semfs grep</code>.</p>
+
+  <div class="diagram">
+    <div class="procrow">
+      <div class="box proc"><div class="t">semfs mount</div><div class="s">daemon · long-lived<br>WRITES the index</div></div>
+      <div class="pipe">── writes ──▶</div>
+      <div class="box store" id="storebox"><div class="t">vector index</div><div class="s" id="storesub">SQLite&nbsp;file&nbsp;/&nbsp;Postgres</div></div>
+      <div class="pipe">◀── reads ──</div>
+      <div class="box proc"><div class="t">semfs grep</div><div class="s">CLI · short-lived<br>READS the index</div></div>
+    </div>
+    <p class="pipe" style="margin-top:16px">two independent OS processes ↑ &nbsp;both need the one index</p>
+  </div>
+
+  <div class="card">
+    <span class="tag">key idea</span>
+    The index is <b>not</b> reachable through the mounted files — the filesystem shows <i>files</i>, not vector search.
+    So <code>grep</code> must reach the <b>index store</b> itself. <b>How</b> it reaches it is the entire question below.
+  </div>
+
+  <!-- ───────────────────────── THE THREE STORES ───────────────────────── -->
+  <h2>Three things people call "Postgres" here</h2>
+  <div class="tabs" id="tabs"></div>
+  <div class="tabpane" id="tabpane"></div>
+
+  <!-- ───────────────────────── WHY WE DOWNLOADED POSTGRES ───────────────────────── -->
+  <h2>Why a real Postgres got installed</h2>
+  <p>We had pglite-oxide from day one — but only as a <b>test crate</b>, used by <code>cargo test</code> inside a
+  <b>single</b> process. That can't cover the <b>mount</b>, because a mount involves <b>two</b> processes
+  (daemon + grep) sharing one database. So to actually <i>test by mounting</i>, a real multi-connection server was needed.</p>
+
+  <div class="grid2">
+    <div class="card"><span class="tag">unit test</span><br>
+      <code>cargo test --features pg-local</code><br><br>
+      <b>One</b> process spins up pglite in-memory, connects, asserts. pglite is perfect here.
+      <span class="dim">This is what we "downloaded initially" — a crate, not a server.</span></div>
+    <div class="card"><span class="tag">mount test</span><br>
+      <code>semfs mount</code> + <code>semfs grep</code><br><br>
+      <b>Two</b> processes, one shared DB. pglite (in-process) can't be shared across processes →
+      needed <code>brew install postgresql@17 pgvector</code>.</div>
+  </div>
+
+  <!-- ───────────────────────── THE FINDING (DEMO) ───────────────────────── -->
+  <h2>The finding that decides everything</h2>
+  <p><b>pglite-oxide serves exactly one connection at a time.</b> Proven empirically: a 2nd concurrent
+  connection blocks forever (a probe printed "connecting B…" and never returned). Press the buttons to see why
+  that matters for each backend.</p>
+
+  <div class="diagram demo">
+    <div style="margin-bottom:8px"><b>Scenario:</b> the daemon is mounted and holding its connection. You run <code>semfs grep</code>.</div>
+    <button onclick="runDemo('pglite')">grep against embedded pglite</button>
+    <button class="alt" onclick="runDemo('postgres')">grep against real Postgres</button>
+    <button class="alt" onclick="runDemo('ipc')">grep via daemon IPC (the fix)</button>
+    <div style="margin-top:14px">
+      <div class="dim pill">daemon connection</div><div class="conn"><div class="fill" id="c1" style="width:100%"></div></div>
+      <div class="dim pill">grep connection</div><div class="conn"><div class="fill" id="c2"></div></div>
+    </div>
+    <div class="log" id="demolog">Pick a scenario above.</div>
+  </div>
+
+  <!-- ───────────────────────── YOUR MODEL ───────────────────────── -->
+  <h2>"One mount = one connection" — you're right</h2>
+  <div class="hl">
+    <b>Your model holds:</b> one mount needs one connection (the daemon's); multiple mounts = multiple
+    independent single connections (each daemon its own pglite, or its own <code>container</code> namespace in a
+    shared Postgres). Mounts never collide.</div>
+  <p>The subtlety isn't "1 vs many connections" — it's <b>who holds the one connection</b>. The daemon holds it for
+  the whole mount lifetime, and <code>grep</code> is a <i>different process</i>. So the one connection is already
+  taken when grep shows up. The clean consequence of your own model: <b>grep shouldn't open its own connection —
+  it should ask the daemon</b>, the single connection's owner.</p>
+
+  <!-- ───────────────────────── CURRENT STATE ───────────────────────── -->
+  <h2>Where the code is right now</h2>
+  <table>
+    <tr><th>Piece</th><th>State</th><th>Notes</th></tr>
+    <tr><td>SQLite backend via mount/grep</td><td><span class="tag ok">shipping</span></td><td>The default. Per-mount cache file.</td></tr>
+    <tr><td><code>PgVectorStore</code> library backend</td><td><span class="tag ok">done + tested</span></td><td>index/search/remove/rename; pglite unit tests (224 pass).</td></tr>
+    <tr><td>CLI wiring (<code>SEMFS_STORAGE_BACKEND=pgvector</code>)</td><td><span class="tag ok">committed</span></td><td><code>9ba39f6</code>. async <code>LocalIndexer</code>; daemon+grep branch on backend.</td></tr>
+    <tr><td>Mount test — <b>external</b> Postgres</td><td><span class="tag ok">PASS</span></td><td>grep (separate proc) read 3 rows back from real Postgres.</td></tr>
+    <tr><td>Multi-tenant safety (<code>container</code> column)</td><td><span class="tag warn">done, uncommitted</span></td><td>From Codex review; isolation test passes.</td></tr>
+    <tr><td>Mount with <b>embedded pglite</b> + grep</td><td><span class="tag no">not possible as wired</span></td><td>grep can't take the daemon's single connection → needs IPC.</td></tr>
+  </table>
+
+  <!-- ───────────────────────── THE FORK ───────────────────────── -->
+  <h2>The fork</h2>
+  <div class="grid2">
+    <div class="card"><h3 style="margin-top:0">A · External Postgres</h3>
+      <span class="tag ok">works today</span>
+      <p class="dim">You run a Postgres; semfs connects. grep opens its own connection (real Postgres = many connections).
+      Multi-connection, multi-mount safe via the <code>container</code> namespace.</p>
+      <p class="dim">Cost: an external server to run.</p></div>
+    <div class="card"><h3 style="margin-top:0">B · Embedded pglite + grep-over-IPC</h3>
+      <span class="tag warn">your goal · not built</span>
+      <p class="dim">semfs ships pglite. The daemon owns the one connection; <code>grep</code> sends its query over the
+      daemon's existing IPC socket and gets hits back. One connection, one owner — your "single connection" model, exactly.</p>
+      <p class="dim">Cost: add a <code>search</code> request to the daemon IPC + make grep an IPC client for pgvector.</p></div>
+  </div>
+
+  <!-- ───────────────────────── PERSONAS ───────────────────────── -->
+  <h2>Which architecture fits which user?</h2>
+  <p>From <code>users.md</code> — three real user types. The storage choice isn't one-size: it tracks
+  <b>how they deploy</b>. Click a persona to see the fit.</p>
+
+  <div class="steps" id="pp"></div>
+  <div class="stepbody" id="ppbody"></div>
+
+  <h3>The matrix</h3>
+  <table id="matrix">
+    <tr><th>User type</th><th>SQLite <span class="dim">(default, embedded file)</span></th>
+        <th>Embedded pglite <span class="dim">(+ grep-over-IPC)</span></th>
+        <th>External Postgres <span class="dim">(shared server)</span></th></tr>
+  </table>
+
+  <div class="hl" style="margin-top:14px">
+  <b>The through-line:</b> the grep-connection finding isn't a footnote — it <i>is</i> the deployment fit.
+  A <b>self-contained single box</b> (one sandbox, one laptop) → daemon owns the one connection, grep rides IPC →
+  <b>embedded</b> (pglite or SQLite). <b>Many processes / many machines sharing one durable index</b> →
+  multi-connection server → <b>external Postgres</b>. You pick storage by counting who needs the index, not by feature lists.</div>
+
+  <div class="card" style="border-color:#2f5a36;background:#11180f">
+    <div class="k" style="color:var(--green);font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.08em">★ Two takeaways</div>
+    <p style="margin:.5em 0 .4em"><b>1 · The connection model = the deployment shape.</b> "Can <code>grep</code> reach the index?"
+    is the same question as "how many processes/machines share it?" — so the single-connection finding decides storage,
+    not a feature checklist. Embedded (single owner, IPC) for one box; external Postgres (many connections) for many.</p>
+    <p style="margin:0"><b>2 · The matrix is honest, not a pitch.</b> Per <code>users.md</code>'s Mom-Test discipline,
+    each cell claims fit only where the evidence points: Type 2 gains nothing from either Postgres option (SQLite already
+    wins), and Type 1's embedded-pglite edge is real <i>only</i> because cold-start + self-containment are their stated
+    priorities. No backend is sold to everyone.</p>
+  </div>
+
+  <!-- ───────────────────────── CURRENT vs BEST ───────────────────────── -->
+  <h2>Current architecture vs. the best solution</h2>
+
+  <h3>① Current — grep reaches the store itself</h3>
+  <p>Two working paths today. In both, <b><code>grep</code> connects to the store directly</b> — which is exactly
+  why embedded pglite can't be a runtime backend.</p>
+
+  <div class="diagram">
+    <div style="text-align:center;margin-bottom:6px"><span class="tag">path A · default</span> &nbsp; <span class="tag">path B · opt-in pgvector</span></div>
+    <div class="procrow" style="align-items:stretch">
+      <!-- path A -->
+      <div class="box" style="flex:1;border-color:#30363d;background:#0f1620">
+        <div class="t">SQLite path <span class="tag ok" style="float:right">shipping</span></div>
+        <div style="margin-top:10px;text-align:left;font-size:13px" class="dim">
+          <code>mount</code> daemon ──writes──▶ <b>SQLite file</b> (per-mount, on disk)<br>
+          <code>grep</code> ──opens the file (via <code>.semfs</code> marker)──▶ same file<br><br>
+          ✓ two processes share a <i>file</i> — SQLite allows concurrent readers.
+        </div>
+      </div>
+      <!-- path B -->
+      <div class="box" style="flex:1;border-color:#30363d;background:#0f1620">
+        <div class="t">pgvector path <span class="tag ok" style="float:right">committed</span></div>
+        <div style="margin-top:10px;text-align:left;font-size:13px" class="dim">
+          <code>mount</code> daemon ──conn #1──▶ <b>External Postgres</b> (you run it)<br>
+          <code>grep</code> ──conn #2──▶ same server<br><br>
+          ✓ real Postgres = many connections. <span class="dim">container-namespaced, mount-tested.</span>
+        </div>
+      </div>
+    </div>
+    <div class="hlr" style="margin:14px 0 0">
+      <b>✗ The gap:</b> <b>embedded pglite</b> can't be a runtime backend here — it serves one connection, the daemon
+      holds it, and <code>grep</code>'s own connection (the pattern both paths use) would block forever.
+    </div>
+  </div>
+
+  <h3>② Best — the daemon owns the index; grep asks it</h3>
+  <p>One principle fixes the gap <i>and</i> unifies every persona: <b>the daemon is the sole owner of the index
+  connection; <code>grep</code> sends a query over the daemon's IPC socket and gets hits back.</b> The backend
+  becomes a daemon-side, pluggable choice.</p>
+
+  <div class="diagram">
+    <div class="procrow">
+      <div class="box proc" style="min-width:180px"><div class="t">semfs grep</div><div class="s">no DB logic at all</div></div>
+      <div class="pipe">──IPC: "search …" ──▶<br>◀── hits ──</div>
+      <div class="box proc" style="min-width:200px;border-color:var(--green)">
+        <div class="t">semfs mount daemon</div><div class="s">SOLE owner of the<br>one index connection</div></div>
+    </div>
+    <div class="pipe" style="margin:14px 0 6px">daemon's single connection ▼ &nbsp; (backend is pluggable)</div>
+    <div class="procrow" style="align-items:stretch">
+      <div class="box store" style="flex:1"><div class="t">SQLite</div><div class="s">embedded file<br><span class="pill">Type 2 · local dev</span></div></div>
+      <div class="box store" style="flex:1;border-color:var(--amber)">
+        <div class="t">pglite</div><div class="s">embedded, shipped in-box<br>──snapshot──▶ cloud (durable)<br>
+        <span class="pill">Type 1 sandbox · Type 3 single-box</span></div></div>
+      <div class="box store" style="flex:1"><div class="t">external Postgres</div><div class="s">shared, live, multi-box<br><span class="pill">Type 3 · fleet</span></div></div>
+    </div>
+    <div class="hl" style="margin:14px 0 0">
+      <b>Why it's best:</b> one connection, one owner (your “single connection” model, exactly) → <b>embedded pglite
+      now works</b>. grep loses all DB/backend logic → simpler + consistent. And the <i>same</i> shape serves every
+      persona by swapping only the daemon's backend — SQLite, pglite(+snapshot), or shared Postgres.
+    </div>
+  </div>
+
+  <h3>What it takes to get from ① to ②</h3>
+  <table>
+    <tr><th>Step</th><th>Status</th></tr>
+    <tr><td>async <code>LocalIndexer</code> (enables async backends on the write path)</td><td><span class="tag ok">done</span></td></tr>
+    <tr><td>pgvector wired into mount/grep (external Postgres)</td><td><span class="tag ok">done · tested</span></td></tr>
+    <tr><td>container namespacing + grep readiness gate</td><td><span class="tag warn">done · uncommitted</span></td></tr>
+    <tr><td>Add a <code>search</code> request to the daemon IPC; make <code>grep</code> an IPC client</td><td><span class="tag no">not built</span></td></tr>
+    <tr><td>Daemon hosts embedded pglite as a backend</td><td><span class="tag no">not built</span></td></tr>
+    <tr><td>pglite snapshot→cloud persistence loop (dump on interval/shutdown, restore on start)</td><td><span class="tag no">not built</span></td></tr>
+  </table>
+
+  <div class="card" style="border-color:#2f5a36;background:#11180f">
+    <div class="k" style="color:var(--green);font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.08em">★ The one-line takeaway</div>
+    <p style="margin:.5em 0 0">The best design isn't "add more backends" — it's <b>moving who owns the connection</b>,
+    from <code>grep</code> to the daemon. That single change at once (a) unblocks embedded pglite, (b) matches the
+    one-connection-per-mount model, and (c) turns the backend into a one-line swap that covers all three personas.
+    <b>The backends were never the hard part — <i>who holds the connection</i> was.</b></p>
+  </div>
+
+  <details><summary>Appendix · exact env + commands</summary>
+    <table>
+      <tr><th>Env var</th><th>Meaning</th></tr>
+      <tr><td><code>SEMFS_STORAGE_BACKEND</code></td><td><code>sqlite</code> (default) | <code>pgvector</code></td></tr>
+      <tr><td><code>SEMFS_PG_URL</code></td><td>Postgres connection string (pgvector backend)</td></tr>
+    </table>
+    <p class="dim mono">cargo build -p semfs --features pg   # pgvector-capable binary (off by default)<br>
+    cargo test  -p semfs-core --features pg-local   # pglite-backed unit tests<br>
+    SEMFS_STORAGE_BACKEND=pgvector SEMFS_PG_URL=postgres://… semfs mount … --ephemeral</p>
+    <p class="dim">Cargo feature split: <code>pg</code> = sqlx only (production / real Postgres) · <code>pg-local</code> = <code>pg</code> + pglite-oxide (tests).</p>
+  </details>
+
+  <div class="foot">
+    Generated for the semfs <span class="mono">feat/backend-agnostic-store</span> branch · reflects state at the pgvector-CLI-wiring work.
+    The single-connection behaviour was verified by a live probe (2nd concurrent connection hangs).
+  </div>
+</div>
+
+<script>
+// ---- 5-step ladder ----
+const LADDER = [
+  ["ELI5","semfs is a folder you can search by meaning. A little background helper (the “daemon”) quietly remembers what's in your files. When you search, a separate little tool asks for the matches."],
+  ["Beginner","The daemon keeps a search index (lists of “meaning fingerprints”, called vectors). “grep” is a separate command that reads that index to find files. They're two different programs that must share the same index."],
+  ["Intermediate","The index lives in a database. Default = SQLite (a file, one per mount). Optional = pgvector (Postgres). The daemon writes the index; grep reads it. Because they're separate processes, both need to reach that one database."],
+  ["Advanced","pglite-oxide is an embedded Postgres compiled into the binary — but it serves ONE connection at a time. The daemon holds that connection for the whole mount. So a separate grep process trying to open its own connection to the same pglite blocks forever."],
+  ["Expert","Real Postgres accepts many connections, so daemon+grep each connect independently (this is wired + mount-tested). For embedded pglite the correct design is: the daemon owns the single connection and grep routes its query through the daemon's IPC socket — never opening its own DB connection."]
+];
+const stepsEl=document.getElementById('steps'), bodyEl=document.getElementById('stepbody');
+LADDER.forEach((s,i)=>{const b=document.createElement('button');b.textContent=(i+1)+'· '+s[0];b.onclick=()=>setStep(i);stepsEl.appendChild(b);});
+function setStep(i){[...stepsEl.children].forEach((b,j)=>b.classList.toggle('on',i===j));
+  bodyEl.innerHTML='<div class="k">'+LADDER[i][0]+'</div><p style="margin:.4em 0 0">'+LADDER[i][1]+'</p>';}
+setStep(0);
+
+// ---- tabs: three stores ----
+const STORES={
+  "SQLite (default)":{badge:'<span class="tag ok">shipping</span>',body:`
+    <p><b>What:</b> an on-disk SQLite file (<code>vec0</code> + <code>fts5</code>), one per mount, in the org-scoped cache dir.</p>
+    <p><b>Two-process safe?</b> Yes — it's a file on disk. The daemon writes it; grep opens the same file read-only (the mount's <code>.semfs</code> marker tells grep where it is). SQLite handles concurrent file access.</p>
+    <p><b>Role:</b> the default backend. No server, no install.</p>`},
+  "pglite-oxide":{badge:'<span class="tag warn">embedded · 1 connection</span>',body:`
+    <p><b>What:</b> a Postgres compiled <i>into</i> the binary (a Rust crate). No server to install.</p>
+    <p><b>Two-process safe?</b> <span class="no">No, not directly.</span> It lives inside one process and serves one connection at a time. The daemon holds it; a separate grep process can't get a second.</p>
+    <p><b>Role today:</b> powers the <code>cargo test</code> unit suite (one process, perfect fit). To back a real mount, grep must go through the daemon (IPC).</p>`},
+  "real Postgres":{badge:'<span class="tag ok">multi-connection</span>',body:`
+    <p><b>What:</b> a standalone server (here: <code>brew postgresql@17</code> + <code>pgvector 0.8.2</code>).</p>
+    <p><b>Two-process safe?</b> Yes — accepts many connections. Daemon and grep each connect independently.</p>
+    <p><b>Role:</b> why it was installed — to <i>test by mounting</i> with a shared multi-connection server. The mount test passed: grep, a separate process, read 3 rows back from Postgres.</p>`}
+};
+const tabsEl=document.getElementById('tabs'), paneEl=document.getElementById('tabpane'), names=Object.keys(STORES);
+names.forEach((n,i)=>{const b=document.createElement('button');b.textContent=n;b.onclick=()=>setTab(i);tabsEl.appendChild(b);});
+function setTab(i){[...tabsEl.children].forEach((b,j)=>b.classList.toggle('on',i===j));
+  const s=STORES[names[i]];paneEl.innerHTML=s.badge+s.body;
+  document.getElementById('storesub').textContent=names[i];
+  document.getElementById('storebox').style.borderColor = i===2?'var(--green)':(i===1?'var(--amber)':'var(--green)');}
+setTab(0);
+
+// ---- single-connection demo ----
+const c1=document.getElementById('c1'), c2=document.getElementById('c2'), logEl=document.getElementById('demolog');
+function L(html){logEl.innerHTML=html;}
+function runDemo(kind){
+  c2.style.width='0'; c2.style.background='var(--green)';
+  if(kind==='pglite'){
+    L('<span class="d">daemon holds the 1 pglite connection…</span>\ngrep: opening its own connection to the same pglite…');
+    let p=0;const t=setInterval(()=>{p+=8;c2.style.width=Math.min(p,55)+'%';c2.style.background='var(--amber)';
+      if(p>=55){clearInterval(t);c2.style.background='var(--red)';
+        L('<span class="d">daemon holds the 1 pglite connection (never releases).</span>\ngrep: opening its own connection…\n<span class="r">⛔ BLOCKED — pglite serves one at a time. grep hangs forever.</span>');}},90);
+  } else if(kind==='postgres'){
+    let p=0;const t=setInterval(()=>{p+=10;c2.style.width=Math.min(p,100)+'%';
+      if(p>=100){clearInterval(t);
+        L('<span class="d">daemon holds connection #1.</span>\ngrep: opening connection #2 to the server…\n<span class="g">✓ connected — real Postgres allows many. grep searches, gets hits, exits. (mount test: 3 rows ✓)</span>');}},80);
+    L('<span class="d">daemon holds connection #1.</span>\ngrep: opening connection #2 to the server…');
+  } else {
+    L('grep: <span class="d">no DB connection at all.</span>\ngrep → daemon IPC socket: "search: how does login work"');
+    setTimeout(()=>{c2.style.width='0';
+      L('grep → daemon IPC: "search: how does login work"\n<span class="d">daemon runs it on its OWN single connection…</span>\n<span class="g">✓ daemon returns hits over IPC. One connection, one owner. grep never touched the DB.</span>');},700);
+  }
+}
+
+// ---- personas ----
+const PERSONAS=[
+  {id:"Type 1 · Sandbox builders",
+   who:"Agentic-startup infra: each user request spins up a microVM/container with an LLM harness inside. Obsess over cold-start ms and per-second price; latency is load-bearing (synchronous, user-facing).",
+   fit:["~","✓","~"],
+   why:["Local file inside each sandbox — fine, but dies with the sandbox; no shared/persistent memory across spins.",
+        "Best: self-contained image, no external DB to provision, no network round-trip to connect — cold-start friendly. daemon+grep live in the same sandbox, so IPC is local & instant.",
+        "Only if many sandboxes need ONE shared/persistent index — but provisioning + network connect cost cold-start, which they guard."],
+   pick:1},
+  {id:"Type 2 · Local CLI devs",
+   who:"Claude Code / Codex / Aider in their own terminal, against their own filesystem. Heavy daily, hand-roll config, offline-ish. Sharpest pains are weekly limits + instruction drift — not storage ops.",
+   fit:["✓","~","✗"],
+   why:["Best: zero setup, local file, offline, one mount = one dev. Exactly their world. Nothing to run.",
+        "Works (zero-install pgvector), but strictly more moving parts than SQLite for a single local user — no real win.",
+        "Overkill: they won't stand up a Postgres server for a local CLI."],
+   pick:0},
+  {id:"Type 3 · Unattended operators",
+   who:"Always-on harnesses, self-hosted runners, background agents (Ralph loops, Codex Cloud). Most ops-savvy. Latency is explicitly a non-issue; throughput, correctness, and filesystem-as-memory are everything.",
+   fit:["~","~","✓"],
+   why:["One long-running box — fine. But many runners across machines sharing one index? A local file doesn't span machines.",
+        "Single durable box only; an in-process embedded DB can't be shared by separate machines/runners.",
+        "Best: shared, durable, MANY connections, container-isolated per project. Latency irrelevant (their stance). grep connects directly — native fit."],
+   pick:2}
+];
+const ppEl=document.getElementById('pp'), ppBody=document.getElementById('ppbody'), matrix=document.getElementById('matrix');
+// build matrix rows
+PERSONAS.forEach((p,ri)=>{
+  const tr=document.createElement('tr'); tr.id='mrow'+ri;
+  let cells='<td><b>'+p.id.split(' · ')[0]+'</b><br><span class="dim">'+p.id.split(' · ')[1]+'</span></td>';
+  p.fit.forEach((f,ci)=>{
+    const cls=f==='✓'?'ok':(f==='✗'?'no':'warn');
+    const lbl=f==='✓'?'best fit':(f==='✗'?'poor fit':'works');
+    cells+='<td data-c="'+ri+'-'+ci+'"><span class="tag '+cls+'">'+f+' '+lbl+'</span><div class="dim" style="font-size:12.5px;margin-top:5px">'+p.why[ci]+'</div></td>';
+  });
+  tr.innerHTML=cells; matrix.appendChild(tr);
+});
+PERSONAS.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.id;b.onclick=()=>setP(i);ppEl.appendChild(b);});
+function setP(i){
+  [...ppEl.children].forEach((b,j)=>b.classList.toggle('on',i===j));
+  const p=PERSONAS[i];
+  ppBody.innerHTML='<div class="k">'+p.id+'</div><p style="margin:.4em 0 .6em">'+p.who+'</p>'+
+    '<p style="margin:0"><b>→ best fit:</b> '+['SQLite (embedded file)','Embedded pglite + grep-over-IPC','External Postgres'][p.pick]+'</p>';
+  // highlight that persona's row + its recommended cell
+  PERSONAS.forEach((_,ri)=>{const row=document.getElementById('mrow'+ri);row.style.background=ri===i?'#161f17':'';});
+  document.querySelectorAll('#matrix td[data-c]').forEach(td=>td.style.outline='');
+  const best=document.querySelector('#matrix td[data-c="'+i+'-'+p.pick+'"]'); if(best) best.style.outline='2px solid var(--green)';
+}
+setP(0);
+</script>
+</body>
+</html>

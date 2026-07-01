@@ -1,0 +1,194 @@
+{
+  "model": "z-ai/glm-5.2",
+  "results": [
+    {
+      "domain": "calls",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved: NASA Day of Remembrance, Jim Bridenstine attribution and quote, delay due to partial government shutdown, 3 accidents clustered in same calendar week, January 27 1967 Apollo 1 fire at Cape Kennedy with Gus Grissom/Ed White/Roger Chaffee killed, Mike Wallace/CBS News attribution, Reagan quote late January 1986, Challenger 73 seconds after takeoff with 7 astronauts killed, NASA reforms, February 1 2003 Columbia disintegration with 7 astronauts died, George W. Bush quote. Formatting restructured into bullet points but all facts identical."
+    },
+    {
+      "domain": "calls",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved: Roy Glauber handshake, five-second rule question, shower curtain question (original 'below inwards' corrected to 'billow inwards' as a transcription fix), Annals of Improbable Research, improbable.com, Prof. Jean Berko Gleason speech, all three Harvard organizations, Ig Nobel Prize reference, full element song lyrics, audio engineers Miles Smith and Frank Cunningham, and Marc Abrahams. 'Half winners, half' appears to be an incomplete/transcription fragment, not a fact. Minor wording/grammar fixes ('And behalf' → 'On behalf') are not fact changes."
+    },
+    {
+      "domain": "chat",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts from the original are preserved in the compressed version. The dialogue is reformatted into structured bullet points for User and AI statements, but every fact—attributions, specific clothing trends listed (oversized garments, athleisure, sustainable fashion, vintage/retro, minimalist/casual), AI disclaimers about lacking emotions/preferences, and all user sentiments—is faithfully retained."
+    },
+    {
+      "domain": "financial",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All exhibit items (34.23–34.28, 35.1–35.10), entity names, roles, loan names, exhibit references, and omission notes are preserved. The signature section (GS Mortgage Securities Corporation II, Leah Nivison, CEO, March 22 2021, Securities Exchange Act Section 13/15(d)) is intact. The leading fragment 'Association, as Primary Servicer...' is a chunk-boundary artifact from a prior item and correctly omitted. Minor wording changes (e.g., 'thereunto duly authorized' → 'duly authorized') do not alter facts."
+    },
+    {
+      "domain": "financial",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All exhibit items, entity names, roles, exhibit references, explanatory-note markers, signature block, signatory name/title, entity (GS Mortgage Securities Corporation II as Depositor), and date (March 22, 2021) are preserved. Reformatting from prose to dash-separated key:value and minor word-level trimming ('the requirements of', 'thereunto') do not change any facts."
+    },
+    {
+      "domain": "meetings",
+      "label": "floor",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All substantive facts preserved: role assignments (UI Designer→buttons, Industrial Designer→box), requirement specifications discussion, overlap of responsibilities, research task (what people want in a remote, button usage), meeting end warning, 'see you in thirty minutes', and final utterances. Removed items are disfluencies, fillers, {vocalsound}/{disfmarker}/{gap} markers, backchannels ('Yeah','Right','Mm'), and incomplete fragments ('Bu','Har'), none of which carry facts. Marketing's self-introduction 'And I'm marketing' is redundant with the speaker attribution."
+    },
+    {
+      "domain": "meetings",
+      "label": "heavy",
+      "gpt": "LOSSY",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved: thirty minutes, personal coach, specific instructions, bluetooth, text screen, one-way/multi-purpose, next meeting, individual components, delete/edit obsolete details, fit pieces together, point of view. Disfluencies, backchannels, and filler removed per rules. Minor conversational integrations (UI's 'consensus' suggestion folded into PM's thought, ID's 'or edit' interjection folded into Marketing's sentence) faithfully represent the collaborative exchange without inventing independent attributions or completing unfinished statements into definite claims. The unfinished 'one-way or multi-purpose is—' is rendered with an em dash matching the original's trailing {disfmarker}."
+    },
+    {
+      "domain": "calls",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved. Only filler words and hedges ('pretty', 'I mean', 'real') and minor grammatical smoothing ('name's being' → 'name being') were removed. All names, numbers, charges, attributions, and key details (Megan Williams, 20-year-old, African-American, six suspects all white, Sheriff W.E. Hunter, Logan County, 30 years, FBI person of interest, Carmen Williams quote, etc.) are intact."
+    },
+    {
+      "domain": "chat",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version only removes minor filler words and simplifies phrasing (e.g., 'provide an explanation of' to 'explain', 'helps to' to 'helps'). All facts, steps, examples, and claims are fully preserved."
+    },
+    {
+      "domain": "chat",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved: brand names, all 8 features and their details, price ranges ($100, $1,000), and advice on affordable options. Compression reformats prose into lists but retains identical factual content."
+    },
+    {
+      "domain": "financial",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all facts—exhibit numbers, entity names, roles, mortgage loan references, signature details, date (March 22, 2021), and signer (Leah Nivison, CEO). Minor wording changes in the signatures paragraph ('duly caused' → 'caused', 'thereunto duly authorized' → 'duly authorized') do not alter any factual content."
+    },
+    {
+      "domain": "legal",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all facts from the original: section numbers, statutory citations (Public Law 101-650, 104 Stat. 5127, 47 U.S.C. 303c), amendment instructions, and all quoted text are identical. Only formatting (line breaks and whitespace from document layout) was normalized."
+    },
+    {
+      "domain": "legal",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All numeric values, percentages, dates, monetary figures, program names, and structural content are faithfully preserved. The compression only reformats legal prose into a numbered list and makes minor paraphrases (e.g., 'creation of new small businesses' → 'creating new small businesses') that do not alter any facts."
+    },
+    {
+      "domain": "legal",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved across all sections: section 4 and 5 references, 30-day minimum, three submission requirements, 15-day comment period, section4 reference, competitive bid provision, chapter 11 title 40 U.S. Code reference, Federal funds/surface transportation conditions, Secretary waiver authority, emergency/specialty/intermittent nature, and underutilization condition. Paraphrasing and format changes do not alter any fact values."
+    },
+    {
+      "domain": "medical",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "The compressed version preserves all facts: patient age (59-year-old), symptoms, measurements (0.50.5 mm, 0.5 mm), treatment (oral cloxacillin 500 mg, 6 hourly for 5 days), statistics (78%, 23 patients), attributions (Satchi et al., Kakizaki et al.), and figure references. Only minor grammatical corrections were made (e.g., 'in the caruncle' to 'was in the caruncle'), which do not alter facts."
+    },
+    {
+      "domain": "medical",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved: percentages (66.7%, 35.4%, 34.4%, 73.3%), all reference citations (51, 13, 18, 33, 39, 2, 50, 52, 16, 22, 5, 19, 39-41, 44, 53), names (Weinberger et al.), HPV 6 and 11 subtypes, OS/DFS measurements, and key findings. The OCR fragment 'were n0' was dropped (not a fact). The large duplicated paragraph at the end of the original was deduplicated (removing repetition is LOSSLESS). Wording restructured but no fact values, scope, or attributions changed."
+    },
+    {
+      "domain": "medical",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved: the 3 stress systems, authors' prior work on sexual violence, healthcare/work-related/personal strategies, self-care list with references [4, 52, 53], Elwood and colleagues' caution, research limitations (high-income settings, unclear definitions, weak methodologies), recommendation for methodologically sound research, and the undergraduate/prevocational/practitioner levels. The opening fragment 'the best preparation' is a chunk-boundary artifact. The '3 systems' and '2 support frameworks' counts are derivable from explicit enumerations. Attribution of 'recommend' to Elwood and colleagues is consistent with the original paragraph's contextual flow. No facts dropped or added."
+    },
+    {
+      "domain": "meetings",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All changes are removals of fillers ('uh','um','I mean','you know'), disfluency markers ({disfmarker}), vocal sounds ({vocalsound}), and minor disfluency fragments ('s','you kn'). All speaker attributions, decisions, action items (marketing to check what people want, PM to design better meeting), and substantive content (two sensors on both sides, rectangle design discussion, time warning) are preserved intact."
+    },
+    {
+      "domain": "web",
+      "label": "light",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "Only removed fillers ('Unfortunately,', 'really' x2). All facts preserved: names (Kyle, Joey), join dates (Aug 10, 2001; Apr 20, 2001), field lists, pseudo-code, Collections.sort reference, comparator details, and the master-list diagram."
+    },
+    {
+      "domain": "web",
+      "label": "floor",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved. Compression reformats bullet-point specifications into semicolon-delimited lines and removes repetitive label prefixes (e.g., 'A/V Sync' from sub-features), but every numeric value, model name, product name, dimension, weight, warranty term, and compatibility detail is retained identically."
+    },
+    {
+      "domain": "web",
+      "label": "heavy",
+      "gpt": "LOSSLESS",
+      "qwen": "LOSSLESS",
+      "qwen_dropped": [],
+      "qwen_added": [],
+      "qwen_reason": "All facts preserved: 600 Euro per square meters, nearly 50 countries, several years of service, all property types listed (commercial buildings, hotels, villas, apartments, penthouses, garden duplex, terraced houses, studios), Riviera Invest attribution, Alanya leading price increase, profit in both long and short term. Removed only promotional filler and congratulatory opinion ('Cheap and good?', 'Congratulations', 'we can only congratulate')."
+    }
+  ]
+}

@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Decoupling Recall from the Prior — 5 levels</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --border:#2a3240;
+    --txt:#e6edf3; --muted:#8b949e; --good:#3fb950; --bad:#f85149;
+    --accent:#58a6ff; --warn:#d29922; --pin:#a371f7;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:0 0 80px}
+  .wrap{max-width:980px;margin:0 auto;padding:0 22px}
+  header{padding:34px 0 14px;border-bottom:1px solid var(--border);margin-bottom:24px}
+  h1{font-size:26px;margin:0 0 8px}
+  .lede{color:var(--muted);font-size:16px;max-width:760px}
+  .one-liner{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:14px 18px;margin:18px 0;font-size:15px}
+  .one-liner b{color:var(--accent)}
+  code,.mono{font-family:var(--mono);font-size:.92em}
+  .pill{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--muted)}
+  /* tabs */
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:26px 0 0;border-bottom:1px solid var(--border)}
+  .tab{padding:10px 14px;cursor:pointer;border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;color:var(--muted);font-size:13.5px;font-weight:600;white-space:nowrap}
+  .tab:hover{color:var(--txt)}
+  .tab.on{background:var(--panel);border-color:var(--border);color:var(--accent)}
+  .level{display:none;background:var(--panel);border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;padding:24px}
+  .level.on{display:block;animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .level h2{margin:0 0 4px;font-size:20px}
+  .level .who{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px}
+  .level p{margin:0 0 14px}
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+  @media(max-width:720px){.twocol{grid-template-columns:1fr}}
+  .card{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:14px}
+  .card h4{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+  .card.coupled{border-left:3px solid var(--bad)}
+  .card.decoupled{border-left:3px solid var(--good)}
+  .ascii{font-family:var(--mono);font-size:12.5px;white-space:pre;overflow-x:auto;background:#0b0f15;border:1px solid var(--border);border-radius:8px;padding:14px;color:#c9d1d9;line-height:1.45}
+  .k{color:var(--accent)} .r{color:var(--bad)} .g{color:var(--good)} .m{color:var(--muted)} .p{color:var(--pin)} .w{color:var(--warn)}
+  /* demo */
+  .demo{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:22px;margin:30px 0}
+  .demo h3{margin:0 0 4px}
+  .demo .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .query{font-family:var(--mono);font-size:13px;background:#0b0f15;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:16px}
+  .query .lit{color:var(--warn);font-weight:700}
+  .toggle{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px}
+  .toggle button{background:var(--panel2);color:var(--muted);border:none;padding:9px 16px;cursor:pointer;font-size:13px;font-weight:600;font-family:inherit}
+  .toggle button.on{background:var(--accent);color:#04101f}
+  .listwrap{display:grid;grid-template-columns:1fr;gap:5px}
+  .floor-label{font-family:var(--mono);font-size:11px;color:var(--good);margin:6px 0 2px;letter-spacing:.04em}
+  .row{display:grid;grid-template-columns:34px 1fr 64px;align-items:center;gap:10px;padding:7px 12px;border:1px solid var(--border);border-radius:7px;background:var(--panel2);font-size:13.5px;transition:.25s}
+  .row .rank{font-family:var(--mono);color:var(--muted);font-size:12px;text-align:right}
+  .row .name{font-family:var(--mono);font-size:12.5px}
+  .row .score{font-family:var(--mono);font-size:11.5px;color:var(--muted);text-align:right}
+  .row.cut{opacity:.32;border-style:dashed}
+  .row.cut .name{text-decoration:line-through}
+  .row.shown{border-color:#2f5d33}
+  .row.target{box-shadow:0 0 0 1px var(--warn) inset}
+  .row.target .name{color:var(--warn)}
+  .row.pinned{background:#16241a;border-color:var(--good)}
+  .row.pinned .rank{color:var(--good)}
+  .kline{display:flex;align-items:center;gap:10px;margin:8px 0;color:var(--accent);font-family:var(--mono);font-size:11.5px}
+  .kline:before,.kline:after{content:"";flex:1;height:1px;background:repeating-linear-gradient(90deg,var(--accent) 0 6px,transparent 6px 12px);opacity:.6}
+  .verdict{margin-top:16px;padding:12px 14px;border-radius:8px;font-size:14px}
+  .verdict.bad{background:rgba(248,81,73,.1);border:1px solid #5c2526;color:#ffb4b0}
+  .verdict.good{background:rgba(63,185,80,.1);border:1px solid #1f5128;color:#9be7a8}
+  .foot{color:var(--muted);font-size:12.5px;margin-top:30px;border-top:1px solid var(--border);padding-top:16px}
+  .foot code{color:var(--accent)}
+  b.good{color:var(--good)} b.bad{color:var(--bad)} b.warn{color:var(--warn)} b.pin{color:var(--pin)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Decoupling <span style="color:var(--good)">recall</span> from the <span style="color:var(--pin)">prior</span></h1>
+  <div class="lede">Why a file that literally contains your answer can get thrown away — and the deterministic fix. Grounded in the WB-Lite PPR run (<span class="mono">grep.rs</span>, cases 358 &amp; 139).</div>
+  <div class="one-liner">
+    <b>Recall</b> = "did the right file get returned at all?" &nbsp;·&nbsp; <b style="color:var(--pin)">The prior</b> = the knowledge-graph's guess about which files matter.
+    Today one number does <b>both</b> jobs — order <i>and</i> keep/drop — so the graph's guess can <b class="bad">delete</b> the file you need.
+    <b>Decoupling</b> = the prior may only <b class="good">reorder</b>, never delete; membership is decided by a separate deterministic "does it literally match?" rule.
+  </div>
+</header>
+
+<div class="tabs" id="tabs">
+  <div class="tab on" data-l="1">1 · ELI5</div>
+  <div class="tab" data-l="2">2 · High-schooler</div>
+  <div class="tab" data-l="3">3 · Engineer</div>
+  <div class="tab" data-l="4">4 · IR design</div>
+  <div class="tab" data-l="5">5 · Expert</div>
+</div>
+
+<!-- L1 -->
+<div class="level on" data-l="1">
+  <h2>The overconfident librarian</h2>
+  <div class="who">Explain like I'm 5</div>
+  <p>You ask a librarian for "the book about <b>dolphins</b>." She does two things: she <b>picks which books to put on the table</b>, and she <b>arranges them in an order</b>.</p>
+  <p>The problem: she's a know-it-all. She <i>also</i> <b class="bad">hides</b> books she personally thinks you won't like — and one of the hidden ones is the actual dolphin book. You never even see it, so you go home with the wrong book.</p>
+  <p><b class="good">The fix:</b> make a rule — <b>every book whose title says "dolphin" MUST go on the table.</b> The librarian can still arrange them in whatever order she likes (she's smart about order!), but she is <b>not allowed to hide</b> any book that matches your word.</p>
+  <div class="card decoupled" style="margin-top:6px">
+    Two jobs got tangled: <b>"which to show"</b> and <b>"what order."</b> Untangle them: matching decides <b class="good">which</b>; the smart guess only decides <b class="pin">order</b>.
+  </div>
+</div>
+
+<!-- L2 -->
+<div class="level" data-l="2">
+  <h2>Finding vs ordering are different questions</h2>
+  <div class="who">Explain to a high-schooler</div>
+  <p>Two separate questions when you search:</p>
+  <div class="twocol">
+    <div class="card"><h4>① Recall — did we FIND it?</h4>Of all the files that actually contain the answer, did the right one end up in the returned list <b>at all</b>? This is about <b>membership</b>.</div>
+    <div class="card"><h4>② Ranking — what ORDER?</h4>Given the returned list, which goes first? This is about <b>arrangement</b>. Getting order wrong is cheap (scroll down a bit); getting recall wrong is fatal (it's just <i>gone</i>).</div>
+  </div>
+  <p>The <b style="color:var(--pin)">prior</b> is a guess from the knowledge graph: "files connected to lots of related stuff are probably relevant." Useful for <b>order</b>. But right now that guess is mixed into the <b>one score</b> that <i>also</i> cuts the list short — so a low guess <b class="bad">drops</b> the file. A file you could have read becomes a file you never saw.</p>
+  <p><b class="good">Decouple:</b> let a dumb-but-reliable check ("does the file literally contain the words you searched?") guarantee the file is <b>kept</b>. Let the smart guess only decide where it sits in the order.</p>
+</div>
+
+<!-- L3 -->
+<div class="level" data-l="3">
+  <h2>One score is doing two jobs</h2>
+  <div class="who">Explain to an engineer</div>
+  <p>Here is the actual <span class="mono">semfs grep</span> pipeline. The bug is that the KG prior is fused into the single <span class="mono">similarity</span> that drives <b>both</b> ranking <b>and</b> the cutoff:</p>
+  <div class="ascii">query
+  │
+  ├─ <span class="g">lexical lane</span>   (substring / FTS — deterministic, 100% recall)
+  ├─ dense lane     (embeddings)
+  └─ <span class="p">KG-prior lane</span>  (PPR / 1-hop graph mass)
+  │
+  ▼  <span class="m">RRF fuse → ONE number: hit.similarity</span>
+  │
+  ▼  rank by similarity            <span class="m">grep.rs:1115  adaptive_k(similarity)</span>
+  │
+  ▼  <span class="r">take(render_n)  ← TRUNCATE</span>      <span class="m">grep.rs:1191  hits.take(render_n)</span>
+  │
+  ▼  render to agent
+
+<span class="r">BUG:</span> the <span class="p">prior</span> is inside <span class="mono">similarity</span>, and <span class="mono">similarity</span> drives the cut.
+     → a strong <span class="g">lexical</span> hit with a weak <span class="p">prior</span> → low fused score → ranked low → <span class="r">dropped by take()</span>.
+     The agent can't read what it never received. Recall is now hostage to the prior.</div>
+  <p><b class="good">Decoupled design:</b> tag which hits are <span class="g">literal matches</span> at fuse time; <b>exempt them from <span class="mono">take()</span></b>. The prior still reorders, but the cut only trims the <i>fuzzy</i> (dense/KG-only) tail.</p>
+  <div class="ascii">returned = <span class="g">ALL literal hits</span>  ∪  <span class="m">top fuzzy hits (filling remaining budget)</span>
+           └ prior may <span class="p">reorder</span> this set, but may NOT remove a <span class="g">literal</span> hit
+guarantee:  literal-match(file, query) ⇒ file ∈ returned        <span class="m">(deterministic)</span></div>
+</div>
+
+<!-- L4 -->
+<div class="level" data-l="4">
+  <h2>Don't let the re-ranker prune the candidate set</h2>
+  <div class="who">Explain to a search/IR designer</div>
+  <p>Standard two-stage retrieval has a strict division of labor:</p>
+  <div class="twocol">
+    <div class="card"><h4>Stage 1 — candidate generation</h4>Optimized for <b>recall</b>. Cheap, deterministic, recall-complete (BM25 / substring / FTS). Job: <b>never miss</b> a plausibly-relevant doc.</div>
+    <div class="card"><h4>Stage 2 — re-ranking</h4>Optimized for <b>precision</b>. Expensive, smart (dense, cross-encoder, KG prior). Job: <b>order</b> the candidates well.</div>
+  </div>
+  <p>The cardinal rule: <b>Stage 2 reorders Stage 1's set; it must not shrink recall below it.</b> Our bug is that the KG prior (a Stage-2 signal) is folded into the fused score that performs the <i>presentation cutoff</i> — so the re-ranker is silently pruning the candidate set. Any cutoff K (6, 10, 20, ∞) is then a heuristic window on a list the prior already corrupted: widening K only widens a blind spot it can't remove.</p>
+  <p><b class="good">Decoupling restores the contract:</b> recall is owned by the deterministic lexical lane and is a lower bound the re-ranker cannot violate. Formally — let <span class="mono">L(q)</span> = files with an exact lexical/name match. Enforce <span class="mono">L(q) ⊆ returned(q)</span> always; the prior chooses the <i>permutation</i> of <span class="mono">returned(q)</span>, never its membership. Cutoff applies only to <span class="mono">returned \ L(q)</span>.</p>
+  <p><span class="pill">case 358</span> the named CSV sat at rank #12–15 (prior promoted thematic <span class="mono">*summary*.md</span> neighbors). It is a literal match for the task → under decoupling it is in <span class="mono">L(q)</span> → returned with probability <b>1</b>, no matter its prior rank.</p>
+</div>
+
+<!-- L5 -->
+<div class="level" data-l="5">
+  <h2>Never put a corruptible prior upstream of an irreversible cut</h2>
+  <div class="who">Expert · failure-mode &amp; theory</div>
+  <p>Frame the prior as a Bayesian prior over relevance and the fused score as a posterior. Multiplying the prior into the retrieval score makes it a <b>gatekeeper</b>: when the prior is <i>mis-specified</i>, it drives the posterior of a genuinely relevant doc toward zero. On dense / decoy-laden graphs the prior <b>is</b> mis-specified — co-mention/community mass concentrates on thematic neighbors, not on the literally-named target — so coupling propagates the prior's mis-specification directly into <b>recall loss</b>.</p>
+  <p>Recall loss is special because <b>truncation is a lossy, irreversible channel.</b> A ranking error is recoverable downstream — the agent can scan three more lines. A <i>dropped</i> document is unrecoverable — there is no operation the agent can perform on a result set to retrieve a file that isn't in it. The design principle: <b class="good">never place a corruptible, mis-specifiable signal upstream of an irreversible operation.</b> Keep the prior on the reversible side (order); keep the irreversible side (membership/cut) on a signal you trust.</p>
+  <p><b>Why "literal match" is the right trusted signal:</b> presence of the query terms is a near-sufficient statistic for "this file <i>could</i> contain the answer," and it is a <b>deterministic function of (query, corpus)</b> — identical inputs → identical recall set, no embedder drift, no graph density effects, no adaptive-confidence variance. That determinism is exactly what the question "how do we deterministically solve it?" demands: <span class="mono">P(answer_file ∈ returned │ answer_file literally matches q) = 1</span>.</p>
+  <div class="card" style="border-left:3px solid var(--warn)">
+    <h4>The one residual the literal floor can't fix</h4>
+    <b class="warn">Near-duplicate decoys</b> (case 139: 4+ content-identical <span class="mono">event_plan_17.md</span> in parallel dirs + a trap dir). When candidates are <i>content-identical</i>, the literal signal returns all of them and <b>cannot rank them apart</b> — no content signal can, by definition. The disambiguator is <b>structure, not content</b>: enumerate one canonical directory (<span class="mono">ls dir && read dir/*</span>) — which is exactly how the plain agent wins. So the complete fix is two-pronged: <b class="good">literal floor</b> for thematic burial + <b class="good">directory enumeration</b> for duplicate decoys.</div>
+  <p style="margin-top:14px"><b>Net:</b> "decouple recall from the prior" = move membership decisions off the mis-specifiable, fused, truncating score and onto a deterministic literal lane that the prior may permute but never prune. The prior becomes a tie-breaker; recall becomes a guarantee.</p>
+</div>
+
+<!-- INTERACTIVE DEMO -->
+<div class="demo">
+  <h3>Watch it happen — coupled vs decoupled</h3>
+  <div class="sub">Task names an exact file. Decoys are thematic <span class="mono">*summary*</span> files the KG prior loves. Flip the mode and watch the real file get cut vs survive.</div>
+  <div class="query">build todo from <span class="lit">summary-report_2686.csv</span> &nbsp;<span style="color:var(--muted)">— literal tokens:</span> <span class="lit">2686</span> <span class="lit">.csv</span></div>
+  <div class="toggle">
+    <button id="bC" class="on" onclick="setMode('coupled')">Coupled (today) — prior ranks &amp; cuts</button>
+    <button id="bD" onclick="setMode('decoupled')">Decoupled (fix) — literal floor</button>
+  </div>
+  <div class="listwrap" id="list"></div>
+  <div class="verdict" id="verdict"></div>
+</div>
+
+<div class="foot">
+  Grounded in: <code>crates/semfs/src/cmd/grep.rs</code> (fuse → <code>adaptive_k</code> :1115 → <code>take(render_n)</code> :1191) · WB-Lite PPR A/B (<code>SEM-40</code>) cases 358 (thematic burial) &amp; 139 (duplicate decoys). The fix is a code change (tag literal hits, exempt from truncation) + a directory-enumeration affordance — not a knob.
+</div>
+</div>
+
+<script>
+// demo data: fused score (prior-inflated for thematic decoys), literal = exact token match
+const FILES = [
+  {n:"meeting_summary_q3.md",            s:0.94, lit:false},
+  {n:"competitor_evaluation_summary.md", s:0.91, lit:false},
+  {n:"logistics_summary.md",             s:0.88, lit:false},
+  {n:"weekly_meeting_records.md",        s:0.85, lit:false},
+  {n:"dept_summary_template.md",         s:0.82, lit:false},
+  {n:"ops_review_summary.md",            s:0.79, lit:false},
+  {n:"todo_examples_summary.md",         s:0.71, lit:false},
+  {n:"personnel-list_7079.csv",          s:0.63, lit:false},
+  {n:"chat_7753.txt",                    s:0.55, lit:false},
+  {n:"analysis-report_8950.txt",         s:0.49, lit:false},
+  {n:"archive_summary_old.md",           s:0.46, lit:false},
+  {n:"misc_notes.md",                    s:0.43, lit:false},
+  {n:"summary-report_2686.csv",          s:0.40, lit:true},   // THE TARGET — buried at #13
+  {n:"backup_2686_draft.csv",            s:0.22, lit:true},   // a second literal match, lower
+];
+const K = 6;            // adaptive cutoff (render_n)
+const FLOOR_FUZZY = 4;  // in decoupled mode, fuzzy slots shown alongside the literal floor
+let mode = 'coupled';
+
+function setMode(m){
+  mode=m;
+  document.getElementById('bC').classList.toggle('on', m==='coupled');
+  document.getElementById('bD').classList.toggle('on', m==='decoupled');
+  render();
+}
+
+function row(f, rank, cls, pinned){
+  const tgt = f.lit ? ' target' : '';
+  const pin = pinned ? ' pinned' : '';
+  const rankTxt = rank===null ? '★' : ('#'+rank);
+  return `<div class="row ${cls}${tgt}${pin}"><div class="rank">${rankTxt}</div>`
+       + `<div class="name">${f.n}${f.lit?'  <span style="color:var(--warn)">◆ literal</span>':''}</div>`
+       + `<div class="score">${f.s.toFixed(2)}</div></div>`;
+}
+
+function render(){
+  const ranked = [...FILES].sort((a,b)=>b.s-a.s);
+  const list = document.getElementById('list');
+  const v = document.getElementById('verdict');
+  let html = '';
+
+  if(mode==='coupled'){
+    ranked.forEach((f,i)=>{
+      const shown = i < K;
+      html += row(f, i+1, shown?'shown':'cut', false);
+      if(i===K-1) html += `<div class="kline">render_n = ${K}  · everything below is take()-truncated · the prior already buried the real file</div>`;
+    });
+    const tIdx = ranked.findIndex(f=>f.n==="summary-report_2686.csv")+1;
+    v.className='verdict bad';
+    v.innerHTML = `❌ The real file <span class="mono" style="color:var(--warn)">summary-report_2686.csv</span> is at rank #${tIdx}, below the cut. `
+      + `The agent receives 6 thematic <span class="mono">*summary*</span> decoys and <b>never sees the CSV</b> → wrong/empty deliverable. `
+      + `Raising the cut to 10 still misses it; to 20 only widens the blind window at ~2× token cost.`;
+  } else {
+    // decoupled: literal floor always shown, exempt from cut; prior orders the rest
+    const literal = ranked.filter(f=>f.lit);
+    const fuzzy   = ranked.filter(f=>!f.lit).slice(0, FLOOR_FUZZY);
+    html += `<div class="floor-label">◆ LITERAL-MATCH FLOOR — always returned, exempt from take()</div>`;
+    literal.forEach(f=> html += row(f, null, 'shown', true));
+    html += `<div class="floor-label" style="color:var(--muted)">… prior-ordered fuzzy tail (fills remaining budget, trimmable)</div>`;
+    fuzzy.forEach((f,i)=> html += row(f, i+1, 'shown', false));
+    v.className='verdict good';
+    v.innerHTML = `✅ <span class="mono" style="color:var(--warn)">summary-report_2686.csv</span> is a literal match → <b>pinned to the floor, returned with probability 1</b>, regardless of its prior rank (#13). `
+      + `The prior still orders the fuzzy tail. Deterministic: same query → same recall, no K to tune, no token blow-up.`;
+  }
+  list.innerHTML = html;
+}
+
+document.getElementById('tabs').addEventListener('click', e=>{
+  const t = e.target.closest('.tab'); if(!t) return;
+  const l = t.dataset.l;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x===t));
+  document.querySelectorAll('.level').forEach(x=>x.classList.toggle('on', x.dataset.l===l));
+});
+render();
+</script>
+</body>
+</html>

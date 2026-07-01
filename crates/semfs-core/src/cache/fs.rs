@@ -7,10 +7,9 @@ use async_trait::async_trait;
 use lru::LruCache;
 use parking_lot::Mutex;
 
-use super::db::{Db, DENTRY_CACHE_MAX, ROOT_INO};
+use super::db::{Db, DENTRY_CACHE_MAX};
 use super::file::SqliteFile;
 use super::hydration::{HydrationKey, HydrationScheduler};
-use super::profile::{ProfileFile, PROFILE_INO, PROFILE_NAME};
 
 const DERIVED_SIBLING_SUFFIXES: &[&str] = &[
     ".image-transcription.md",
@@ -19,6 +18,10 @@ const DERIVED_SIBLING_SUFFIXES: &[&str] = &[
     ".audio-transcription.md",
     ".webpage-transcription.md",
     ".semfs-error.txt",
+    // Binary-extraction sibling (xlsx/pdf/docx/… extracted text), materialized
+    // on flush when `SEMFS_EXTRACT_SIBLING=on`. Listed here so unlink/rename of
+    // the source file also reaps the derived sibling.
+    ".extracted.md",
 ];
 use crate::vfs::error::{VfsError, VfsResult};
 use crate::vfs::mode::{MAX_NAME_LEN, S_IFDIR, S_IFLNK, S_IFMT, S_IFREG};
@@ -33,7 +36,6 @@ use crate::vfs::types::{DirEntry, FileAttr, FilesystemStats, SetAttr, TimeOrNow,
 pub struct CacheFs {
     db: Arc<Db>,
     api: Option<Arc<crate::api::ApiClient>>,
-    profile_file: Option<Arc<ProfileFile>>,
     dentry_cache: Mutex<LruCache<(u64, String), u64>>,
     hydration: Arc<HydrationScheduler>,
     /// Local semantic indexer, maintained on write (flush) / delete / rename.
@@ -47,7 +49,6 @@ impl CacheFs {
         Self {
             db,
             api: None,
-            profile_file: None,
             dentry_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DENTRY_CACHE_MAX).unwrap())),
             hydration: HydrationScheduler::new(),
             indexer: None,
@@ -56,11 +57,9 @@ impl CacheFs {
 
     /// Create a `CacheFs` with an API client for cloud sync.
     pub fn with_api(db: Arc<Db>, api: Arc<crate::api::ApiClient>) -> Self {
-        let profile_file = Arc::new(ProfileFile::new(api.clone()));
         Self {
             db,
             api: Some(api),
-            profile_file: Some(profile_file),
             dentry_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DENTRY_CACHE_MAX).unwrap())),
             hydration: HydrationScheduler::new(),
             indexer: None,
@@ -80,12 +79,6 @@ impl CacheFs {
 
     pub(crate) async fn hydrate_path(&self, path: &str) -> VfsResult<()> {
         self.pull_documents(path).await
-    }
-
-    pub async fn warm_profile(&self) {
-        if let Some(pf) = &self.profile_file {
-            pf.warm().await;
-        }
     }
 
     /// Reconstruct the full filepath for an inode by walking dentries to root.
@@ -839,6 +832,62 @@ impl CacheFs {
         self.db.push_queue_len()
     }
 
+    /// Count of binary files recorded as unindexed (could not be extracted to
+    /// searchable text). Surfaced as `unindexed_files` in `semfs status`.
+    pub fn unindexed_count(&self) -> usize {
+        self.db.count_unindexed()
+    }
+
+    /// Recompute the workspace knowledge graph (Louvain→Leiden communities +
+    /// god-nodes over the file↔entity graph) and (re)materialize the root
+    /// virtual file `/KNOWLEDGE_GRAPH.md`. It is a *derived* fs node — local
+    /// only, never pushed or indexed — so `ls` lists it and `cat` serves it, but
+    /// it doesn't contaminate the cloud container or search results. Fail-soft:
+    /// a graph error never blocks the mount. Cheap (O(edges)) so it can run at
+    /// mount and on debounced graph change. See `cache/graph_file.rs`.
+    pub fn refresh_knowledge_graph(&self) -> VfsResult<()> {
+        let (digest, graph_json, report) = {
+            let conn = self.db.conn.lock();
+            let digest = super::graph_file::build_digest(&conn)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
+            // graphify-parity queryable artifact alongside the markdown digest.
+            let graph_json = super::graph_file::build_graph_json(&conn)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
+            // graphify-parity rich report (god nodes, surprising connections,
+            // ambiguous edges, knowledge gaps, suggested questions).
+            let report = super::graph_file::build_graph_report(&conn)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
+            // Persist the Louvain community→god-node→member-file projection so the
+            // graph-as-filesystem traversal ops (readdir/lookup) read the skeleton
+            // cheaply instead of re-running Louvain per `ls`. Same projection that
+            // backs the digest above — one source of truth, three views.
+            super::graph_file::materialize_projection(&conn)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
+            (digest, graph_json, report)
+        };
+        // All KG artifacts live under a single `/kg/` folder (a clean, predictable
+        // place the agent can read first). The injected AGENTS.md/CLAUDE.md block
+        // (see agent_hint.rs) explains what each kg/ file is for, so the agent reads
+        // the *minimal right file* for its need rather than crawling the corpus
+        // (token reduction + avoids context distraction).
+        self.create_derived_sibling("/kg/KNOWLEDGE_GRAPH.md", &digest)?;
+        self.create_derived_sibling("/kg/graph.json", &graph_json)?;
+        self.create_derived_sibling("/kg/GRAPH_REPORT.md", &report)?;
+        // Drop a workspace-root AGENTS.md / CLAUDE.md so any agent that reads the
+        // working tree (codex, claude, gemini) is pointed at kg/ regardless of
+        // $HOME — the home-dir global hint may never reach the agent's env. We
+        // NEVER clobber a corpus-provided file: a non-derived collision surfaces
+        // as AlreadyExists, which we treat as "leave the user's file alone".
+        let root_hint = crate::agent_hint::render_workspace_root();
+        for path in ["/AGENTS.md", "/CLAUDE.md"] {
+            match self.create_derived_sibling(path, &root_hint) {
+                Ok(_) | Err(VfsError::AlreadyExists) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
     /// Snapshot of the push_queue row for a given filepath (for tests /
     /// diagnostics only).
     pub fn push_queue_inspect(&self, filepath: &str) -> Option<PushQueueSnapshot> {
@@ -873,7 +922,8 @@ impl CacheFs {
     /// Import a host file into the VFS using root ownership. Returns
     /// `Ok(false)` if the file already exists.
     pub async fn import_file(&self, filepath: &str, contents: &[u8]) -> Result<bool, String> {
-        self.import_file_with_ownership(filepath, contents, 0, 0).await
+        self.import_file_with_ownership(filepath, contents, 0, 0)
+            .await
     }
 
     /// Import a host file into the VFS with explicit ownership. Returns
@@ -1025,15 +1075,134 @@ fn sql_err(e: rusqlite::Error) -> VfsError {
 const INODE_COLS: &str =
     "ino, mode, nlink, uid, gid, size, atime, mtime, ctime, rdev, atime_nsec, mtime_nsec, ctime_nsec";
 
+/// Search-first mount (opt-in `SEMFS_SEARCH_ONLY`): hide pre-existing corpus
+/// *files* from `readdir` so `os.walk`/`ls -R` return only the cheap directory
+/// tree + the knowledge graph, forcing the agent to `semfs grep` instead of
+/// crawling hundreds of files. Directories stay visible (so the agent still sees
+/// the structure/position), `model_output` contents stay visible (the agent's
+/// own writes + output staging), and the KG/contract files stay visible.
+/// path-lookup is unaffected, so grep-returned paths remain `cat`-able. This is
+/// the POSIX-pragmatic realization of "ls shows the directory + the KG, not a
+/// flat dump" (tickets/ls-kg-semantic-readdir; reduces the os.walk token sink).
+fn search_only_enabled() -> bool {
+    matches!(
+        std::env::var("SEMFS_SEARCH_ONLY").ok().as_deref(),
+        Some("1") | Some("on") | Some("true") | Some("yes")
+    )
+}
+
+/// Files always shown even in search-first mode (orientation artifacts).
+const SEARCH_ALWAYS_VISIBLE: &[&str] = &[
+    "KNOWLEDGE_GRAPH.md",
+    "GRAPH_REPORT.md",
+    "graph.json",
+    "AGENTS.md",
+    "CLAUDE.md",
+];
+
+/// True if `dir_ino` is `/model_output` or nested inside it. Walked on the held
+/// `conn` (no re-lock). Bounded depth guards against a cycle.
+fn under_model_output(conn: &rusqlite::Connection, dir_ino: u64) -> bool {
+    let mut cur = dir_ino;
+    for _ in 0..64 {
+        if cur == super::db::ROOT_INO {
+            return false;
+        }
+        let row: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT name, parent_ino FROM fs_dentry WHERE ino = ?1",
+                [cur as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        match row {
+            Some((name, parent)) => {
+                if name == "model_output" {
+                    return true;
+                }
+                cur = parent as u64;
+            }
+            None => return false,
+        }
+    }
+    false
+}
+
+/// Synthetic read-only directory attributes for a graph-overlay node (the
+/// `/by-topic` root and each community god-node dir). World r-x so any user can
+/// `ls`/`cd` regardless of owner; these inodes are not in `fs_inode`.
+fn synthetic_dir_attr(ino: u64) -> FileAttr {
+    let mut a = FileAttr::new_dir(ino, 0, 0);
+    a.mode = S_IFDIR | 0o555;
+    a
+}
+
+/// Resolve a real corpus path to its real-inode [`FileAttr`] by walking the
+/// dentry tree from root, so a member file under a graph dir reads real bytes
+/// (and existing annotations, incl. `SOURCE INACCESSIBLE`) via its real inode.
+fn real_attr_for_path(conn: &rusqlite::Connection, path: &str) -> Option<FileAttr> {
+    let mut ino = super::db::ROOT_INO;
+    for comp in path.split('/').filter(|c| !c.is_empty()) {
+        ino = conn
+            .query_row(
+                "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+                rusqlite::params![ino as i64, comp],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()? as u64;
+    }
+    conn.query_row(
+        &format!("SELECT {INODE_COLS} FROM fs_inode WHERE ino = ?1"),
+        [ino as i64],
+        Db::row_to_attr,
+    )
+    .ok()
+}
+
+impl CacheFs {
+    /// Resolve a lookup that targets the `/by-topic` graph overlay. Returns the
+    /// synthetic dir attr for the overlay root / a community dir, or the REAL
+    /// attr for a member file. `None` if `(parent_ino, name)` is not a graph node.
+    fn graph_lookup(&self, parent_ino: u64, name: &str) -> Option<FileAttr> {
+        let b = super::graph_fs::Bounds::from_env();
+        let conn = self.db.conn.lock();
+        // real root → the `/by-topic` overlay directory
+        if parent_ino == super::db::ROOT_INO {
+            return (name == super::graph_fs::BY_TOPIC_NAME)
+                .then(|| synthetic_dir_attr(super::graph_fs::BY_TOPIC_INO));
+        }
+        // overlay root → a community god-node directory
+        if parent_ino == super::graph_fs::BY_TOPIC_INO {
+            let e = super::graph_fs::graph_root_entries(&conn, &b)
+                .ok()?
+                .into_iter()
+                .find(|e| e.name == name)?;
+            return Some(synthetic_dir_attr(super::graph_fs::community_to_ino(
+                e.community_id?,
+            )));
+        }
+        // community dir → a member file (resolved to its REAL inode attr)
+        if let Some(cid) = super::graph_fs::ino_to_community(parent_ino) {
+            let real = super::graph_fs::resolve_member(&conn, cid, name, &b).ok()??;
+            return real_attr_for_path(&conn, &real);
+        }
+        None
+    }
+}
+
 #[async_trait]
 impl FileSystem for CacheFs {
     async fn lookup(&self, parent_ino: u64, name: &str) -> VfsResult<Option<FileAttr>> {
         validate_name(name)?;
 
-        // Virtual profile.md at root.
-        if parent_ino == ROOT_INO && name == PROFILE_NAME {
-            if let Some(pf) = &self.profile_file {
-                return Ok(Some(pf.profile_attr()));
+        // Graph-as-filesystem overlay (`/by-topic`). Resolve synthetic nodes
+        // before the real fs_inode path; a synthetic parent never falls through.
+        if super::graph_fs::graph_fs_enabled() {
+            if let Some(attr) = self.graph_lookup(parent_ino, name) {
+                return Ok(Some(attr));
+            }
+            if super::graph_fs::is_graph_ino(parent_ino) {
+                return Ok(None);
             }
         }
 
@@ -1115,10 +1284,10 @@ impl FileSystem for CacheFs {
     }
 
     async fn getattr(&self, ino: u64) -> VfsResult<Option<FileAttr>> {
-        if ino == PROFILE_INO {
-            if let Some(pf) = &self.profile_file {
-                return Ok(Some(pf.profile_attr()));
-            }
+        // Synthetic graph-overlay inodes (overlay root + community dirs) are
+        // directories; member files resolve to real inodes handled below.
+        if super::graph_fs::graph_fs_enabled() && super::graph_fs::is_graph_ino(ino) {
+            return Ok(Some(synthetic_dir_attr(ino)));
         }
         let conn = self.db.conn.lock();
         let attr = conn
@@ -1173,8 +1342,22 @@ impl FileSystem for CacheFs {
     }
 
     async fn readdir(&self, ino: u64) -> VfsResult<Option<Vec<String>>> {
+        // Graph overlay: synthetic dirs list their bounded graph entries.
+        if super::graph_fs::graph_fs_enabled() && super::graph_fs::is_graph_ino(ino) {
+            let b = super::graph_fs::Bounds::from_env();
+            let conn = self.db.conn.lock();
+            let entries = if ino == super::graph_fs::BY_TOPIC_INO {
+                super::graph_fs::graph_root_entries(&conn, &b).map_err(sql_err)?
+            } else if let Some(cid) = super::graph_fs::ino_to_community(ino) {
+                super::graph_fs::graph_community_entries(&conn, cid, &b).map_err(sql_err)?
+            } else {
+                return Ok(None);
+            };
+            return Ok(Some(entries.into_iter().map(|e| e.name).collect()));
+        }
+
         // All DB work in a sync block so conn/stmt are dropped before any .await.
-        let mut names = {
+        let names = {
             let conn = self.db.conn.lock();
 
             let mode: Option<i64> = conn
@@ -1192,20 +1375,35 @@ impl FileSystem for CacheFs {
             }
 
             let mut stmt = conn
-                .prepare_cached("SELECT name FROM fs_dentry WHERE parent_ino = ?1 ORDER BY name")
+                .prepare_cached(
+                    "SELECT d.name, i.mode FROM fs_dentry d JOIN fs_inode i ON i.ino = d.ino \
+                     WHERE d.parent_ino = ?1 ORDER BY d.name",
+                )
                 .map_err(sql_err)?;
-            let names: Vec<String> = stmt
-                .query_map([ino as i64], |r| r.get(0))
+            let raw: Vec<(String, i64)> = stmt
+                .query_map([ino as i64], |r| Ok((r.get(0)?, r.get(1)?)))
                 .map_err(sql_err)?
                 .filter_map(|r| r.ok())
                 .collect();
+            // Search-first: hide corpus leaf files (keep dirs + KG + model_output).
+            let hide = search_only_enabled() && !under_model_output(&conn, ino);
+            let mut names: Vec<String> = raw
+                .into_iter()
+                .filter(|(name, mode)| {
+                    !hide
+                        || (*mode as u32 & S_IFMT) == S_IFDIR
+                        || SEARCH_ALWAYS_VISIBLE.contains(&name.as_str())
+                })
+                .map(|(n, _)| n)
+                .collect();
+            // Graph overlay: expose `/by-topic` alongside the real root entries.
+            if super::graph_fs::graph_fs_enabled() && ino == super::db::ROOT_INO {
+                names.push(super::graph_fs::BY_TOPIC_NAME.to_string());
+            }
             names
         }; // conn + stmt dropped here
 
         if !names.is_empty() || self.api.is_none() {
-            if ino == ROOT_INO && self.api.is_some() && !names.contains(&PROFILE_NAME.to_string()) {
-                names.push(PROFILE_NAME.to_string());
-            }
             return Ok(Some(names));
         }
 
@@ -1217,16 +1415,45 @@ impl FileSystem for CacheFs {
             };
             self.hydration.enqueue(HydrationKey::Prefix(prefix));
         }
-        let mut names: Vec<String> = Vec::new();
-        if ino == ROOT_INO && self.api.is_some() && !names.contains(&PROFILE_NAME.to_string()) {
-            names.push(PROFILE_NAME.to_string());
-        }
-        Ok(Some(names))
+        Ok(Some(Vec::new()))
     }
 
     async fn readdir_plus(&self, ino: u64) -> VfsResult<Option<Vec<DirEntry>>> {
+        // Graph overlay: synthetic dirs list their bounded graph entries (with attrs).
+        if super::graph_fs::graph_fs_enabled() && super::graph_fs::is_graph_ino(ino) {
+            let b = super::graph_fs::Bounds::from_env();
+            let conn = self.db.conn.lock();
+            if ino == super::graph_fs::BY_TOPIC_INO {
+                let out = super::graph_fs::graph_root_entries(&conn, &b)
+                    .map_err(sql_err)?
+                    .into_iter()
+                    .filter_map(|e| {
+                        e.community_id.map(|cid| DirEntry {
+                            attr: synthetic_dir_attr(super::graph_fs::community_to_ino(cid)),
+                            name: e.name,
+                        })
+                    })
+                    .collect();
+                return Ok(Some(out));
+            }
+            if let Some(cid) = super::graph_fs::ino_to_community(ino) {
+                let mut out = Vec::new();
+                for e in
+                    super::graph_fs::graph_community_entries(&conn, cid, &b).map_err(sql_err)?
+                {
+                    if let Some(rp) = e.real_path {
+                        if let Some(attr) = real_attr_for_path(&conn, &rp) {
+                            out.push(DirEntry { name: e.name, attr });
+                        }
+                    }
+                }
+                return Ok(Some(out));
+            }
+            return Ok(None);
+        }
+
         // First pass: query from local cache. All DB work in one sync block.
-        let entries = {
+        let mut entries = {
             let conn = self.db.conn.lock();
 
             let mode: Option<i64> = conn
@@ -1243,23 +1470,31 @@ impl FileSystem for CacheFs {
                 return Ok(None);
             }
 
-            self.query_dir_entries(&conn, ino)?
+            let entries = self.query_dir_entries(&conn, ino)?;
+            // Search-first: hide corpus leaf files (keep dirs + KG + model_output).
+            if search_only_enabled() && !under_model_output(&conn, ino) {
+                entries
+                    .into_iter()
+                    .filter(|e| {
+                        (e.attr.mode & S_IFMT) == S_IFDIR
+                            || SEARCH_ALWAYS_VISIBLE.contains(&e.name.as_str())
+                    })
+                    .collect()
+            } else {
+                entries
+            }
         }; // conn dropped here
 
-        let append_profile = |mut entries: Vec<DirEntry>| -> Vec<DirEntry> {
-            if ino == ROOT_INO && !entries.iter().any(|e| e.name == PROFILE_NAME) {
-                if let Some(pf) = &self.profile_file {
-                    entries.push(DirEntry {
-                        name: PROFILE_NAME.to_string(),
-                        attr: pf.profile_attr(),
-                    });
-                }
-            }
-            entries
-        };
+        // Graph overlay: expose `/by-topic` alongside the real root entries.
+        if super::graph_fs::graph_fs_enabled() && ino == super::db::ROOT_INO {
+            entries.push(DirEntry {
+                name: super::graph_fs::BY_TOPIC_NAME.to_string(),
+                attr: synthetic_dir_attr(super::graph_fs::BY_TOPIC_INO),
+            });
+        }
 
         if !entries.is_empty() || self.api.is_none() {
-            return Ok(Some(append_profile(entries)));
+            return Ok(Some(entries));
         }
 
         if let Some(dir_path) = self.resolve_filepath(ino) {
@@ -1270,7 +1505,7 @@ impl FileSystem for CacheFs {
             };
             self.hydration.enqueue(HydrationKey::Prefix(prefix));
         }
-        Ok(Some(append_profile(Vec::new())))
+        Ok(Some(Vec::new()))
     }
 
     async fn mkdir(
@@ -1414,12 +1649,6 @@ impl FileSystem for CacheFs {
     }
 
     async fn open(&self, ino: u64, _flags: i32) -> VfsResult<BoxedFile> {
-        if ino == PROFILE_INO {
-            if let Some(pf) = &self.profile_file {
-                return Ok(pf.clone());
-            }
-            return Err(VfsError::NotFound);
-        }
         {
             let conn = self.db.conn.lock();
             let mode: i64 = conn
@@ -1537,84 +1766,87 @@ impl FileSystem for CacheFs {
     async fn unlink(&self, parent_ino: u64, name: &str) -> VfsResult<()> {
         validate_name(name)?;
 
-        if parent_ino == ROOT_INO && name == PROFILE_NAME {
-            return Err(VfsError::PermissionDenied);
-        }
-
         // Resolve filepath BEFORE deleting dentry (needed for API sync).
         let filepath_for_api = self.resolve_filepath(parent_ino).map(|p| {
             let sep = if p.ends_with('/') { "" } else { "/" };
             format!("{p}{sep}{name}")
         });
 
-        let conn = self.db.conn.lock();
+        // Scope the rusqlite work in a block so the (non-Send) connection guard +
+        // transaction are dropped BEFORE the async indexer `.await` below — the
+        // mount futures must be `Send` (nfsserve), and rustc's async-Send analysis
+        // keeps a `MutexGuard`/`Transaction` alive to end-of-scope without this.
+        // The block yields `child_ino` (needed below for the API push queue).
+        let child_ino: i64 = {
+            let conn = self.db.conn.lock();
 
-        // Look up child.
-        let child_ino: i64 = conn
-            .query_row(
-                "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+            // Look up child.
+            let child_ino: i64 = conn
+                .query_row(
+                    "SELECT ino FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
+                    rusqlite::params![parent_ino as i64, name],
+                    |r| r.get(0),
+                )
+                .map_err(|_| VfsError::NotFound)?;
+
+            // Verify not a directory.
+            let child_mode: i64 = conn
+                .query_row(
+                    "SELECT mode FROM fs_inode WHERE ino = ?1",
+                    [child_ino],
+                    |r| r.get(0),
+                )
+                .map_err(|_| VfsError::NotFound)?;
+            if (child_mode as u32 & S_IFMT) == S_IFDIR {
+                return Err(VfsError::IsADirectory);
+            }
+
+            let now = Timestamp::now();
+            let tx = conn.unchecked_transaction().map_err(sql_err)?;
+
+            // Delete dentry.
+            tx.execute(
+                "DELETE FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
                 rusqlite::params![parent_ino as i64, name],
-                |r| r.get(0),
-            )
-            .map_err(|_| VfsError::NotFound)?;
-
-        // Verify not a directory.
-        let child_mode: i64 = conn
-            .query_row(
-                "SELECT mode FROM fs_inode WHERE ino = ?1",
-                [child_ino],
-                |r| r.get(0),
-            )
-            .map_err(|_| VfsError::NotFound)?;
-        if (child_mode as u32 & S_IFMT) == S_IFDIR {
-            return Err(VfsError::IsADirectory);
-        }
-
-        let now = Timestamp::now();
-        let tx = conn.unchecked_transaction().map_err(sql_err)?;
-
-        // Delete dentry.
-        tx.execute(
-            "DELETE FROM fs_dentry WHERE parent_ino = ?1 AND name = ?2",
-            rusqlite::params![parent_ino as i64, name],
-        )
-        .map_err(sql_err)?;
-
-        // Update parent timestamps.
-        tx.execute(
-            "UPDATE fs_inode SET mtime = ?1, ctime = ?2, mtime_nsec = ?3, ctime_nsec = ?4 WHERE ino = ?5",
-            rusqlite::params![now.sec, now.sec, now.nsec, now.nsec, parent_ino as i64],
-        )
-        .map_err(sql_err)?;
-
-        // Decrement nlink.
-        tx.execute(
-            "UPDATE fs_inode SET nlink = nlink - 1, ctime = ?1, ctime_nsec = ?2 WHERE ino = ?3",
-            rusqlite::params![now.sec, now.nsec, child_ino],
-        )
-        .map_err(sql_err)?;
-
-        // Check if we need to delete the inode.
-        let nlink: i64 = tx
-            .query_row(
-                "SELECT nlink FROM fs_inode WHERE ino = ?1",
-                [child_ino],
-                |r| r.get(0),
             )
             .map_err(sql_err)?;
-        if nlink <= 0 {
-            tx.execute("DELETE FROM fs_data WHERE ino = ?1", [child_ino])
-                .map_err(sql_err)?;
-            tx.execute("DELETE FROM fs_symlink WHERE ino = ?1", [child_ino])
-                .map_err(sql_err)?;
-            tx.execute("DELETE FROM fs_remote WHERE ino = ?1", [child_ino])
-                .map_err(sql_err)?;
-            tx.execute("DELETE FROM fs_inode WHERE ino = ?1", [child_ino])
-                .map_err(sql_err)?;
-        }
 
-        tx.commit().map_err(sql_err)?;
-        drop(conn);
+            // Update parent timestamps.
+            tx.execute(
+                "UPDATE fs_inode SET mtime = ?1, ctime = ?2, mtime_nsec = ?3, ctime_nsec = ?4 WHERE ino = ?5",
+                rusqlite::params![now.sec, now.sec, now.nsec, now.nsec, parent_ino as i64],
+            )
+            .map_err(sql_err)?;
+
+            // Decrement nlink.
+            tx.execute(
+                "UPDATE fs_inode SET nlink = nlink - 1, ctime = ?1, ctime_nsec = ?2 WHERE ino = ?3",
+                rusqlite::params![now.sec, now.nsec, child_ino],
+            )
+            .map_err(sql_err)?;
+
+            // Check if we need to delete the inode.
+            let nlink: i64 = tx
+                .query_row(
+                    "SELECT nlink FROM fs_inode WHERE ino = ?1",
+                    [child_ino],
+                    |r| r.get(0),
+                )
+                .map_err(sql_err)?;
+            if nlink <= 0 {
+                tx.execute("DELETE FROM fs_data WHERE ino = ?1", [child_ino])
+                    .map_err(sql_err)?;
+                tx.execute("DELETE FROM fs_symlink WHERE ino = ?1", [child_ino])
+                    .map_err(sql_err)?;
+                tx.execute("DELETE FROM fs_remote WHERE ino = ?1", [child_ino])
+                    .map_err(sql_err)?;
+                tx.execute("DELETE FROM fs_inode WHERE ino = ?1", [child_ino])
+                    .map_err(sql_err)?;
+            }
+
+            tx.commit().map_err(sql_err)?;
+            child_ino
+        };
 
         self.dentry_cache
             .lock()
@@ -1623,11 +1855,13 @@ impl FileSystem for CacheFs {
         // Drop from the local semantic index (independent of cloud sync).
         if let Some(indexer) = &self.indexer {
             if let Some(fp) = filepath_for_api.as_deref() {
-                if let Err(e) = indexer.remove(fp) {
+                if let Err(e) = indexer.remove(fp).await {
                     tracing::warn!(filepath = %fp, "local index remove on unlink failed: {e}");
                 }
             }
         }
+        // Clear any unindexed marker — the file is gone, not merely unparsed.
+        self.db.clear_unindexed(child_ino as u64);
 
         // Push delete to API via the push queue (durable, coalescing).
         if self.api.is_some() {
@@ -1953,6 +2187,10 @@ impl FileSystem for CacheFs {
                     .map_err(sql_err)?;
                 tx.execute("DELETE FROM fs_inode WHERE ino = ?1", [dst_ino])
                     .map_err(sql_err)?;
+                // The overwritten inode is gone — drop any unindexed marker so
+                // `unindexed_files` doesn't overcount a file that no longer exists.
+                tx.execute("DELETE FROM fs_unindexed WHERE ino = ?1", [dst_ino])
+                    .map_err(sql_err)?;
                 did_overwrite = true;
             }
 
@@ -1969,6 +2207,17 @@ impl FileSystem for CacheFs {
             ],
         )
         .map_err(sql_err)?;
+
+            // Relabel any unindexed marker atomically WITH the rename (keyed by
+            // inode) so `fs_unindexed.filepath` can never drift from the dentry.
+            // `dst_filepath_for_delete` is the destination path resolved above.
+            if let Some(new_fp) = dst_filepath_for_delete.as_deref() {
+                tx.execute(
+                    "UPDATE fs_unindexed SET filepath = ?2 WHERE ino = ?1",
+                    rusqlite::params![src_ino, new_fp],
+                )
+                .map_err(sql_err)?;
+            }
 
             // Update timestamps on source inode and both parents.
             tx.execute(
@@ -2012,10 +2261,9 @@ impl FileSystem for CacheFs {
         // Keep the local semantic index in sync with the path change: relabel
         // old → new (and drop anything the destination already had). Best-effort.
         if let Some(indexer) = &self.indexer {
-            if let (Some(old_fp), Some(new_fp)) =
-                (old_filepath.as_deref(), new_filepath.as_deref())
+            if let (Some(old_fp), Some(new_fp)) = (old_filepath.as_deref(), new_filepath.as_deref())
             {
-                if let Err(e) = indexer.rename(old_fp, new_fp) {
+                if let Err(e) = indexer.rename(old_fp, new_fp).await {
                     tracing::warn!(old = %old_fp, new = %new_fp, "local index rename failed: {e}");
                 }
             }

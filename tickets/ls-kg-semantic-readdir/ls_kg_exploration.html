@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>ls → Knowledge-Graph — semantic readdir exploration</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--fg:#e6edf3;--mut:#8b949e;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff;--star:#ffd33d}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+.wrap{max-width:1140px;margin:0 auto;padding:28px 20px 80px}
+h1{font-size:26px;margin:0 0 4px} h2{font-size:20px;margin:34px 0 12px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+h3{font-size:16px;margin:18px 0 8px;color:var(--acc)}
+.sub{color:var(--mut);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px 18px;margin:14px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+table{border-collapse:collapse;width:100%;font-size:13px;margin:10px 0}
+th,td{border:1px solid var(--bd);padding:7px 9px;text-align:left}
+th{background:#1c2230;color:var(--acc)} tr:nth-child(even) td{background:#11161f}
+code{background:#1c2230;padding:1px 5px;border-radius:4px;font-size:12.5px;color:#ffa657}
+.term{background:#0a0d12;border:1px solid var(--bd);border-radius:8px;padding:12px 14px;font:12.5px/1.55 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;overflow:auto;color:#c9d1d9}
+.term .o{color:var(--mut)} .term .g{color:var(--ok)} .term .b{color:var(--bad)} .term .a{color:var(--acc)} .term .y{color:var(--warn)}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700}
+.t-ok{background:rgba(63,185,80,.15);color:var(--ok)} .t-bad{background:rgba(248,81,73,.15);color:var(--bad)} .t-warn{background:rgba(210,153,34,.15);color:var(--warn)}
+.pill{font-size:11px;color:var(--mut)}
+.big{font-size:26px;font-weight:800}
+.kpi{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
+.kpi .b{flex:1;min-width:150px;background:#11161f;border:1px solid var(--bd);border-radius:8px;padding:12px}
+.star{color:var(--star)}
+.win{border-left:3px solid var(--ok)} .lose{border-left:3px solid var(--bad)}
+ul{margin:6px 0 6px 18px;padding:0} li{margin:3px 0;font-size:13.5px}
+.mut{color:var(--mut)}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>`ls` → Knowledge-Graph: semantic readdir</h1>
+<p class="sub">Make the agent's reflexive first move return <b>relevance</b>, not a file dump · case 289 · 2026-06-06 · parent: case289-retrieval-investigation</p>
+
+<div class="card">
+<b>The lever, in one line.</b> Token cost is dominated by the agent's <b>first move</b>. With an <i>identical</i>
+full-P0 config, when codex <b>greps-first</b> it costs <b class="star">35,241 tokens / 4 calls</b> (≈ cloud's 26,598 / 3);
+when it <b>os.walk-first</b> it costs <b style="color:var(--bad)">92,591 / 7</b>. The agent enumerates first by default and
+you <i>cannot instruct that away</i> — so make the orientation move itself <b>semantic</b>.</div>
+
+<div class="kpi">
+<div class="b lose"><div class="mut">walk-first (current, unlucky)</div><div class="big" style="color:var(--bad)">92,591</div><div class="pill">7 calls · 62KB os.walk</div></div>
+<div class="b"><div class="mut">grep-first (current, lucky)</div><div class="big" style="color:var(--warn)">35,241</div><div class="pill">4 calls · same config!</div></div>
+<div class="b win"><div class="mut">cloud (target)</div><div class="big" style="color:var(--ok)">26,598</div><div class="pill">3 calls · always grep-first</div></div>
+<div class="b win"><div class="mut">approach C (projected)</div><div class="big" style="color:var(--ok)">~18–24K</div><div class="pill">2–3 calls · reliable</div></div>
+</div>
+
+<h2>The original idea, judged</h2>
+<div class="grid">
+<div class="card win"><b>🟢 Steelman</b><ul>
+<li>Rides the move you <i>can't suppress</i> — the agent always enumerates first.</li>
+<li>No hint compliance: every agent runs <code>ls</code> reflexively; meets it where it looks.</li>
+<li>Exposes in-language entities (<code>成交金额</code>,<code>转化率</code>) → correct query formation → fixes cross-lingual.</li>
+<li>Truest expression of a "semantic filesystem."</li></ul></div>
+<div class="card lose"><b>🔴 Strawman</b><ul>
+<li>Raw readdir is load-bearing POSIX: <code>cp -r</code>, globbing, and <b>writing to <code>model_output/</code></b> need REAL entries.</li>
+<li>A graph doesn't map onto per-directory readdir.</li>
+<li>Agents parse <code>ls</code> as filenames → graph-text confuses them (cf. grep-header +53%).</li>
+<li>Needs a rich KG (today 21/595 files) + caching on a hot syscall.</li></ul></div>
+</div>
+<div class="card"><b>Verdict:</b> brilliant <b>kernel</b> (ride the reflexive move), wrong <b>vehicle</b> (don't break readdir).
+Keep readdir POSIX-clean; deliver the KG through a channel the agent already uses → the 3 approaches below.</div>
+
+<h2>The 3 POSIX-clean approaches</h2>
+<table>
+<tr><th>approach</th><th>mechanism</th><th>rides which move</th><th>POSIX-safe</th><th>needs rich KG</th><th>reliability</th></tr>
+<tr><td><b>A</b> · profile.md Leiden digest</td><td>L7 → KG → Leiden communities → god-node summary → virtual <code>profile.md</code></td><td><code>cat</code> (opt-in)</td><td>✓</td><td><b>yes</b></td><td><span class="tag t-warn">medium</span></td></tr>
+<tr><td><b>B</b> · annotated <code>ls</code></td><td>real entries, relevance-ranked + 1-line summary per dir (sidecar <code>_map.md</code> / xattr)</td><td><code>ls</code> (reflexive)</td><td>✓</td><td>partial</td><td><span class="tag t-ok">high</span></td></tr>
+<tr><td><b>C</b> · map-header on first grep <span class="star">★</span></td><td>prepend a compact corpus map to the FIRST <code>semfs grep</code> response, then the ranked answer</td><td><code>grep</code> (<b>unavoidable</b>)</td><td>✓</td><td>partial</td><td><span class="tag t-ok">highest</span></td></tr>
+</table>
+<p class="mut">Ranking <b>C &gt; B &gt; A &gt; raw-ls-overload</b>: C rides the move the agent <i>must</i> make (it can't get content
+without grep), orients + answers in one call (cloud's shape), and needs no <code>cat profile.md</code> compliance.</p>
+
+<h2>Projected tool-call traces — current vs ideal</h2>
+
+<h3 class="lose" style="color:var(--bad)">Current — WALK-FIRST (failure) · ~92K / 7–19 calls</h3>
+<div class="term"><span class="b">1  os.walk('.')</span>                         <span class="o">→ 62 KB unranked paths (every file looks equal)</span>
+<span class="b">2  pandas/openpyxl on a guessed file</span>      <span class="o">→ 0–300 B (wrong file / format trap)</span>
+<span class="b">3  file / sed probes</span>                      <span class="o">→ small, inconclusive</span>
+<span class="b">4  semfs grep "best-selling product…"</span>    <span class="o">→ answer present, but ~30 KB whole-doc dump</span>
+<span class="b">5  cat / sed to verify</span>                    <span class="o">→ re-read</span>
+<span class="b">6  cp → model_output/…</span>                    <span class="o">→ write</span>
+   <span class="o">(each big output re-replays every turn → ~92 K)</span></div>
+
+<div class="grid">
+<div>
+<h3>Ideal — A · profile.md digest · ~30K / 3 calls</h3>
+<div class="term"><span class="a">1  cat profile.md</span>
+   <span class="o"># Container map (Leiden communities)</span>
+   <span class="star">★ product-sales-analytics</span><span class="o"> → best-seller list,</span>
+       <span class="o">成交金额, 转化率  →/desktop/fashion_ecommerce/</span>
+   <span class="star">★ taobao-campaigns ★ PM-docs ★ finance</span>
+   <span class="o">SEARCH FIRST: semfs grep "&lt;in-language&gt;"</span>
+<span class="g">2  semfs grep "畅销产品 成交金额 转化率"</span>
+   <span class="g">→ best_selling_…txt:1-10: &lt;chunk #1&gt;  (~3 KB)</span>
+<span class="a">3  cp answer → model_output/…</span></div>
+</div>
+<div>
+<h3>Ideal — B · annotated <code>ls</code> · ~28K / 3 calls</h3>
+<div class="term"><span class="a">1  ls -la</span>
+ <span class="o">desktop/fashion_ecommerce/</span> <span class="y"># 畅销产品: title·</span>
+     <span class="y">成交金额·转化率   [HOT]</span>
+ <span class="o">taobao_campaigns/</span>  <span class="o"># campaign rules</span>
+ <span class="o">chanpin/</span>          <span class="o"># PM docs</span>
+ <span class="o">model_output/</span>     <span class="o"># your output dir (real,writable)</span>
+<span class="g">2  semfs grep "畅销产品 成交金额 转化率"</span>
+   <span class="g">→ answer chunk, ranked #1  (~3 KB)</span>
+<span class="a">3  cp answer → model_output/…</span></div>
+</div>
+</div>
+
+<h3 class="win" style="color:var(--ok)">Ideal — C · map-header on first grep <span class="star">★</span> · ~18–24K / 2–3 calls</h3>
+<div class="term"><span class="g">1  semfs grep "best-selling product data"</span>
+   <span class="a">┌ CORPUS MAP ─────────────────────────────────────────────┐</span>
+   <span class="a">│</span> Chinese e-commerce PM workspace (595 files). Topics:    <span class="a">│</span>
+   <span class="a">│</span>  • product-sales-analytics (best-sellers, 成交金额, 转化率)<span class="a">│</span>
+   <span class="a">│</span>  • taobao-campaigns · PM-docs · finance                  <span class="a">│</span>
+   <span class="a">│</span> tip: query in-language for best recall                   <span class="a">│</span>
+   <span class="a">└─────────────────────────────────────────────────────────┘</span>
+   RESULTS (ranked):
+   <span class="g">#1 /desktop/…/best_selling_product_core_data_list.txt:1-10: &lt;chunk&gt;</span>  <span class="o">← answer</span>
+   <span class="o">#2 …  (compact chunk returns, ~10 KB total)</span>
+<span class="a">2  cp answer → model_output/…</span>
+   <span class="o">orient + answer in ONE call → cloud's "→done" shape</span></div>
+
+<h3 class="win" style="color:var(--ok)">Target — CLOUD (measured) · 26,598 / 3 calls</h3>
+<div class="term"><span class="a">1  pwd && ls -la && cat profile.md</span>   <span class="o">(2 KB)</span>
+<span class="g">2  semfs grep "..."</span>                  <span class="g">→ answer chunk #1 (10.7 KB)</span>
+<span class="a">3  write</span></div>
+
+<h2>Side-by-side</h2>
+<table>
+<tr><th>approach</th><th>rides move</th><th>POSIX-safe</th><th>needs rich KG</th><th>proj. tokens</th><th>proj. calls</th><th>reliability</th></tr>
+<tr><td class="lose" style="border-left:3px solid var(--bad)">current walk-first</td><td>—</td><td>✓</td><td>—</td><td>~92K</td><td>7–19</td><td>bad</td></tr>
+<tr><td>current grep-first (lucky)</td><td>grep</td><td>✓</td><td>no</td><td>35K</td><td>4</td><td>unreliable</td></tr>
+<tr><td>A profile digest</td><td>cat (opt-in)</td><td>✓</td><td><b>yes</b></td><td>~30K</td><td>3</td><td>medium</td></tr>
+<tr><td>B annotated ls</td><td>ls (reflexive)</td><td>✓</td><td>partial</td><td>~28K</td><td>3</td><td>high</td></tr>
+<tr class="win" style="background:rgba(63,185,80,.06)"><td><b>C map-on-first-grep ★</b></td><td><b>grep (unavoidable)</b></td><td>✓</td><td>partial</td><td><b>~18–24K</b></td><td><b>2–3</b></td><td><b>highest</b></td></tr>
+<tr><td class="mut">raw ls→KG (original)</td><td>ls</td><td><span class="t-bad tag">breaks writes</span></td><td>yes</td><td>~20K*</td><td>2*</td><td>infeasible</td></tr>
+</table>
+<p class="mut">* only if it worked; it breaks <code>model_output/</code> writes → net worse.</p>
+
+<h2>Experiments</h2>
+<ul>
+<li><b>K1</b> — Prototype C: prepend <code>build_local_profile()</code> digest to the first grep response. E2E: does codex grep-first + 1 call? (cheap, no re-seed)</li>
+<li><b>K2</b> — Prototype B: sidecar <code>_map.md</code> + relevance-ranked root readdir; measure if codex reads it.</li>
+<li><b>K3</b> — Comprehensive L7 extraction (595 files) → rich KG → Leiden → real graphify digest (powers A and the content of B/C).</li>
+<li><b>K4</b> — full-P0 ×5: quantify walk-first vs grep-first rate the map must beat.</li>
+</ul>
+
+<p class="mut" style="margin-top:22px">Sources: cmplocal/cmpcloud measured traces; <code>SEMFS_GRAPHIFY_DESIGN.md</code> §II.10 (Leiden) / §B3 (community digest);
+<code>profile.rs::build_local_profile</code>. Parent: <code>tickets/case289-retrieval-investigation/</code>.</p>
+
+</div></body></html>

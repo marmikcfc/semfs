@@ -59,12 +59,18 @@ impl Default for SyncOptions {
 pub struct SyncEngine;
 
 impl SyncEngine {
-    /// Run the synchronous startup sequence: a full deletion scan first (to
-    /// catch anything deleted while we were offline) and a full pull (to
-    /// hydrate everything else). Blocks until both complete.
+    /// Run the synchronous startup sequence: a deletion scan first (to catch
+    /// anything deleted while we were offline), then hydrate. A COLD cache does a
+    /// full pull; a WARM cache (prior watermark) does a cheap delta — re-mounting
+    /// an already-hydrated container must not re-reconcile every doc (redundant,
+    /// and on a heavy shared cache it thrashes). Blocks until both complete.
     pub async fn initial_pull(fs: &Arc<CacheFs>) -> anyhow::Result<(usize, usize)> {
         let removed = scan::deletion_scan(fs).await.unwrap_or(0);
-        let reconciled = pull::full_pull(fs).await?;
+        let reconciled = if pull::cache_is_warm(fs) {
+            pull::delta_pull(fs).await?
+        } else {
+            pull::full_pull(fs).await?
+        };
         Ok((removed, reconciled))
     }
 
@@ -84,10 +90,19 @@ impl SyncEngine {
             .await
             .unwrap_or(0)
         };
-        let reconciled = pull::full_pull_with_progress(fs, |progress| {
-            on_progress(InitialPullProgress::Pull(progress));
-        })
-        .await?;
+        // Warm cache (prior watermark): the container is already hydrated, so a
+        // full re-reconcile of every doc on each mount is pure redundant work
+        // (and thrashes a heavy shared cache). Do a cheap delta — it pages only
+        // until the watermark, catching new/updated docs; deletions are handled
+        // by the scan above + the periodic loop. Cold cache → full hydrating pull.
+        let reconciled = if pull::cache_is_warm(fs) {
+            pull::delta_pull(fs).await?
+        } else {
+            pull::full_pull_with_progress(fs, |progress| {
+                on_progress(InitialPullProgress::Pull(progress));
+            })
+            .await?
+        };
         Ok((removed, reconciled))
     }
 
@@ -266,9 +281,25 @@ mod start_gating_tests {
     #[tokio::test]
     async fn start_gates_loops_on_pull_and_push_flags() {
         let (_tx, rx) = watch::channel(false);
-        assert_eq!(SyncEngine::start(fs(), opts(true, true), rx.clone()).len(), 5, "pull+push");
-        assert_eq!(SyncEngine::start(fs(), opts(true, false), rx.clone()).len(), 3, "--no-push: pull loops only");
-        assert_eq!(SyncEngine::start(fs(), opts(false, true), rx.clone()).len(), 2, "--no-sync: push loops only");
-        assert_eq!(SyncEngine::start(fs(), opts(false, false), rx.clone()).len(), 0, "both off");
+        assert_eq!(
+            SyncEngine::start(fs(), opts(true, true), rx.clone()).len(),
+            5,
+            "pull+push"
+        );
+        assert_eq!(
+            SyncEngine::start(fs(), opts(true, false), rx.clone()).len(),
+            3,
+            "--no-push: pull loops only"
+        );
+        assert_eq!(
+            SyncEngine::start(fs(), opts(false, true), rx.clone()).len(),
+            2,
+            "--no-sync: push loops only"
+        );
+        assert_eq!(
+            SyncEngine::start(fs(), opts(false, false), rx.clone()).len(),
+            0,
+            "both off"
+        );
     }
 }

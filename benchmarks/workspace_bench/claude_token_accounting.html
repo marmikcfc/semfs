@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Capturing Claude Token Usage — ELI5 → Expert</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --ink:#e6edf3; --mut:#9aa7b4; --line:#283039;
+    --uncached:#f0883e; --cwrite:#d29922; --cread:#3fb950; --out:#58a6ff; --bad:#f85149; --good:#3fb950;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:26px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 28px}
+  .lvl{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:0 0 18px}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#0e1116;padding:3px 9px;border-radius:999px;margin-bottom:10px}
+  .l1{background:#7ee787}.l2{background:#79c0ff}.l3{background:#ffa657}.l4{background:#d2a8ff}.l5{background:#ff7b72}
+  h2{font-size:18px;margin:4px 0 10px}
+  code,kbd{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:10px 0 6px;font-size:13px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+  /* the prompt-anatomy bar */
+  .bar{display:flex;height:46px;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin:14px 0 4px;cursor:pointer}
+  .seg{display:flex;align-items:center;justify-content:center;color:#0b0f14;font-weight:700;font-size:12px;transition:flex .35s ease}
+  .seg.read{background:var(--cread)}.seg.write{background:var(--cwrite)}.seg.unc{background:var(--uncached)}.seg.out{background:var(--out)}
+  .barcap{color:var(--mut);font-size:12.5px}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+  th{background:#1f2630}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  .bad{color:var(--bad);font-weight:700}.good{color:var(--good);font-weight:700}
+  .note{border-left:3px solid var(--out);padding:6px 0 6px 14px;margin:12px 0;color:var(--mut)}
+  .toggle{background:#1f2630;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;margin:6px 6px 6px 0}
+  .toggle:hover{border-color:var(--out)}
+  .toggle.active{border-color:var(--cread);color:var(--cread)}
+  .kpi{display:flex;gap:18px;flex-wrap:wrap;margin:10px 0}
+  .kpi div{flex:1;min-width:150px;background:#0b0f14;border:1px solid var(--line);border-radius:10px;padding:12px}
+  .kpi b{display:block;font-size:24px}
+  .kpi small{color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Capturing Claude token usage — uncached, cached & completion</h1>
+  <p class="sub">Why our benchmark read <b>5,010</b> when plain Claude really moved <b>~252,000</b> input tokens on the same task — and how to capture it correctly. Measured: Workspace-Bench case 289, plain ClaudeCode/Sonnet-4.6, 2026-05-27.</p>
+
+  <!-- LEVEL 1 -->
+  <div class="lvl">
+    <span class="tag l1">Level 1 · ELI5</span>
+    <h2>Tokens are the words the model reads and writes</h2>
+    <p>Every time the model runs, it <b>reads</b> a big pile of text (your instructions + the files it's looking at) and <b>writes</b> an answer. Each chunk of text ≈ a "token." You pay for reading and for writing.</p>
+    <p>The twist: some of what it reads is the <b>same every turn</b> (the standing instructions, the workspace context). Claude can <b>remember</b> that cheaply instead of re-reading it from scratch — that's the <b>cache</b>. Cheap to read again — but it's <b>still being read</b>. If your counter ignores "the remembered part," it thinks almost nothing happened.</p>
+  </div>
+
+  <!-- LEVEL 2 -->
+  <div class="lvl">
+    <span class="tag l2">Level 2 · the four buckets</span>
+    <h2>One request splits into four token counts</h2>
+    <p>Anthropic's <code>usage</code> object reports input in <b>three</b> pieces, plus output:</p>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--uncached)"></i><code>input_tokens</code> — fresh, uncached input</span>
+      <span><i class="sw" style="background:var(--cwrite)"></i><code>cache_creation_input_tokens</code> — written <i>to</i> cache (first sight)</span>
+      <span><i class="sw" style="background:var(--cread)"></i><code>cache_read_input_tokens</code> — replayed <i>from</i> cache</span>
+      <span><i class="sw" style="background:var(--out)"></i><code>output_tokens</code> — completion</span>
+    </div>
+    <p class="barcap">A typical agent turn on case 289 (click the bar to see what the broken parser "sees"):</p>
+    <div class="bar" id="bar" onclick="toggleBar()">
+      <div class="seg read"  id="s_read"  style="flex:221569">cache_read 221,569</div>
+      <div class="seg write" id="s_write" style="flex:31017">cache_write 31,017</div>
+      <div class="seg unc"   id="s_unc"   style="flex:9000">input</div>
+      <div class="seg out"   id="s_out"   style="flex:7000">output</div>
+    </div>
+    <p class="barcap" id="barcap">Full reality. The cache bands are the workspace + system context replayed every turn — cheap, but very much present.</p>
+  </div>
+
+  <!-- LEVEL 3 -->
+  <div class="lvl">
+    <span class="tag l3">Level 3 · the gotcha that bit us</span>
+    <h2><code>input_tokens</code> is the <i>non-cached</i> slice only</h2>
+    <p>This is the trap. When prompt caching is on, the bulk of the prompt moves into the two cache fields and <code>input_tokens</code> collapses to a handful. A real turn from our run:</p>
+    <pre>{"input_tokens": 2, "cache_creation_input_tokens": 10056,
+ "cache_read_input_tokens": 0, "output_tokens": 148}</pre>
+    <p>Our parser did <code>prompt_tokens += input_tokens</code> (counted the <b>2</b>) and <b>dropped the 10,056</b>. It even declared <code>cache_read</code>/<code>cache_write</code> keys — then never filled them. Across the whole task:</p>
+    <table>
+      <tr><th>Quantity</th><th>Value</th><th>Note</th></tr>
+      <tr><td>What the parser reported</td><td class="n bad">5,010</td><td><code>input_tokens + output_tokens</code> only</td></tr>
+      <tr><td>cache_read (cumulative)</td><td class="n">221,569</td><td>workspace ctx replayed each turn</td></tr>
+      <tr><td>cache_creation (cumulative)</td><td class="n">31,017</td><td>first-sight blocks</td></tr>
+      <tr><td><b>True total input</b></td><td class="n good">≈ 252,000+</td><td>uncached + cache_write + cache_read</td></tr>
+    </table>
+    <div class="note">Consequence for the benchmark: "plain claude = 5,010, codex = 143,837" was <b>backwards</b>. Counted properly, plain Claude's real footprint (~252K) is <b>larger</b> than codex's — so semfs's job (cut the context) is the right thing to measure, on a common basis.</div>
+  </div>
+
+  <!-- LEVEL 4 -->
+  <div class="lvl">
+    <span class="tag l4">Level 4 · don't double-count</span>
+    <h2>Per-turn usage vs cumulative usage</h2>
+    <p>An agent run streams many messages:</p>
+    <ul>
+      <li>Each <code>assistant</code> message carries the <b>usage for that turn</b>.</li>
+      <li>The final <code>result</code> message carries the <b>cumulative</b> usage for the whole session (plus <code>total_cost_usd</code>).</li>
+    </ul>
+    <p>So you pick <b>one</b> source of truth:</p>
+    <table>
+      <tr><th>Strategy</th><th>Verdict</th></tr>
+      <tr><td>Sum the final <code>result.usage</code> only</td><td class="good">✓ correct — it's already cumulative</td></tr>
+      <tr><td>Sum every <code>assistant</code> turn's usage</td><td class="good">✓ correct — if you do NOT also add result</td></tr>
+      <tr><td>Sum assistant turns <i>and</i> the result</td><td class="bad">✗ double counts</td></tr>
+    </table>
+    <p>Our parser loops over <code>type=="result"</code> events (one per task) → no double-count. The defect was purely <b>which fields</b> it read, not how it accumulated.</p>
+    <div class="note">Watch subagents / context compaction: a long run can emit more than one <code>result</code>-shaped event. Prefer the SDK's <b>final</b> result usage, or sum the explicit four fields and trust those — not a derived <code>total_tokens</code> field, which (in this run) excluded <code>cache_read</code> and topped out at 57,832 while cache_read alone was 221,569.</div>
+  </div>
+
+  <!-- LEVEL 5 -->
+  <div class="lvl">
+    <span class="tag l5">Level 5 · expert — capture it right</span>
+    <h2>Raw tokens vs cost, and cross-model fairness</h2>
+
+    <p><b>1 · Capture the four fields verbatim. Never reduce to one int at the source.</b></p>
+<pre>def _accumulate(u, agg):
+    agg["input"]          += u.get("input_tokens", 0)                  # uncached
+    agg["cache_creation"] += u.get("cache_creation_input_tokens", 0)   # cache write (1.25x)
+    agg["cache_read"]     += u.get("cache_read_input_tokens", 0)       # cache read  (0.10x)
+    agg["output"]         += u.get("output_tokens", 0)                 # completion
+
+total_input = agg["input"] + agg["cache_creation"] + agg["cache_read"]
+grand_total = total_input + agg["output"]</pre>
+
+    <p><b>2 · Two metrics, not one.</b> Raw-token total answers "how much context moved." Cost answers "what it billed." Cache changes them very differently:</p>
+    <table>
+      <tr><th>Bucket</th><th>Price multiplier (rel. base input)</th></tr>
+      <tr><td><code>input_tokens</code></td><td class="n">1.0×</td></tr>
+      <tr><td><code>cache_creation_input_tokens</code></td><td class="n">~1.25×</td></tr>
+      <tr><td><code>cache_read_input_tokens</code></td><td class="n">~0.10×</td></tr>
+      <tr><td><code>output_tokens</code></td><td class="n">~5× (model-dependent)</td></tr>
+    </table>
+    <p><b>3 · Cross-model comparison.</b> Codex via OpenRouter reports the <i>full</i> prompt as <code>input_tokens</code> (no equivalent cache split surfaced); Claude via the OAuth subscription pushes the prompt into <code>cache_read</code>. Comparing claude's 5,010 to codex's 143,837 compares two different definitions. <b>Normalize to "total input tokens moved"</b> (sum all three input buckets on the Claude side) before you compare, and report a separate cost number.</p>
+
+    <p><b>4 · The fix for our pipeline</b> — surgical, one function. In <code>benchmarks/vendor/Workspace-Bench/evaluation/src/agents/claudecode.py</code>, <code>_parse_usage_from_stdout()</code> already iterates the result events; add the two missing fields and a true total:</p>
+<pre>pt = u.get("input_tokens") or u.get("prompt_tokens") or 0
+ct = u.get("output_tokens") or u.get("completion_tokens") or 0
+cw = u.get("cache_creation_input_tokens") or 0
+cr = u.get("cache_read_input_tokens") or 0
+usage_total["prompt_tokens"]     += pt
+usage_total["completion_tokens"] += ct
+usage_total["cache_write"]       += cw      # was declared, never filled
+usage_total["cache_read"]        += cr      # was declared, never filled
+# true total input includes cache; keep components for cost weighting
+usage_total["total_tokens"] = (usage_total["prompt_tokens"]
+    + usage_total["cache_write"] + usage_total["cache_read"]
+    + usage_total["completion_tokens"])</pre>
+    <div class="note">The data was never lost — <code>ClaudeCode.js</code> already writes the full <code>msg.usage</code> (cache fields included) into stdout. The reducer just wasn't reading them. So this is a <b>parser-only</b> change; no re-run of the agent is needed to re-derive past totals from saved <code>raw/</code> output.</div>
+
+    <div class="kpi">
+      <div><small>reported</small><b class="bad">5,010</b><small>input+output only</small></div>
+      <div><small>true input moved</small><b class="good">≈252K</b><small>incl. cache_read 221,569</small></div>
+      <div><small>undercount</small><b>~50×</b><small>on input</small></div>
+    </div>
+  </div>
+
+</div>
+<script>
+  var full=true;
+  function toggleBar(){
+    full=!full;
+    var r=document.getElementById('s_read'), w=document.getElementById('s_write'),
+        u=document.getElementById('s_unc'), o=document.getElementById('s_out'),
+        cap=document.getElementById('barcap');
+    if(full){
+      r.style.flex=221569; r.textContent='cache_read 221,569';
+      w.style.flex=31017;  w.textContent='cache_write 31,017';
+      u.style.flex=9000;   u.textContent='input';
+      o.style.flex=7000;   o.textContent='output';
+      cap.innerHTML='Full reality. The cache bands are the workspace + system context replayed every turn — cheap, but very much present.';
+    } else {
+      r.style.flex=0.0001; r.textContent='';
+      w.style.flex=0.0001; w.textContent='';
+      u.style.flex=9000;   u.textContent='input (counted)';
+      o.style.flex=7000;   o.textContent='output (counted)';
+      cap.innerHTML='What the broken parser sees: only <code>input_tokens + output_tokens</code>. The two cache bands vanished — that is the 5,010.';
+    }
+  }
+</script>
+</body>
+</html>

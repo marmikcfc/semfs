@@ -1,0 +1,428 @@
+<section class="module" id="module-6">
+  <div class="module-content">
+
+    <header class="module-header">
+      <span class="module-number">06</span>
+      <h1 class="module-title">When Things Break (and the Big Picture)</h1>
+      <p class="module-subtitle">Your mount is hanging. A file will not sync. Or <code>semfs grep</code> returns nothing. Panicking and re-running random commands is the rookie move — here is the operator&apos;s routine, the same calm one that lets you break an AI out of a doom-loop.</p>
+    </header>
+
+    <!-- ── SCREEN 1: THE METAPHOR ───────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The building superintendent&apos;s keyring</h2>
+
+      <div class="icon-rows">
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-1)">🧑‍🔧</div>
+          <div>
+            <strong>A tenant says &ldquo;my apartment is acting weird&rdquo;</strong>
+            <p>The super does not panic. They check three things, in order, every single time.</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-2)">🔑</div>
+          <div>
+            <strong>Is the caretaker on duty?</strong>
+            <p>Is there an &ldquo;out of order&rdquo; sign left on a door from an old problem nobody cleared? What does the logbook say?</p>
+          </div>
+        </div>
+        <div class="icon-row">
+          <div class="icon-circle" style="background: var(--color-actor-3)">📓</div>
+          <div>
+            <strong>Debugging semfs is the same routine</strong>
+            <p>Check the process. Clear the stale state. Read the log. Disciplined, not frantic.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">💡</div>
+        <div class="callout-content">
+          <strong class="callout-title">The whole system is inspectable on purpose</strong>
+          <p>Every semfs mount leaves its entire state in plain files and logs on disk — so a human, or a smarter prompt, can <em>see</em> what is happening and step in.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 2: THE DAEMON'S FOUR FILES (HERO TREE) ────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The caretaker&apos;s footprint: four little files</h2>
+
+      <p>One mount = one tag = one
+        <span class="term" data-definition="A daemon is a long-running background program with no window — it just sits there doing its job, like a building caretaker who is always on duty. When talking to an AI you would say is the daemon still running.">daemon</span>
+        (🧑‍🔧). That daemon drops exactly four files on disk. Learn these and you can debug almost anything.</p>
+
+      <div class="file-tree">
+        <div class="ft-folder open">
+          <span class="ft-name">&lt;cache_dir&gt;/</span>
+          <span class="ft-desc">Everything one mount needs lives under one folder</span>
+          <div class="ft-children">
+            <div class="ft-file">
+              <span class="ft-name">&lt;tag&gt;.db</span>
+              <span class="ft-desc">🗄️ The Cache — a SQLite database holding your bytes + the write queue</span>
+            </div>
+            <div class="ft-file">
+              <span class="ft-name">sockets/&lt;tag&gt;.sock</span>
+              <span class="ft-desc">The Unix socket — the phone line the CLI uses to talk to the daemon</span>
+            </div>
+            <div class="ft-file">
+              <span class="ft-name">pids/&lt;tag&gt;.pid</span>
+              <span class="ft-desc">The daemon&apos;s process ID — its &ldquo;on duty&rdquo; badge number</span>
+            </div>
+            <div class="ft-file">
+              <span class="ft-name">logs/&lt;tag&gt;.log</span>
+              <span class="ft-desc">The logbook — your first stop when something is wrong</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="badge-list">
+        <div class="badge-item">
+          <code class="badge-code">semfs status</code>
+          <span class="badge-desc">Reads the
+            <span class="term" data-definition="A PID (process ID) is the number the operating system gives every running program — like a badge number. You use it to ask is that program still alive.">pid</span>
+            file and tells you if the caretaker (🧑‍🔧) is alive</span>
+        </div>
+        <div class="badge-item">
+          <code class="badge-code">semfs logs</code>
+          <span class="badge-desc">Prints the logbook for that tag — what the daemon has been doing</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 3: CODE↔ENGLISH (pid_alive) ───────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">&ldquo;Is the caretaker alive?&rdquo; in real code</h2>
+
+      <p>Here is the exact function semfs uses to check whether the daemon is still running. The trick is delightfully simple — and a little scary-sounding.</p>
+
+      <div class="translation-block animate-in">
+        <div class="translation-code">
+          <span class="translation-label">CODE</span>
+          <pre><code><span class="code-line"><span class="code-comment">/// Is the given pid alive? POSIX: shells out to `kill -0 &lt;pid&gt;`, which</span></span>
+<span class="code-line"><span class="code-comment">/// does not actually send a signal — it&apos;s just a liveness probe that</span></span>
+<span class="code-line"><span class="code-comment">/// succeeds iff the process exists and we&apos;re permitted to signal it.</span></span>
+<span class="code-line"><span class="code-keyword">pub fn</span> <span class="code-function">pid_alive</span>(pid: u32) -&gt; bool {</span>
+<span class="code-line">    std::process::Command::<span class="code-function">new</span>(<span class="code-string">"kill"</span>)</span>
+<span class="code-line">        .<span class="code-function">arg</span>(<span class="code-string">"-0"</span>)</span>
+<span class="code-line">        .<span class="code-function">arg</span>(pid.<span class="code-function">to_string</span>())</span>
+<span class="code-line">        .<span class="code-function">stdout</span>(std::process::Stdio::<span class="code-function">null</span>())</span>
+<span class="code-line">        .<span class="code-function">stderr</span>(std::process::Stdio::<span class="code-function">null</span>())</span>
+<span class="code-line">        .<span class="code-function">status</span>()</span>
+<span class="code-line">        .<span class="code-function">map</span>(|s| s.<span class="code-function">success</span>())</span>
+<span class="code-line">        .<span class="code-function">unwrap_or</span>(<span class="code-keyword">false</span>)</span>
+<span class="code-line">}</span></code></pre>
+        </div>
+        <div class="translation-english">
+          <span class="translation-label">PLAIN ENGLISH</span>
+          <div class="translation-lines">
+            <p class="tl">The comment is the key: this is just a &ldquo;is it alive?&rdquo; probe.</p>
+            <p class="tl">Despite the name,
+              <span class="term" data-definition="kill -0 is a command that sends NO signal at all — it just asks the operating system does a process with this ID exist and may I poke it. The 0 means dont actually do anything.">kill -0</span>
+              does NOT kill anything.</p>
+            <p class="tl">It just asks the OS &ldquo;does a process with this badge number exist?&rdquo;</p>
+            <p class="tl">Define a function that takes a
+              <span class="term" data-definition="A signal is a tiny message the operating system can send to a running program — like a tap on the shoulder telling it to stop, pause, or reload.">signal</span>-free check.</p>
+            <p class="tl">Run the real <code>kill</code> program as a tiny helper&hellip;</p>
+            <p class="tl">&hellip;with the <code>-0</code>
+              <span class="term" data-definition="A flag is an option you add to a command to change what it does — like adding -0 here. When talking to an AI you would say add a flag for that.">flag</span>
+              (the &ldquo;just check&rdquo; mode)&hellip;</p>
+            <p class="tl">&hellip;pointed at the daemon&apos;s badge number.</p>
+            <p class="tl">Throw away whatever it prints — we only want the verdict.</p>
+            <p class="tl">Same for error text — silence it.</p>
+            <p class="tl">Actually run it and grab the result.</p>
+            <p class="tl">Did it succeed? Then yes, the daemon is alive.</p>
+            <p class="tl">If anything went wrong, assume it is dead (safe default).</p>
+            <p class="tl">Done.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🛡️</div>
+        <div class="callout-content">
+          <strong class="callout-title">Why a subprocess instead of doing it directly?</strong>
+          <p>The whole crate forbids
+            <span class="term" data-definition="unsafe is a Rust keyword marking code that bypasses the language safety checks. semfs bans it entirely, so it shells out to the kill program instead of poking the OS directly.">unsafe</span>
+            code, so semfs borrows the operating system&apos;s own <code>kill</code> tool rather than poking the kernel itself. Clean and honest.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 4: STALE STATE + DEBUG ROUTINE ────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">The &ldquo;out of order&rdquo; sign nobody cleared</h2>
+
+      <p>When a daemon crashes, it leaves its
+        <span class="term" data-definition="A socket is a software phone line two programs use to talk to each other on the same machine. IPC means inter-process communication — programs chatting locally.">socket</span>
+        and pid files lying around —
+        <span class="term" data-definition="Stale means left over and no longer valid — like an out-of-order sign on a door the worker already left. The file exists but the process behind it is gone.">stale</span>
+        files like a sign on a door nobody is behind anymore. semfs cleans them up automatically on the next mount.</p>
+
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="flow-step-num">1</div>
+          <p>Daemon crashes mid-session 💥</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">2</div>
+          <p>Stale <code>.pid</code> + <code>.sock</code> left behind</p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">3</div>
+          <p>You re-run <code>semfs mount</code></p>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+          <div class="flow-step-num">4</div>
+          <p><code>cleanup_stale</code> sees the dead pid, deletes the junk ✨</p>
+        </div>
+      </div>
+
+      <div class="callout callout-info">
+        <div class="callout-icon">🚚</div>
+        <div class="callout-content">
+          <strong class="callout-title">Your data was never at risk</strong>
+          <p>The Cache (🗄️) is a SQLite database with a
+            <span class="term" data-definition="WAL (write-ahead log) is a safety journal a database writes to first, so even a crash mid-write cant corrupt your data — it just replays the journal on restart.">WAL</span>,
+            so a crash cannot corrupt it. Queued writes simply resume and the SyncEngine (🚚) drives them to the Backend (📚).</p>
+        </div>
+      </div>
+
+      <h3 class="screen-heading" style="font-size: var(--text-xl)">The Operator&apos;s Debug Routine</h3>
+      <div class="step-cards">
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <strong><code>semfs status</code> — is the daemon alive?</strong>
+            <p>This runs <code>pid_alive</code> for you. Dead caretaker? That explains a hung mount instantly.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <strong><code>semfs logs</code> — what does the logbook say?</strong>
+            <p>Read the per-tag log (🗄️). Almost every mystery confesses itself here.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <strong>Read the INFO / WARN / STOP tiers — patient or stuck?</strong>
+            <p>When the Backend (📚) is slowly processing a file, semfs escalates its messages. INFO = normal. WARN = taking a while. STOP = genuinely stuck. This is how you know whether to wait or worry.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <strong>Stale files after a crash? Cleanup runs on next mount.</strong>
+            <p><code>cleanup_stale</code> clears the leftover sign automatically — usually nothing for you to do.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <strong>Still stuck? <code>semfs unmount --force</code></strong>
+            <p>A
+              <span class="term" data-definition="Force unmount tears down a wedged mount even if it is misbehaving — like cutting the power to a stuck elevator so you can reset it cleanly. The --force part overrides the polite shutdown.">force unmount</span>
+              tears down a wedged mount so you can start fresh.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">6</div>
+          <div class="step-body">
+            <strong>Re-mount with the firehose on</strong>
+            <p>Set the
+              <span class="term" data-definition="An environment variable is a named setting you give a program before it starts — like leaving a note that changes how it behaves. RUST_LOG is one of these.">environment variable</span>
+              <span class="term" data-definition="RUST_LOG is the setting that controls how chatty a Rust program is. Crank it up to make semfs narrate nearly everything it does — the single best debugging tool.">RUST_LOG</span>
+              to crank up
+              <span class="term" data-definition="Tracing log levels go info (normal), debug (more detail), trace (everything). Higher levels narrate more of what the program is thinking.">log detail</span>:
+              <code>RUST_LOG=semfs=debug,semfs_core=trace semfs mount …</code></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🔭</div>
+        <div class="callout-content">
+          <strong class="callout-title">The aha: you cannot fix what you cannot see</strong>
+          <p>Good systems externalize their state into files and logs. semfs does this on purpose — that
+            <span class="term" data-definition="Observability is how easily you can understand whats happening inside a system from the outside, by reading its logs and state. A system you can see into is one you can fix and steer.">observability</span>
+            is exactly what makes it debuggable and steerable.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 5: CAPSTONE QUIZ ──────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">Capstone: think like the operator</h2>
+      <p>Four scenarios that tie the whole course together. There are no trick questions — just the calm routine you now own.</p>
+
+      <div class="quiz-container" id="quiz-module6">
+
+        <div class="scenario-block">
+          <div class="scenario-context">
+            <span class="scenario-label">Scenario 1 · Debugging</span>
+            <p><code>semfs grep "budget"</code> returns nothing, but <code>cat notes/budget.md</code> shows your content just fine. Walk the actors — where do you look?</p>
+          </div>
+          <div class="quiz-question-block"
+               data-correct="opt-index"
+               data-explanation-right="Exactly. cat working means the Cache (🗄️) and mount are healthy — the file is there locally. The problem is upstream: has the file finished syncing and being indexed on the Backend (📚)? Check the log for INFO/WARN/STOP on that doc; the inflight poller / SemanticIndex is the suspect."
+               data-explanation-wrong="Not quite. Since cat shows the content, the Cache and mount are clearly healthy — the bytes are local. Search uses the indexed copy on the Backend, so the real suspect is upstream: is the file finished syncing and indexing yet? Check the log tiers on that doc.">
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="opt-cache" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>The Cache is broken — the file must be corrupted</span>
+              </button>
+              <button class="quiz-option" data-value="opt-index" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>The mount is healthy; the file may not have finished syncing/indexing on the Backend yet — check the log tiers</span>
+              </button>
+              <button class="quiz-option" data-value="opt-remount" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>Force-unmount and re-mount immediately, then try again</span>
+              </button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+        </div>
+
+        <div class="scenario-block">
+          <div class="scenario-context">
+            <span class="scenario-label">Scenario 2 · Lifecycle</span>
+            <p>Your machine hard-crashed mid-session. You re-run <code>semfs mount notes</code>. Why does it usually just work?</p>
+          </div>
+          <div class="quiz-question-block"
+               data-correct="opt-cleanup"
+               data-explanation-right="Right. cleanup_stale detects the dead pid and removes the leftover socket/pid files, so a fresh daemon starts cleanly. Meanwhile the SQLite Cache + WAL preserved your data, and queued writes resume syncing — nothing was lost."
+               data-explanation-wrong="Not quite. semfs doesn&apos;t re-download or rebuild everything. On the next mount, cleanup_stale spots the dead pid and deletes the stale socket/pid files; your data survived because the SQLite Cache uses a WAL, and queued writes simply resume.">
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="opt-redownload" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>It re-downloads every file fresh from the Backend each time</span>
+              </button>
+              <button class="quiz-option" data-value="opt-cleanup" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>cleanup_stale clears the dead daemon&apos;s leftover files; the WAL-backed Cache preserved your data; queued writes resume</span>
+              </button>
+              <button class="quiz-option" data-value="opt-lucky" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>It is luck — crashes usually lose data and you got away with it</span>
+              </button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+        </div>
+
+        <div class="scenario-block">
+          <div class="scenario-context">
+            <span class="scenario-label">Scenario 3 · The big payoff — steering AI</span>
+            <p>Your AI agent insists a file it just wrote &ldquo;is not there&rdquo; and wants to rewrite it. Based on everything you learned, what is really going on — and what is the calmest next instruction?</p>
+          </div>
+          <div class="quiz-question-block"
+               data-correct="opt-reread"
+               data-explanation-right="Exactly. The write is durable locally (Cache + WAL) and the SyncEngine (🚚) will push it to the Backend in the background — nothing is lost. The calm move is to tell the agent to re-read the file from the mount or wait for sync, not rewrite it. That breaks the doom-loop."
+               data-explanation-wrong="Not quite. Letting the agent rewrite the file is exactly the doom-loop trap. The write is durable locally and syncing in the background — nothing is lost. Calmly instruct the agent to re-read from the mount or wait for sync instead of rewriting.">
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="opt-rewrite" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>The file is genuinely lost — let the agent rewrite it from scratch</span>
+              </button>
+              <button class="quiz-option" data-value="opt-reread" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>The write is durable locally and syncing in the background — calmly tell the agent to re-read from the mount or wait, not rewrite</span>
+              </button>
+              <button class="quiz-option" data-value="opt-panic" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>Restart the whole machine to be safe</span>
+              </button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+        </div>
+
+        <div class="scenario-block">
+          <div class="scenario-context">
+            <span class="scenario-label">Scenario 4 · Architecture recap</span>
+            <p>In one sentence, why is semfs designed so its entire state lives in inspectable files and logs?</p>
+          </div>
+          <div class="quiz-question-block"
+               data-correct="opt-observe"
+               data-explanation-right="Exactly. So a human — or a better prompt — can SEE what is happening and intervene. Observability is the whole point: it is what makes the system debuggable and steerable."
+               data-explanation-wrong="Not quite. It is not about speed or saving disk space. State lives in files and logs so a human or a smarter prompt can see what is happening and step in — that observability is what makes semfs debuggable and steerable.">
+            <div class="quiz-options">
+              <button class="quiz-option" data-value="opt-speed" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>To make the program run faster</span>
+              </button>
+              <button class="quiz-option" data-value="opt-observe" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>So a human or a better prompt can see what is happening and intervene — observability makes it debuggable and steerable</span>
+              </button>
+              <button class="quiz-option" data-value="opt-disk" onclick="selectOption(this)">
+                <div class="quiz-option-radio"></div>
+                <span>To save disk space by avoiding memory</span>
+              </button>
+            </div>
+            <div class="quiz-feedback"></div>
+          </div>
+        </div>
+
+        <button class="quiz-check-btn" onclick="checkQuiz('quiz-module6')">Check Answers</button>
+        <button class="quiz-reset-btn" onclick="resetQuiz('quiz-module6')">Try Again</button>
+      </div>
+    </section>
+
+    <!-- ── SCREEN 6: COURSE WRAP-UP ─────────────────────────────── -->
+    <section class="screen">
+      <h2 class="screen-heading">You now understand semfs end-to-end</h2>
+
+      <p>Six modules ago, semfs was a black box. Now you can trace any byte from your keystroke to the cloud and back — and find the problem when it hides.</p>
+
+      <div class="pattern-cards">
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">✍️</div>
+          <h4 class="pattern-title">M1 · The write path</h4>
+          <p class="pattern-desc">What happens to a file the moment you save it into the mount.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">🎭</div>
+          <h4 class="pattern-title">M2 · The cast</h4>
+          <p class="pattern-desc">The Daemon 🧑‍🔧, Cache 🗄️, Backend 📚, and SyncEngine 🚚 — who does what.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">🔌</div>
+          <h4 class="pattern-title">M3 · The trait seam</h4>
+          <p class="pattern-desc">One folder, any storage — the socket that lets backends swap freely.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-1)">
+          <div class="pattern-icon" style="background: var(--color-actor-1)">📚</div>
+          <h4 class="pattern-title">M4 · Backends &amp; sync</h4>
+          <p class="pattern-desc">The power plants behind the wall and the couriers driving between them.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-2)">
+          <div class="pattern-icon" style="background: var(--color-actor-2)">🎩</div>
+          <h4 class="pattern-title">M5 · The clever tricks</h4>
+          <p class="pattern-desc">Coalescing, backoff, jitter, the crash-safe queue, the NFS trick.</p>
+        </div>
+        <div class="pattern-card" style="border-top: 3px solid var(--color-actor-3)">
+          <div class="pattern-icon" style="background: var(--color-actor-3)">🔭</div>
+          <h4 class="pattern-title">M6 · When things break</h4>
+          <p class="pattern-desc">The operator&apos;s routine: check the process, clear stale state, read the log.</p>
+        </div>
+      </div>
+
+      <div class="callout callout-accent">
+        <div class="callout-icon">🚀</div>
+        <div class="callout-content">
+          <strong class="callout-title">The vibe coder&apos;s real superpower</strong>
+          <p>You do not have to write the fix. The skill is <em>locating</em> the problem and <em>directing</em> the fix — knowing where to look and what question to ask. That is how you steer an AI like an engineer instead of being dragged along by one.</p>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>

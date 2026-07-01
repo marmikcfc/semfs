@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>RCA — why semfs grep made Claude's tokens EXPLODE (and codex's shrink)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#9aa7b4; --line:#2a313c;
+    --grep:#3fb950; --read:#f85149; --cacheR:#f0883e; --out:#58a6ff; --cw:#d29922; --sem:#d2a8ff; --good:#3fb950; --bad:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:28px 18px 80px}
+  h1{font-size:24px;margin:0 0 4px}
+  h2{font-size:18px;margin:30px 0 8px;border-bottom:1px solid var(--line);padding-bottom:5px}
+  h3{font-size:15px;margin:16px 0 6px}
+  .sub{color:var(--mut);margin:0 0 14px;max-width:900px}
+  code{background:#1f2630;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--mut);font-size:11px;text-transform:uppercase}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  .good{color:var(--good);font-weight:700}.bad{color:var(--bad);font-weight:700}.warn{color:var(--cw);font-weight:700}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0}
+  .verdict{border:1px solid var(--sem);background:#1a1430;border-radius:12px;padding:14px 18px;margin:18px 0}
+  .verdict b{color:var(--sem)}
+  .myth{border-left:4px solid var(--bad);background:#2a1416;border-radius:0 10px 10px 0;padding:10px 14px;margin:12px 0}
+  .truth{border-left:4px solid var(--good);background:#0f2a16;border-radius:0 10px 10px 0;padding:10px 14px;margin:12px 0}
+  /* stacked bars */
+  .stack{display:flex;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin:6px 0;font-size:11px;font-weight:700}
+  .stack > div{display:flex;align-items:center;justify-content:center;color:#0b0f14;white-space:nowrap;overflow:hidden}
+  .s-cacheR{background:var(--cacheR)}.s-cw{background:var(--cw)}.s-out{background:var(--out)}.s-in{background:#555}
+  .lbl{font-size:12px;color:var(--mut);margin:8px 0 2px}
+  .attrib > div{display:flex;align-items:center;gap:8px;margin:5px 0}
+  .attrib .bar{height:22px;border-radius:5px}
+  .attrib .name{width:120px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .attrib .val{font-size:12px;color:var(--mut)}
+  /* multiplier sim */
+  .sim{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
+  .sim input{width:100%}
+  .big{font-size:30px;font-weight:800}
+  .mut{color:var(--mut)} .grepc{color:var(--grep)} .readc{color:var(--read)} .cacheRc{color:var(--cacheR)}
+  .pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px}
+  .pill.semfs{background:#1d1430;color:var(--sem);border:1px solid var(--sem)}
+  .pill.bench{background:#10243f;color:var(--out);border:1px solid var(--out)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RCA — Why <span class="grepc">semfs grep</span> made Claude's tokens <span class="readc">explode</span> (and codex's shrink)</h1>
+  <p class="sub">Measured on Workspace-Bench case 289 (PM/chanpin). The surprising result: with semfs, Claude used <b>6× MORE</b> tokens than without (1.23M vs 207k) — while codex used <b>4× FEWER</b> (35k vs 144k). Same tool, opposite outcomes. Here's exactly why, from the logs.</p>
+
+  <h2>1 · The numbers</h2>
+  <table>
+    <tr><th>Run</th><th class="n">total tokens</th><th class="n">cache_read %</th><th class="n">semfs grep calls</th><th class="n">raw-file Reads</th><th>vs its plain baseline</th></tr>
+    <tr><td>plain claude (no semfs)</td><td class="n">206,941</td><td class="n">83%</td><td class="n">0</td><td class="n">9</td><td>—</td></tr>
+    <tr><td><b>semfs claude (cloud)</b></td><td class="n bad">1,229,994</td><td class="n">95%</td><td class="n">4</td><td class="n">4 (2 huge)</td><td class="bad">+494% 😱</td></tr>
+    <tr><td>semfs claude (local)</td><td class="n">422,668</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="bad">+104%</td></tr>
+    <tr><td>plain codex</td><td class="n">143,837</td><td class="n">n/a*</td><td class="n">0</td><td class="n">many</td><td>—</td></tr>
+    <tr><td><b>semfs codex (local)</b></td><td class="n good">34,945</td><td class="n">n/a*</td><td class="n">12</td><td class="n">0</td><td class="good">−76% ✅</td></tr>
+  </table>
+  <p class="sub" style="font-size:12px">*codex via OpenRouter reports a single uncached input number; Claude via OAuth is cache-inclusive. Compare <i>within</i> an agent.</p>
+
+  <h2>2 · The smoking gun: it's the READS, not the grep</h2>
+
+  <div class="myth"><b>❌ My first hypothesis (WRONG):</b> "semfs grep dumps verbose chunks → bloat." The logs killed it: <code>semfs grep</code> output was <b>2,281 chars (~570 tokens) — terse.</b></div>
+
+  <div class="truth"><b>✅ What the logs actually show:</b> the blow-up is Claude <b><code>Read</code>-ing two huge raw files</b> (the HTML-disguised <code>.xlsx</code>): <b>47,651 + 36,483 chars</b>. Those replay in <code>cache_read</code> on every later turn.</div>
+
+  <h3>Tool-output attribution — claude-cloud (total tool output by tool)</h3>
+  <div class="attrib" id="attrib"></div>
+
+  <h3>Token composition — claude-cloud (1,229,994 total)</h3>
+  <div class="lbl">95% is <span class="cacheRc">cache_read</span> — context echoing back every turn. Claude <i>generated</i> only 6,659 tokens.</div>
+  <div class="stack">
+    <div class="s-cacheR" style="width:95.2%">cache_read 1,170,780 (95%)</div>
+    <div class="s-cw" style="width:4.3%">cw 52k</div>
+    <div class="s-out" style="width:0.5%"></div>
+  </div>
+
+  <h2>3 · Why reads are lethal in an agent loop — the multiplier</h2>
+  <p class="sub">An agent re-sends the whole transcript every turn. With prompt caching that replay is <code>cache_read</code>. So a file read isn't paid once — it's paid <b>once per remaining turn</b>:</p>
+  <div class="card" style="text-align:center;font-family:ui-monospace,Menlo,monospace">
+    cache_read ≈ (bytes in context) × (turns they survive)
+  </div>
+
+  <div class="sim">
+    <h3>Try it: one raw-file Read</h3>
+    <div class="lbl">Read size: <span id="szTxt">12,000</span> tokens (a 47K-char HTML-xlsx)</div>
+    <input type="range" id="sz" min="500" max="14000" value="12000" step="500"/>
+    <div class="lbl">Turns it survives in context: <span id="tnTxt">22</span></div>
+    <input type="range" id="tn" min="1" max="30" value="22" step="1"/>
+    <div style="margin-top:12px">that one Read costs <span class="big readc" id="cost">264,000</span> <span class="mut">cache_read tokens</span></div>
+    <div class="lbl" id="cmp"></div>
+  </div>
+
+  <h2>4 · Why codex shrank and Claude exploded — same tool, opposite behavior</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div class="card" style="border-color:var(--good)">
+      <h3 class="grepc">codex — semfs REPLACED reading</h3>
+      <p style="font-size:13px">profile → <code>semfs grep</code> → <b>trusted the excerpt</b> → wrote the answer.<br>
+      <b>Total tool output: 554 chars. Raw-file reads: 0.</b><br>
+      The excerpt <i>was</i> the answer → never opened a file → <b class="good">35K tokens</b>.</p>
+    </div>
+    <div class="card" style="border-color:var(--bad)">
+      <h3 class="readc">claude — semfs ADDED to reading</h3>
+      <p style="font-size:13px"><code>semfs grep</code> (terse) → <b>distrusted it</b> → <code>Read</code> the whole raw files (47K+36K HTML) → replayed ~22 turns.<br>
+      <b>Read output: 84,781 chars.</b><br>
+      Paid for search <i>and</i> reads <i>and</i> extra turns → <b class="bad">1.23M tokens</b>.</p>
+    </div>
+  </div>
+  <div class="verdict"><b>The principle the data reveals:</b> in an agent loop the expensive operation is <b>READING, not searching</b> (reads replay ×turns in cache_read). So semantic search pays off <b>only if it REPLACES file reading</b> (codex). If the agent re-reads the source anyway (claude), search is <b>pure additive overhead</b> — you pay search + read + extra turns → <i>worse than no search</i>. The partial 19% index amplified it: weak hits → "verify by reading the real file" → and the real file is 40K of HTML.</div>
+
+  <h2>5 · Is semantic grep the wrong school of thought?</h2>
+  <p class="sub"><b>No — codex proves the win is real (−76%).</b> But the thesis must sharpen: the goal isn't <i>better search</i>, it's <b>fewer bytes read</b>. Search must make reading the source either <b>unnecessary</b> (the excerpt is the answer) or <b>cheap</b> (normalized small content) — not merely point at files. The wrong turn is letting the agent fall back to reading raw, un-normalized files.</p>
+
+  <h2>6 · How to reduce it — fixes, ranked</h2>
+  <table>
+    <tr><th>#</th><th>Fix</th><th>What it kills</th><th>Where</th></tr>
+    <tr><td>1</td><td><b>Serve normalized content on the FS read path</b> — a <code>Read</code> of a binary/HTML file returns its transcription (clean ~2K), not 40K raw bytes</td><td>the 47K/36K reads → the 95% cache_read</td><td><span class="pill semfs">semfs</span></td></tr>
+    <tr><td>2</td><td><b>Line-scoped reads</b> — grep returns <code>file:lineA-lineB</code>; read only those lines, never the whole file (grep header already says this)</td><td>whole-file reads</td><td><span class="pill bench">bench steer</span></td></tr>
+    <tr><td>3</td><td><b>Full index (pre-warm) + parallel embed</b> → strong hits → agent trusts → stops reading raw</td><td>distrust → re-read turns</td><td><span class="pill semfs">semfs</span> <span class="pill bench">ops</span></td></tr>
+    <tr><td>4</td><td><b>Cap grep top-k</b> (grep.rs:488 prints uncapped, ~80 files) — latent risk, not this run's cause</td><td>future verbosity</td><td><span class="pill semfs">semfs</span></td></tr>
+    <tr><td>5</td><td><b>Make the excerpt sufficient</b> — return enough ranked context to answer without opening files (codex's pattern) + steer "the excerpt is the answer"</td><td>the read entirely</td><td><span class="pill semfs">semfs</span> <span class="pill bench">steer</span></td></tr>
+  </table>
+  <div class="verdict"><b>Highest-leverage fix = #1, an FS-layer change.</b> Today: Claude reads <code>top10.xlsx</code> → 47K of HTML → ×22 replay → 95% of the bill. If the mount served the <b>transcription</b> for that read → ~2K clean table → the read shrinks ~20×, <i>regardless of whether the agent trusts the excerpt</i>. It defends against the agent's worst instinct instead of trying to train it away — reframing semfs from "a faster grep" to <b>"a filesystem where reading is always cheap and clean."</b></div>
+</div>
+
+<script>
+// attribution bars
+const A=[["Read",84781,"var(--read)"],["Bash (incl. semfs grep 2,281)",12883,"var(--cw)"],["Write",183,"var(--out)"]];
+const max=84781, host=document.getElementById('attrib');
+A.forEach(([n,v,c])=>{
+  const row=document.createElement('div');
+  row.innerHTML=`<div class="name">${n}</div><div class="bar" style="width:${Math.max(2,100*v/max)*5}px;max-width:560px;background:${c}"></div><div class="val">${v.toLocaleString()} chars</div>`;
+  host.appendChild(row);
+});
+// multiplier sim
+const sz=document.getElementById('sz'), tn=document.getElementById('tn');
+function upd(){
+  const s=+sz.value, t=+tn.value;
+  document.getElementById('szTxt').textContent=s.toLocaleString();
+  document.getElementById('tnTxt').textContent=t;
+  const cost=s*t;
+  document.getElementById('cost').textContent=cost.toLocaleString();
+  document.getElementById('cmp').innerHTML = cost>200000
+    ? `→ one read ≈ <b class="bad">${cost.toLocaleString()}</b> tokens — that's bigger than plain claude's ENTIRE run (206,941). Two of them = the 1.23M.`
+    : `→ ${cost.toLocaleString()} tokens. (semfs grep's whole output was ~570 tokens — ${Math.round(cost/570)}× smaller than this one read.)`;
+}
+sz.oninput=upd; tn.oninput=upd; upd();
+</script>
+</body>
+</html>

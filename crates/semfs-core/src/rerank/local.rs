@@ -18,6 +18,21 @@ use hf_hub::{api::sync::ApiBuilder, Cache, Repo, RepoType};
 
 use super::Reranker;
 
+/// Cross-encoder input window (tokens). fastembed's default is 512, which only
+/// fits ~2 of our 200-word chunks; Knob A feeds the reranker a file's top-3
+/// chunks (`rank::RERANK_CHUNKS_PER_FILE`), so we raise the window to fit them.
+/// fastembed clamps this to the model's own `model_max_length`, so it's a request
+/// not a force. (ticket local-ranking-precision-vs-supermemory, Knob A.)
+const RERANK_MAX_LENGTH: usize = 1024;
+
+/// Cross-encoder rerank batch size. fastembed builds one `batch_size ×
+/// max_length` input tensor per batch, so attention memory is O(batch × seq²).
+/// At the default batch all ~50 candidates went in at once and, with the wider
+/// 1024 window, the activation blew past 15 GB → OOM-killed the daemon. A small
+/// batch bounds peak memory (the candidates still all get scored, just in chunks)
+/// at a negligible latency cost. (ticket local-ranking-precision-vs-supermemory.)
+const RERANK_BATCH_SIZE: usize = 8;
+
 /// A local ONNX cross-encoder reranker backed by a fastembed registry model.
 pub struct LocalReranker {
     // fastembed `rerank` borrows the model mutably; the trait is `&self`.
@@ -39,7 +54,8 @@ impl LocalReranker {
         revision: &str,
         cache_dir: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
-        let cache = Cache::new(cache_dir.unwrap_or_else(|| PathBuf::from(fastembed::get_cache_dir())));
+        let cache =
+            Cache::new(cache_dir.unwrap_or_else(|| PathBuf::from(fastembed::get_cache_dir())));
         let api = ApiBuilder::from_cache(cache)
             .with_progress(false)
             .build()
@@ -70,7 +86,11 @@ impl LocalReranker {
         };
 
         let udm = UserDefinedRerankingModel::new(OnnxSource::File(onnx_path), tokenizer_files);
-        let model = TextRerank::try_new_from_user_defined(udm, RerankInitOptionsUserDefined::default())
+        // `RerankInitOptionsUserDefined` is `#[non_exhaustive]` (no struct literal),
+        // so set the pub field on the default. Wider window → top-3 chunks fit.
+        let mut init = RerankInitOptionsUserDefined::default();
+        init.max_length = RERANK_MAX_LENGTH;
+        let model = TextRerank::try_new_from_user_defined(udm, init)
             .map_err(|e| anyhow::anyhow!("load reranker {onnx_file}: {e}"))?;
         Ok(Self {
             model: Mutex::new(model),
@@ -95,7 +115,9 @@ impl Reranker for LocalReranker {
             .lock()
             .map_err(|_| anyhow::anyhow!("reranker mutex poisoned"))?;
         // return_documents=false: we only need scores, mapped back to input order.
-        let results = model.rerank(query, docs_ref, false, None)?;
+        // Explicit small batch bounds peak attention memory (O(batch × seq²)) so a
+        // wide window over many candidates can't OOM the daemon.
+        let results = model.rerank(query, docs_ref, false, Some(RERANK_BATCH_SIZE))?;
         let mut scores = vec![0f32; docs.len()];
         for r in results {
             if r.index < scores.len() {
