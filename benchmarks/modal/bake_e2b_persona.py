@@ -44,6 +44,9 @@ def bake(
     persona: str = "kaifa",
     base_template: str = "semfs-baked",
     template_name: str = "",
+    corpus_path: str = "",
+    corpus_arcname: str = "",
+    exclude_names: str = "",
 ) -> dict:
     """Bake one persona's E2B template from Modal volume assets.
 
@@ -56,7 +59,10 @@ def bake(
     from e2b import Template
 
     tmpl = template_name or f"semfs-mount-{persona}"
-    corpus_dir = Path(f"{VOL}/corpus/{persona}_standard")
+    # corpus_path/corpus_arcname let non-WB personas (e.g. xafs at /data/corpus/xafs
+    # with dp_XXX/data/** structure) override the WB `{persona}_standard` convention.
+    corpus_dir = Path(corpus_path) if corpus_path else Path(f"{VOL}/corpus/{persona}_standard")
+    arcname = corpus_arcname or f"{persona}_standard"
     seed_src = Path(f"{VOL}/seeds/{persona}-gemma-q4.db")
     seed_name = f"{persona}-gemma-q4.db"
 
@@ -73,9 +79,14 @@ def bake(
 
         # 1) tar the corpus volume-side (arcname = {persona}_standard).
         corpus_tgz = ctx / "corpus.tgz"
-        print(f"[bake:{persona}] tarring corpus -> corpus.tgz", flush=True)
+        # exclude_names drops answer-key files (e.g. question.json,tasks.json for xafs)
+        # so the agent's baked workdir never contains the gold answers (leak guard).
+        excl = {x for x in exclude_names.split(",") if x}
+        def _drop(ti):
+            return None if ti.name.rsplit("/", 1)[-1] in excl else ti
+        print(f"[bake:{persona}] tarring corpus -> corpus.tgz (exclude={sorted(excl)})", flush=True)
         with tarfile.open(corpus_tgz, "w:gz") as tar:
-            tar.add(corpus_dir, arcname=f"{persona}_standard")
+            tar.add(corpus_dir, arcname=arcname, filter=(_drop if excl else None))
         print(f"  corpus.tgz size={corpus_tgz.stat().st_size}", flush=True)
 
         # 2) copy seed (+ any hot wal/shm), then fold the WAL into the main file.
@@ -156,6 +167,96 @@ def _checkpoint_seed(src: Path, dst: Path) -> str:
         if p.exists():
             p.unlink()
     return qc
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    secrets=[modal.Secret.from_name("e2b")],
+    timeout=7200,
+    cpu=4,
+    memory=8192,
+)
+def bake_perdp(dps: str = "dp_001,dp_002,dp_003,dp_004,dp_005,dp_006,dp_007,dp_008,dp_009",
+               base_template: str = "semfs-baked",
+               template_name: str = "semfs-perdp-xafs") -> dict:
+    """Bake per-dp xAFS SEARCH seeds (each → /opt/<dp>-gemma-q4.db) into one template, for
+    scoped-search runs (mount THIS question's dp seed). Seeds are tiny (~MB each) → fast bake."""
+    from e2b import Template
+
+    dp_list = [d.strip() for d in dps.split(",") if d.strip()]
+    with tempfile.TemporaryDirectory(prefix="e2b_perdp_") as td:
+        ctx = Path(td)
+        staged = []
+        for dp in dp_list:
+            src = Path(f"{VOL}/seeds/{dp}-gemma-q4.db")
+            if not src.exists():
+                print(f"  SKIP {dp}: seed missing", flush=True)
+                continue
+            dst = ctx / f"{dp}-gemma-q4.db"
+            qc = _checkpoint_seed(src, dst)  # WAL→single file (houqin-corruption guard)
+            staged.append(dp)
+            print(f"  staged {dp}: {dst.stat().st_size} bytes (quick_check={qc})", flush=True)
+        b = Template(file_context_path=str(ctx)).from_template(base_template)
+        for dp in staged:
+            b = b.copy(f"{dp}-gemma-q4.db", f"/opt/{dp}-gemma-q4.db", user="root")
+        print(f"[bake_perdp] building {template_name} with {len(staged)} seeds", flush=True)
+        info = Template.build(b, name=template_name, cpu_count=4, memory_mb=8192,
+                              request_timeout=1800.0,
+                              on_build_logs=lambda e: print("  >", getattr(e, "message", str(e))[:300], flush=True))
+        out = {"template": template_name, "base": base_template, "seeds": staged, "build_info": str(info)}
+        print("[bake_perdp] build finished", flush=True)
+        print(json.dumps(out, default=str), flush=True)
+        return out
+
+
+@app.local_entrypoint()
+def bake_perdp_main(dps: str = "dp_001,dp_002,dp_003,dp_004,dp_005,dp_006,dp_007,dp_008,dp_009",
+                    template_name: str = "semfs-perdp-xafs"):
+    print(json.dumps(bake_perdp.remote(dps, "semfs-baked", template_name), default=str, indent=2))
+
+
+@app.function(
+    image=image,
+    volumes={VOL: data_volume},
+    secrets=[modal.Secret.from_name("e2b")],
+    timeout=7200,
+    cpu=4,
+    memory=8192,
+)
+def bake_perdp_plain(dps: str = "dp_001,dp_002,dp_003,dp_004,dp_005,dp_006,dp_007,dp_008,dp_009,dp_010,dp_011,dp_012,dp_013",
+                     base_template: str = "semfs-baked") -> dict:
+    """Bake a corpus-ONLY template PER xAFS persona (plain-xafs-<dp>) for the plain/FS arm:
+    real grep/find/cat over that persona's raw files, NO semfs seed. One separate template each."""
+    from e2b import Template
+
+    dp_list = [d.strip() for d in dps.split(",") if d.strip()]
+    out = []
+    for dp in dp_list:
+        corpus_dir = Path(f"{VOL}/corpus/xafs/{dp}")
+        if not corpus_dir.exists():
+            print(f"  SKIP {dp}: no corpus at {corpus_dir}", flush=True)
+            continue
+        with tempfile.TemporaryDirectory(prefix=f"e2b_plain_{dp}_") as td:
+            ctx = Path(td)
+            corpus_tgz = ctx / "corpus.tgz"
+            with tarfile.open(corpus_tgz, "w:gz") as tar:
+                tar.add(corpus_dir, arcname=f"{dp}_standard")
+            tmpl = f"plain-xafs-{dp}"
+            b = (Template(file_context_path=str(ctx)).from_template(base_template)
+                 .copy("corpus.tgz", "/opt/corpus.tgz", user="root"))
+            print(f"[bake_plain] building {tmpl} (corpus {corpus_tgz.stat().st_size} bytes)", flush=True)
+            info = Template.build(b, name=tmpl, cpu_count=4, memory_mb=8192, request_timeout=1800.0,
+                                  on_build_logs=lambda e: print("  >", getattr(e, "message", str(e))[:200], flush=True))
+            out.append({"dp": dp, "template": tmpl, "corpus_bytes": corpus_tgz.stat().st_size})
+            print(f"[bake_plain] {dp} → {tmpl} build finished", flush=True)
+    print(json.dumps({"plain_templates": out}, default=str), flush=True)
+    return {"plain_templates": out}
+
+
+@app.local_entrypoint()
+def bake_perdp_plain_main(dps: str = "dp_001,dp_002,dp_003,dp_004,dp_005,dp_006,dp_007,dp_008,dp_009,dp_010,dp_011,dp_012,dp_013"):
+    print(json.dumps(bake_perdp_plain.remote(dps, "semfs-baked"), default=str, indent=2))
 
 
 @app.function(

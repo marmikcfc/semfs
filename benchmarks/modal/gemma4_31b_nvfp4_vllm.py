@@ -36,8 +36,8 @@ SERVED_NAME = "gemma-4-31b-nvfp4"
 VLLM_IMAGE_TAG = "v0.19.1"
 MODELS_DIR  = "/models"
 N_GPU       = 1          # 30.7B @ NVFP4 ≈ 15 GB weights → 1×B200 (180 GB) fits with huge KV headroom
-N_REPLICAS  = 4          # data-parallel: 4×(1 B200 each), Modal load-balances → ~4× throughput
-GPU_TYPE    = "B200"
+N_REPLICAS  = int(os.environ.get("GEMMA_REPLICAS", "4"))   # smoke/compression: GEMMA_REPLICAS=1
+GPU_TYPE    = os.environ.get("GEMMA_GPU", "B200")          # compression run: GEMMA_GPU=RTX-PRO-6000
 VLLM_PORT   = 8000
 
 MINUTES = 60
@@ -95,9 +95,9 @@ def download_weights():
     volumes={MODELS_DIR: weights_volume, KERNEL_CACHE_DIR: kernel_cache_volume},
     secrets=[modal.Secret.from_name("glm-vllm-key")],  # reuse MODAL_VLLM_API_KEY
     timeout=60 * MINUTES,
-    min_containers=N_REPLICAS,    # keep all replicas warm during the KG batch (no cold starts)
-    max_containers=N_REPLICAS,
-    scaledown_window=15 * MINUTES,
+    min_containers=int(os.environ.get("GEMMA_MIN", "0")),   # 0 → self-scale to 0 when idle (frees GPU if a run is killed)
+    max_containers=N_REPLICAS,                              # autoscale up to N under the batch's request load
+    scaledown_window=int(os.environ.get("GEMMA_SCALEDOWN_MIN", "5")) * MINUTES,
 )
 @modal.concurrent(max_inputs=64)  # per replica; Modal load-balances across the N_REPLICAS
 @modal.web_server(port=VLLM_PORT, startup_timeout=45 * MINUTES)
@@ -119,6 +119,9 @@ def serve():
         f" --enable-chunked-prefill"
         f" --max-num-batched-tokens 8192"
         f" --max-num-seqs 64"
+        # APC is on by default (V1); this flag makes the server REPORT cache hits as
+        # usage.prompt_tokens_details.cached_tokens so token accounting can see them.
+        f" --enable-prompt-tokens-details"
         f" --host 0.0.0.0 --port {VLLM_PORT}"
         f" --api-key {api_key}"
     )

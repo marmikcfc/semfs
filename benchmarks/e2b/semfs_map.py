@@ -29,10 +29,18 @@ def _good_entity(name):
 def _toptbl(conn):
     return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
-def build_map(db, budget=4800, fs_landmarks=2, ents_per_comm=4, max_deg=4):
+def build_map(db, budget=4800, fs_landmarks=2, ents_per_comm=4, max_deg=4, prefix="", max_dirs=40):
     conn = sqlite3.connect(db)
     tbls = _toptbl(conn)
-    paths = [r[0] for r in conn.execute("SELECT DISTINCT filepath FROM chunks WHERE filepath IS NOT NULL")]
+    # prefix scopes the map to ONE workspace subtree (e.g. /dp_001/) so a multi-workspace
+    # seed (xAFS: 13 people in one db) yields a per-question map, not a noisy whole-corpus one.
+    like = (prefix.rstrip("/") + "/%") if prefix else None
+    if like:
+        paths = [r[0] for r in conn.execute(
+            "SELECT DISTINCT filepath FROM chunks WHERE filepath LIKE ?", (like,))]
+    else:
+        paths = [r[0] for r in conn.execute(
+            "SELECT DISTINCT filepath FROM chunks WHERE filepath IS NOT NULL")]
     nfiles = len(paths)
 
     # ---- entity name + file-degree (distinctiveness) ----
@@ -40,14 +48,18 @@ def build_map(db, budget=4800, fs_landmarks=2, ents_per_comm=4, max_deg=4):
     if "graph_entity" in tbls:
         ename = {r[0]: r[1] for r in conn.execute("SELECT path,name FROM graph_entity")}
     if "edges" in tbls:
-        for f, e in conn.execute("SELECT from_path,to_path FROM edges"):
+        _ecur = (conn.execute("SELECT from_path,to_path FROM edges WHERE from_path LIKE ?", (like,))
+                 if like else conn.execute("SELECT from_path,to_path FROM edges"))
+        for f, e in _ecur:
             deg[e] += 1; ent_files[e].add(f)
 
     # ---- community overlay (the distilled KG layer) ----
     overlay = []
     if "graph_community" in tbls:
         comm = collections.defaultdict(list)
-        for cid, fp in conn.execute("SELECT community_id,file_path FROM graph_community"):
+        _ccur = (conn.execute("SELECT community_id,file_path FROM graph_community WHERE file_path LIKE ?", (like,))
+                 if like else conn.execute("SELECT community_id,file_path FROM graph_community"))
+        for cid, fp in _ccur:
             comm[cid].append(fp)
         for cid, fps in sorted(comm.items(), key=lambda x: -len(x[1])):
             fset = set(fps)
@@ -84,16 +96,21 @@ def build_map(db, budget=4800, fs_landmarks=2, ents_per_comm=4, max_deg=4):
         exts = " ".join(f"{e}×{n}" for e, n in t["ext"].most_common(3))
         fs.append(f"/{d}/ ({t['n']}: {exts}) e.g. {', '.join(t['ex'])}")
 
-    # ---- assemble under budget (chars/4 ≈ tokens); trim overlay tail first ----
+    # ---- assemble under budget (chars/4 ≈ tokens); trim overlay tail, then dir tail ----
     head = [f"# WORKSPACE MAP — {nfiles} files, {len(tree)} dirs, {len(overlay)} topic-clusters.",
             "# Use it to pick the directory/cluster to read, then grep/cat there.", ""]
-    def render(ov):
-        return "\n".join(head + ["## DIRECTORIES"] + fs + ["", "## TOPIC CLUSTERS (label · key entities)"] + ov)
-    ov = overlay
-    while ov and len(render(ov)) // 4 > budget:
+    def render(fs_, ov):
+        return "\n".join(head + ["## DIRECTORIES"] + fs_ + ["", "## TOPIC CLUSTERS (label · key entities)"] + ov)
+    # big workspaces (e.g. dp_012: 3306 dirs) blow the budget on the DIR list alone, which would
+    # squeeze out the KG topic-clusters (ppr_map's distinctive value). Cap dirs FIRST (top by
+    # file-count, fs is sorted desc) so clusters keep budget room, then trim overlay/dir tails.
+    ov, fs_ = overlay, fs[:max_dirs]
+    while ov and len(render(fs_, ov)) // 4 > budget:
         ov = ov[:-1]
-    m = render(ov)
-    return m, {"files": nfiles, "dirs": len(tree), "clusters_total": len(overlay),
+    while len(fs_) > 1 and len(render(fs_, ov)) // 4 > budget:
+        fs_ = fs_[:-1]
+    m = render(fs_, ov)
+    return m, {"files": nfiles, "dirs": len(tree), "dirs_kept": len(fs_), "clusters_total": len(overlay),
                "clusters_kept": len(ov), "tokens": len(m) // 4}
 
 if __name__ == "__main__":
@@ -101,8 +118,9 @@ if __name__ == "__main__":
     ap.add_argument("db")
     ap.add_argument("--budget", type=int, default=4800)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--prefix", default="", help="scope map to a subtree, e.g. /dp_001")
     a = ap.parse_args()
-    m, stats = build_map(a.db, budget=a.budget)
+    m, stats = build_map(a.db, budget=a.budget, prefix=a.prefix)
     if a.out:
         open(a.out, "w").write(m)
         print(f"wrote {a.out}: {stats}", file=sys.stderr)

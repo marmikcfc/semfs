@@ -78,6 +78,28 @@ elif a.arm == "cloud":
         os.environ["SEMFS_REAL_HOME"] = "/home/user"
         os.environ["SEMFS_SHIM_DIR"] = "/home/user/semfs-shims"
         os.environ.setdefault("SEMFS_REAL_RG", os.environ.get("WB_REAL_RG", "rg"))
+elif a.arm.startswith("next_plaid"):
+    # next_plaid arms: the agent uses the SAME `semfs grep` affordance as the semfs arms
+    # (the proven grep shim that fires under codex's `bash -lc`) — but SEMFS_BIN points at
+    # `semfs-np`, whose grep backend is colgrep (late interaction) instead of the semfs
+    # daemon. setup_nextplaid drops a .semfs marker at the corpus so the shim treats it as a
+    # mount and routes there. Identical affordance to ppr_on → clean A/B, only the engine differs.
+    NP_CORPUS = os.environ.get("WB_NP_CORPUS", "/srv/np/corpus")
+    note = (f"The workspace is the directory {NP_CORPUS}/. To find anything, search by MEANING — a plain\n"
+            f'    grep "<2-4 key terms>"\n'
+            "returns ranked excerpts naming WHICH file + its content (top = best match). Use a PLAIN "
+            "`grep \"terms\"` (no flags, no path) for semantic search; then read the few files you need "
+            "with cat. A broad crawl costs far more context. Do NOT repeat a search you already ran.")
+    os.environ.update({
+        "SEMFS_BIN": "/usr/local/bin/semfs-np",          # colgrep-backed `semfs grep`
+        "SEMFS_MOUNT_PATH": NP_CORPUS,                    # bare `grep "q"` defaults here → routes
+        "WB_READ_PATHS": NP_CORPUS,
+        "SEMFS_REAL_HOME": "/home/user",
+        "SEMFS_REAL_GREP": "/usr/bin/grep",
+        "SEMFS_SHIM_DIR": "/home/user/semfs-shims",
+    })
+    os.environ["PATH"] = "/opt/semfs-shims:" + os.environ.get(
+        "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin")
 else:
     # semfs arms:
     #   kg        = surfaced KG
@@ -188,11 +210,17 @@ def run_agent(use_openrouter):
                                or "https://ada-diffusion-llm--glm51-nvfp4-vllm-serve.modal.run/v1"),
                    "apiKey": _mk,
                    "model": os.environ.get("WB_MODAL_MODEL") or "glm-5.1-nvfp4"}
+            if os.environ.get("WB_HEADROOM") == "1":
+                # headroom arm: insert the headroom compression proxy in front of GLM. The codex
+                # chat-adapter (codex.py) forwards /chat/completions to this baseUrl, so pointing it
+                # at headroom = codex → adapter → headroom (compress) → GLM. Same model, same GPU.
+                ap_["baseUrl"] = (os.environ.get("HEADROOM_GLM_BASE")
+                                  or "https://ada-diffusion-llm--headroom-glm-proxy-serve.modal.run/v1")
         else:
             os.environ["CODEX_API_KEY"] = ORKEY
             if not use_openrouter:
                 os.environ["CODEX_USE_CHATGPT"] = "1"
-                ap_ = {"model": "gpt-5.5"}
+                ap_ = {"model": os.environ.get("WB_CODEX_MODEL") or "gpt-5.5"}
             else:
                 os.environ.pop("CODEX_USE_CHATGPT", None)
                 # OpenRouter model is env-overridable (WB_OR_MODEL) so the optimization campaign

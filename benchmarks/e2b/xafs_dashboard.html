@@ -1,0 +1,41 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="30">
+<title>xAFS dashboard</title><style>
+:root{--bg:#0d1117;--pan:#161b22;--ln:#30363d;--ink:#e6edf3;--mut:#8b949e;
+--ok:#3fb950;--no:#f85149;--semfs:#a371f7;--plain:#3fb950}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:24px}
+.wrap{max-width:1000px;margin:0 auto}
+h1{margin:0 0 2px;font-size:24px}.sub{color:var(--mut);font-size:13px;margin-bottom:8px}
+.warn{background:rgba(240,136,62,.12);border-left:3px solid #f0883e;color:#e6edf3;
+font-size:12px;padding:8px 12px;border-radius:0 8px 8px 0;margin-bottom:16px;line-height:1.5}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+th,td{border-bottom:1px solid var(--ln);padding:8px 6px;text-align:center}
+thead th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+td.p{text-align:left;font-family:ui-monospace,monospace;font-weight:600;white-space:nowrap}
+.nf{color:var(--mut);font-weight:400;font-size:11px;margin-left:6px}
+td.c{font-family:ui-monospace,monospace}.c .m{font-size:15px;font-weight:800}.c .tk{font-size:11px;color:var(--mut)}
+.ok{background:rgba(63,185,80,.10)}.ok .m{color:var(--ok)}
+.no{background:rgba(248,81,73,.10)}.no .m{color:var(--no)}
+.pend{color:#3a3f47}
+td.s{border-top:2px solid var(--ln);padding-top:12px;vertical-align:top}
+.s .big{font-size:22px;font-weight:800}.s .sl{font-size:11px;color:var(--mut)}
+.s .sl2{font-size:11px;color:var(--mut);margin-top:4px}.s .src{font-size:10px;color:#3a3f47;margin-top:3px;font-family:monospace}
+.legend{color:var(--mut);font-size:12px;margin-top:14px}
+.col-plain{color:var(--plain)}.col-ppr{color:var(--semfs)}
+.bar{height:6px;border-radius:3px;background:var(--ln);margin-top:18px;overflow:hidden}
+.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--plain),var(--semfs));width:94%}
+</style></head><body><div class="wrap">
+<h1>xAFS &mdash; 13 personas &times; 4 arms</h1>
+<div class="sub">agent codex/gpt-5.4-mini &middot; judge Gemini 3.1 Pro &middot; auto-refresh 30s &middot; <b>49/52 cells</b></div>
+<div class="warn">⚠️ SLICE: only <b>q01</b> tested per persona &mdash; <b>13 of 110</b> xAFS questions (~12%).
+Each ✓/✗ is that persona's <b>single tested question</b>, not its full accuracy. q02&ndash;q09 not yet run.</div>
+<div class="bar"><i></i></div>
+<table><thead><tr><th style="text-align:left">persona</th>
+<th class="col-plain">plain</th><th class="col-ppr">ppr_on</th><th class="col-ppr">ppr_map</th><th class="col-ppr">ppr_off</th></tr></thead>
+<tbody><tr><td class="p">dp_001<span class="nf">5f</span></td><td class="c ok"><div class="m">✓</div><div class="tk">92K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">51K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">36K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">50K</div></td></tr><tr><td class="p">dp_002<span class="nf">10f</span></td><td class="c ok"><div class="m">✓</div><div class="tk">69K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">76K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">45K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">83K</div></td></tr><tr><td class="p">dp_003<span class="nf">20f</span></td><td class="c ok"><div class="m">✓</div><div class="tk">104K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">175K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">165K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">68K</div></td></tr><tr><td class="p">dp_004<span class="nf">30f</span></td><td class="c ok"><div class="m">✓</div><div class="tk">99K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">142K</div></td><td class="c no"><div class="m">✗</div><div class="tk">327K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">86K</div></td></tr><tr><td class="p">dp_005<span class="nf">50f</span></td><td class="c no"><div class="m">✗</div><div class="tk">102K</div></td><td class="c no"><div class="m">✗</div><div class="tk">678K</div></td><td class="c no"><div class="m">✗</div><div class="tk">2378K</div></td><td class="c no"><div class="m">✗</div><div class="tk">901K</div></td></tr><tr><td class="p">dp_006<span class="nf">100f</span></td><td class="c ok"><div class="m">✓</div><div class="tk">86K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">47K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">847K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">63K</div></td></tr><tr><td class="p">dp_007<span class="nf">200f</span></td><td class="c ok"><div class="m">✓</div><div class="tk">130K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">117K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">186K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">129K</div></td></tr><tr><td class="p">dp_008<span class="nf">299f</span></td><td class="c ok"><div class="m">✓</div><div class="tk">149K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">82K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">122K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">81K</div></td></tr><tr><td class="p">dp_009<span class="nf">480f</span></td><td class="c no"><div class="m">✗</div><div class="tk">180K</div></td><td class="c no"><div class="m">✗</div><div class="tk">229K</div></td><td class="c no"><div class="m">✗</div><div class="tk">169K</div></td><td class="c no"><div class="m">✗</div><div class="tk">186K</div></td></tr><tr><td class="p">dp_010<span class="nf">991f</span></td><td class="c no"><div class="m">✗</div><div class="tk">268K</div></td><td class="c no"><div class="m">✗</div><div class="tk">298K</div></td><td class="c no"><div class="m">✗</div><div class="tk">496K</div></td><td class="c no"><div class="m">✗</div><div class="tk">518K</div></td></tr><tr><td class="p">dp_011<span class="nf">1,998f</span></td><td class="c no"><div class="m">✗</div><div class="tk">279K</div></td><td class="c no"><div class="m">✗</div><div class="tk">102K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">72K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">83K</div></td></tr><tr><td class="p">dp_012<span class="nf">4,998f</span></td><td class="c no"><div class="m">✗</div><div class="tk">410K</div></td><td class="c no"><div class="m">✗</div><div class="tk">312K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">81K</div></td><td class="c ok"><div class="m">✓</div><div class="tk">88K</div></td></tr><tr><td class="p">dp_013<span class="nf">9,988f</span></td><td class="c no"><div class="m">✗</div><div class="tk">261K</div></td><td class="c pend">·</td><td class="c pend">·</td><td class="c pend">·</td></tr>
+<tr><td class="p" style="border-top:2px solid var(--ln)">TOTALS</td><td class="s"><div class="big">7/13</div><div class="sl">correct / tested &middot; 54%</div><div class="sl2">13 of 110 q tested &middot; 2.23M tok &middot; 319K/correct</div><div class="src">_xafs_perdp_plain.json</div></td><td class="s"><div class="big">7/12</div><div class="sl">correct / tested &middot; 58%</div><div class="sl2">12 of 110 q tested &middot; 2.31M tok &middot; 330K/correct</div><div class="src">_xafs_perdp_ppr_on.json</div></td><td class="s"><div class="big">8/12</div><div class="sl">correct / tested &middot; 67%</div><div class="sl2">12 of 110 q tested &middot; 4.92M tok &middot; 616K/correct</div><div class="src">_xafs_perdp_ppr_map.json</div></td><td class="s"><div class="big">9/12</div><div class="sl">correct / tested &middot; 75%</div><div class="sl2">12 of 110 q tested &middot; 2.34M tok &middot; 259K/correct</div><div class="src">_xafs_perdp_ppr_off.json</div></td></tr>
+</tbody></table>
+<div class="legend">✓ correct &middot; ✗ wrong &middot; · not run yet &middot; cell = answer + agent tokens.
+plain = raw grep/find &middot; ppr_* = semfs hidden-KG graph prior (on / +map / off-control).</div>
+</div></body></html>

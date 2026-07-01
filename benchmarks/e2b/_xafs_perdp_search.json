@@ -1,0 +1,89 @@
+{
+  "arm": "search",
+  "model": "gpt-5.4-mini",
+  "n": 6,
+  "accuracy": 0.6666666666666666,
+  "n_correct": 4,
+  "total_tokens_cumulative": 1226743,
+  "tokens_per_question": 204457,
+  "results": [
+    {
+      "dp": "dp_009",
+      "qid": "q01",
+      "family": "single_hop",
+      "arm": "search",
+      "status": "ok",
+      "tokens": 316410,
+      "calls": 11,
+      "candidate_answer": "$180.00",
+      "gold": "$150.00",
+      "correct": false,
+      "wall_s": 111
+    },
+    {
+      "dp": "dp_001",
+      "qid": "q01",
+      "family": "single_hop",
+      "arm": "search",
+      "status": "ok",
+      "tokens": 37096,
+      "calls": 4,
+      "candidate_answer": "$2,034",
+      "gold": "$2,034",
+      "correct": true,
+      "wall_s": 38
+    },
+    {
+      "dp": "dp_002",
+      "qid": "q01",
+      "family": "single_hop",
+      "arm": "search",
+      "status": "ok",
+      "tokens": 73804,
+      "calls": 6,
+      "candidate_answer": "AMTKB-9F2RT-3K; $478.40 USD",
+      "gold": "AMTKB-9F2RT-3K; $478.40 USD",
+      "correct": true,
+      "wall_s": 42
+    },
+    {
+      "dp": "dp_003",
+      "qid": "q01",
+      "family": "single_hop",
+      "arm": "search",
+      "status": "ok",
+      "tokens": 148576,
+      "calls": 8,
+      "candidate_answer": "12.4 min",
+      "gold": "12.4 min",
+      "correct": true,
+      "wall_s": 61
+    },
+    {
+      "dp": "dp_004",
+      "qid": "q01",
+      "family": "single_hop",
+      "arm": "search",
+      "status": "ok",
+      "tokens": 96940,
+      "calls": 8,
+      "candidate_answer": "HIC #0892461",
+      "gold": "HIC #0892461",
+      "correct": true,
+      "wall_s": 69
+    },
+    {
+      "dp": "dp_005",
+      "qid": "q01",
+      "family": "single_hop",
+      "arm": "search",
+      "status": "ok",
+      "tokens": 553917,
+      "calls": 58,
+      "candidate_answer": "Zelle confirmation number: **not recoverable from accessible workspace reads**\nMemo: **not recoverable from accessible workspace reads**\n\nRelevant transaction identified via semantic index/logs: a Zelle sent to Esra Polat for **$3,400.00** on **2025-10-01 22:14**, with the likely source file `/house",
+      "gold": "Confirmation number ZE9521-09BB. Memo: \"October rent \u2014 covering Wren tonight, payroll glitch on her end\". The transfer was sent at 22:14 on September 30, 2025.",
+      "correct": false,
+      "wall_s": 845
+    }
+  ]
+}

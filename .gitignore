@@ -75,3 +75,6 @@ sk-*
 benchmarks/e2b/assets/.evo_bin_cache/
 tickets/workspace-bench-5arm-matrix/artifacts/
 tickets/wblite-ppr-ab/artifacts/
+.video-gen/
+*.pyc
+/2026-*-can-yiu-*.txt

@@ -974,8 +974,10 @@ def build_corpus_seed(corpus_name: str, out_name: str, phase: str = "all") -> di
     assert n_corpus > 0, f"corpus {corpus} is empty"
 
     # --- SEM-38 recipe: gemma-4-31b-it everywhere; only KG touches the GPU ------------
-    # summaries (tables/csv/json) + image captions → gemma-4-31b-it on OpenRouter (low
-    # volume, no GPU). KG entity extraction → gemma-4-31b on the Modal vLLM (high volume).
+    # KG entity extraction + summaries → self-hosted gemma-4-31b-nvfp4 vLLM on Modal (RTX-PRO-6000).
+    # Deployed with GEMMA_MIN=1 (min_containers=1) so it stays warm and does NOT idle-die mid-build
+    # (the earlier min_containers=0 deploy self-scaled to 0 and produced empty KGs). Batched GPU
+    # inference is far faster than serialized OpenRouter calls for the big personas (dp_012/013).
     GEMMA_KG_ENDPOINT = "https://ada-diffusion-llm--gemma4-31b-nvfp4-vllm-serve.modal.run/v1"
     GEMMA_KG_MODEL = "gemma-4-31b-nvfp4"
     env = dict(
@@ -985,19 +987,25 @@ def build_corpus_seed(corpus_name: str, out_name: str, phase: str = "all") -> di
         OPENROUTER_API_KEY=os.environ.get("OPENROUTER_API_KEY", ""),
         SEMFS_VLM_DESCRIBE="1",  # route images through the vision summary
         SEMFS_EMBED_LEDGER=f"{out_db}.failures.jsonl",  # R7 per-file failure ledger
-        # summaries + images → gemma-4-31b-it via OpenRouter (key = OPENROUTER_API_KEY)
-        SEMFS_SUMMARY_LLM_MODEL="google/gemma-4-31b-it",
-        SEMFS_VISION_LLM_MODEL="google/gemma-4-31b-it",
-        # KG → gemma-4-31b on the Modal vLLM (key from the glm-vllm-key secret)
+        # summaries + images → self-hosted gemma vLLM (fast batched GPU; key from glm-vllm-key)
+        SEMFS_SUMMARY_LLM_BASE_URL=GEMMA_KG_ENDPOINT,
+        SEMFS_SUMMARY_LLM_MODEL=GEMMA_KG_MODEL,
+        SEMFS_SUMMARY_LLM_KEY=os.environ.get("MODAL_VLLM_API_KEY", ""),
+        SEMFS_VISION_LLM_BASE_URL=GEMMA_KG_ENDPOINT,
+        SEMFS_VISION_LLM_MODEL=GEMMA_KG_MODEL,
+        # KG → self-hosted gemma-4-31b-nvfp4 vLLM (batched GPU; key from glm-vllm-key secret)
         SEMFS_GRAPH_LLM_BASE_URL=GEMMA_KG_ENDPOINT,
         SEMFS_GRAPH_LLM_MODEL=GEMMA_KG_MODEL,
         SEMFS_GRAPH_LLM_KEY=os.environ.get("MODAL_VLLM_API_KEY", ""),
+        # Doc-lane KG concurrency (default 8); 32 keeps the GPU batch full.
+        SEMFS_KG_WORKERS=os.environ.get("SEMFS_KG_WORKERS", "32"),
     )
     # Env overrides win (ad-hoc model/endpoint swaps).
     for k in (
         "SEMFS_SUMMARY_LLM_BASE_URL", "SEMFS_SUMMARY_LLM_MODEL", "SEMFS_SUMMARY_LLM_KEY",
         "SEMFS_VISION_LLM_BASE_URL", "SEMFS_VISION_LLM_MODEL",
-        "SEMFS_GRAPH_LLM_BASE_URL", "SEMFS_GRAPH_LLM_MODEL", "SEMFS_GRAPH_LLM_KEY",
+        # SEMFS_GRAPH_LLM_* deliberately NOT overridable here — pinned to OpenRouter above
+        # so a secret-injected GPU endpoint can't clobber it back (the vLLM idle-dies).
     ):
         if os.environ.get(k):
             env[k] = os.environ[k]
@@ -1145,6 +1153,51 @@ def index_corpus(corpus_name: str = "xafs", out_name: str = "", phase: str = "al
     print(f"\n=== INDEX CORPUS [{phase}]: {corpus_name} → {out_name} ===")
     result = build_corpus_seed.remote(corpus_name, out_name, phase)
     print(json.dumps(result, indent=2))
+
+
+@app.local_entrypoint()
+def build_per_dp_seeds(dps: str = "dp_001,dp_002,dp_003,dp_004,dp_005,dp_006,dp_007,"
+                                  "dp_008,dp_009,dp_010,dp_011,dp_012,dp_013"):
+    """Build per-dp xAFS SEARCH seeds (embed + fs, NO KG → NO GPU) in parallel.
+    Each /data/corpus/xafs/dp_XXX → /data/seeds/dp_XXX-gemma-q4.db (scoped, mountable)."""
+    dp_list = [d.strip() for d in dps.split(",") if d.strip()]
+    print(f"=== EMBED {len(dp_list)} per-dp seeds (parallel) ===", flush=True)
+    hs = [(dp, build_corpus_seed.spawn(f"xafs/{dp}", f"{dp}-gemma-q4.db", "embed")) for dp in dp_list]
+    for dp, h in hs:
+        try:
+            r = h.get()
+            print(f"  embed {dp}: files={r.get('files_indexed')} chunks={r.get('chunks_total')}", flush=True)
+        except Exception as e:
+            print(f"  embed {dp}: FAILED {repr(e)[:120]}", flush=True)
+    print(f"=== FS materialize {len(dp_list)} per-dp seeds (parallel) ===", flush=True)
+    hs = [(dp, build_corpus_seed.spawn(f"xafs/{dp}", f"{dp}-gemma-q4.db", "fs")) for dp in dp_list]
+    for dp, h in hs:
+        try:
+            r = h.get()
+            print(f"  fs {dp}: fs_files={r.get('fs_files')} dentries={r.get('fs_dentries')}", flush=True)
+        except Exception as e:
+            print(f"  fs {dp}: FAILED {repr(e)[:120]}", flush=True)
+    print("=== DONE: per-dp search seeds (embed+fs) ===", flush=True)
+
+
+@app.local_entrypoint()
+def build_per_dp_kg(existing: str = "dp_001,dp_002,dp_003,dp_004,dp_005,dp_006,dp_007,dp_008,dp_009",
+                    fresh: str = "dp_010,dp_011,dp_012,dp_013"):
+    """Make per-dp seeds ppr-ready (add the hidden KG via the gemma GPU). `existing` already have
+    embed+fs → phase=kg only (fast). `fresh` are unbuilt → phase=all (embed+kg+fs). All parallel."""
+    ex = [d.strip() for d in existing.split(",") if d.strip()]
+    fr = [d.strip() for d in fresh.split(",") if d.strip()]
+    jobs = [(dp, "kg", build_corpus_seed.spawn(f"xafs/{dp}", f"{dp}-gemma-q4.db", "kg")) for dp in ex]
+    jobs += [(dp, "all", build_corpus_seed.spawn(f"xafs/{dp}", f"{dp}-gemma-q4.db", "all")) for dp in fr]
+    print(f"=== building KG for {len(ex)} existing + {len(fr)} fresh (parallel) ===", flush=True)
+    for dp, ph, h in jobs:
+        try:
+            r = h.get()
+            print(f"  [{ph}] {dp}: entities={r.get('graph_entities')} relations={r.get('graph_relations')} "
+                  f"communities={r.get('leiden_communities')} fs={r.get('fs_files')}", flush=True)
+        except Exception as e:
+            print(f"  [{ph}] {dp}: FAILED {repr(e)[:140]}", flush=True)
+    print("=== DONE: per-dp KG seeds ===", flush=True)
 
 
 @app.function(image=image, volumes={VOL: data_volume},

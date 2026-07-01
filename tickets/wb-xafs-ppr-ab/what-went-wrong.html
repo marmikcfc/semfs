@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xAFS — What Went Wrong</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --ink:#e6edf3; --muted:#8b949e;
+    --line:#30363d; --semfs:#a371f7; --plain:#3fb950; --warn:#f0883e; --bad:#f85149;
+    --good:#3fb950; --accent:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6;font-size:16px}
+  .wrap{max-width:920px;margin:0 auto;padding:0 20px 120px}
+  code,.mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+  header{padding:64px 20px 40px;text-align:center;
+    background:radial-gradient(900px 360px at 50% -10%, rgba(163,113,247,.22), transparent 70%)}
+  header .kicker{color:var(--semfs);letter-spacing:.18em;font-size:12px;font-weight:700;text-transform:uppercase}
+  h1{font-size:clamp(30px,5vw,48px);margin:.25em 0 .15em;line-height:1.1}
+  .verdict{font-size:19px;color:var(--muted);max-width:640px;margin:0 auto}
+  .verdict b{color:var(--ink)}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700}
+  .pill.semfs{background:rgba(163,113,247,.16);color:var(--semfs)}
+  .pill.plain{background:rgba(63,185,80,.16);color:var(--plain)}
+  section{margin:46px 0}
+  h2{font-size:27px;margin:0 0 6px;display:flex;align-items:center;gap:12px}
+  h2 .n{display:inline-flex;width:34px;height:34px;border-radius:9px;background:var(--panel2);
+    color:var(--semfs);align-items:center;justify-content:center;font-size:16px;font-weight:800;border:1px solid var(--line)}
+  h3{font-size:18px;margin:22px 0 8px}
+  .sub{color:var(--muted);margin:0 0 14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:16px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:680px){.grid2{grid-template-columns:1fr}}
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;justify-content:center;margin:8px 0}
+  .step{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+    text-align:center;min-width:96px;flex:1}
+  .step .t{font-weight:700;font-size:13px}
+  .step .d{color:var(--muted);font-size:11px;margin-top:2px}
+  .arrow{align-self:center;color:var(--semfs);font-size:20px;font-weight:800}
+  table{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  thead th{color:var(--muted);font-weight:600;border-bottom:2px solid var(--line)}
+  .ok{color:var(--good);font-weight:700}.no{color:var(--bad);font-weight:700}
+  .bar{height:10px;border-radius:6px;display:inline-block;vertical-align:middle;transition:width 1.1s cubic-bezier(.2,.8,.2,1)}
+  .bar.semfs{background:var(--semfs)}.bar.plain{background:var(--plain)}
+  .legend{display:flex;gap:18px;font-size:13px;color:var(--muted);margin:6px 0 2px;flex-wrap:wrap}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 0}
+  .tab{padding:7px 13px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);
+    color:var(--muted);cursor:pointer;font-size:13px;font-weight:600;user-select:none}
+  .tab.active{background:var(--semfs);color:#fff;border-color:var(--semfs)}
+  .lvl{display:none;animation:fade .35s ease}
+  .lvl.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .demo{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+  @media(max-width:680px){.demo{grid-template-columns:1fr}}
+  .qbtn{display:block;width:100%;text-align:left;padding:11px 13px;margin:6px 0;border-radius:9px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--ink);cursor:pointer;font-size:13px}
+  .qbtn.sel{border-color:var(--accent);box-shadow:0 0 0 2px rgba(88,166,255,.25)}
+  .res{border-radius:9px;padding:12px;border:1px solid var(--line);background:#0b0f15;font-size:13px}
+  .res .w{font-weight:800}
+  .kbd{background:#0b0f15;border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-size:13px}
+  .callout{border-left:3px solid var(--warn);background:rgba(240,136,62,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0}
+  .smoking{border-left:3px solid var(--bad);background:rgba(248,81,73,.08)}
+  .win{border-left:3px solid var(--good);background:rgba(63,185,80,.08)}
+  .small{font-size:13px;color:var(--muted)}
+  .files{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0}
+  .f{width:9px;height:11px;border-radius:2px;background:var(--line)}
+  .f.hit{background:var(--good)}.f.miss{background:var(--bad)}
+  footer{color:var(--muted);font-size:13px;text-align:center;border-top:1px solid var(--line);padding-top:24px;margin-top:50px}
+  .tag{font-size:11px;color:var(--muted);font-family:monospace}
+</style>
+</head>
+<body>
+<header>
+  <div class="kicker">Benchmark autopsy · SEM-47 · 2026-06-30</div>
+  <h1>xAFS: what went wrong</h1>
+  <p class="verdict">We tested whether a <b>semantic file system</b> helps an AI agent answer questions
+  about messy personal file systems. <b>Plain <span class="mono">grep</span> won</b> — more accurate
+  <i>and</i> 58% fewer tokens. Here's the test, and the three reasons why.</p>
+</header>
+
+<div class="wrap">
+
+<!-- ▲▲▲ 2026-07-01 CROSSOVER UPDATE — this doc's "plain wins" conclusion is OVERTURNED at scale ▲▲▲ -->
+<section style="margin-top:32px">
+  <div style="border:2px solid #f0883e;background:rgba(240,136,62,.10);border-radius:14px;padding:22px 24px">
+    <div style="color:#f0883e;font-weight:800;letter-spacing:.1em;font-size:13px;text-transform:uppercase">⚠ Update · 2026-07-01 · this page is superseded at scale</div>
+    <h2 style="margin:.3em 0 .4em">The "plain wins" story below was a <span style="color:#f0883e">small-workspace artifact</span>.</h2>
+    <p style="color:#c9d1d9;margin:0 0 14px">This page tested only <b>vector search (no KG)</b> on a few
+    <b>small</b> workspaces. Once we built the <b>KG / PPR arms</b> and ran the <b>big</b> workspaces, the
+    result <b>inverted</b> — the semantic filesystem <b>wins where it was supposed to</b>: large corpora
+    where brute-force <span style="font-family:monospace">grep</span> drowns.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:13.5px;color:#e6edf3">
+      <thead><tr style="color:#8b949e;text-align:left">
+        <th style="padding:6px 8px">workspace size</th><th style="padding:6px 8px">winner</th><th style="padding:6px 8px">why</th></tr></thead>
+      <tbody>
+        <tr style="border-top:1px solid #30363d"><td style="padding:6px 8px">small (5–300 files)</td>
+          <td style="padding:6px 8px;color:#3fb950">plain ≈ ppr_off</td><td style="padding:6px 8px">exact lookups = grep's turf; both cheap</td></tr>
+        <tr style="border-top:1px solid #30363d"><td style="padding:6px 8px"><b>big (1,998 &amp; 4,998 files)</b></td>
+          <td style="padding:6px 8px;color:#a371f7"><b>KG arms (ppr_off, ppr_map)</b></td>
+          <td style="padding:6px 8px">plain ✗✗ (drowns, 400K tok); KG ✓✓ correct &amp; ~4× cheaper</td></tr>
+        <tr style="border-top:1px solid #30363d"><td style="padding:6px 8px">overall (common 12)</td>
+          <td style="padding:6px 8px;color:#a371f7"><b>ppr_off 9/12</b></td>
+          <td style="padding:6px 8px">best accuracy AND best tokens-per-correct (259K)</td></tr>
+      </tbody>
+    </table>
+    <p style="color:#8b949e;font-size:12.5px;margin:12px 0 0">Also learned: PPR <i>diffusion</i> (ppr_on) does
+    NOT beat the 1-hop control (ppr_off) — the graph <i>prior</i> helps, multi-hop doesn't. Interim: 49/52
+    (dp_013 building). Full matrix + numbers in <b>README.md § RESULTS v2</b>. The explanation below still
+    holds for <i>why</i> plain struggles and how the test works — just not the final verdict.</p>
+  </div>
+</section>
+
+<!-- ELI5 -->
+<section>
+  <h2><span class="n">0</span> The 30-second version</h2>
+  <div class="card">
+    <div class="grid2">
+      <div>
+        <h3 style="color:var(--semfs)">What we hoped</h3>
+        <p class="small">An agent that <b>searches by meaning</b> (semfs) should beat an agent that
+        <b>crawls files with grep</b> (plain) — especially as folders grow to thousands of files.</p>
+      </div>
+      <div>
+        <h3 style="color:var(--plain)">What happened</h3>
+        <p class="small">The questions are mostly <b>"find this exact ID / number."</b> Grep is built
+        for exact matches; semantic search finds <i>vibes-similar</i> files and <b>misses the exact one</b>.
+        So plain won.</p>
+      </div>
+    </div>
+    <div class="callout" style="margin-bottom:0">
+      🔑 <b>One sentence:</b> semantic retrieval shines for <i>conceptual</i> questions; xAFS asks
+      <i>exact-lookup</i> questions — and that's literal <span class="mono">grep</span>'s home turf.
+    </div>
+  </div>
+</section>
+
+<!-- WHAT WE TESTED -->
+<section>
+  <h2><span class="n">1</span> What we actually tested</h2>
+  <p class="sub">The benchmark, the two agents being compared, and how a single question is scored.</p>
+
+  <div class="card">
+    <h3>The benchmark: <span class="mono">supermemory/xAFS</span></h3>
+    <p class="small">13 synthetic people (<span class="mono">dp_001 … dp_013</span>), each a realistic
+    personal file system — emails, chats, invoices, medical notes, legal pleadings. Crucially they
+    <b>scale from 5 files to ~10,000 files</b>. Each has questions answerable only by reading the right
+    file (e.g. <i>"What was the Stitch invoice amount?"</i> → gold <span class="mono">$2,034</span>).
+    <b>110 questions total.</b></p>
+    <div class="files" title="each square = a workspace, sized by file count">
+      <span class="small">workspace sizes:</span>
+      <span class="mono small">5 · 10 · 20 · 30 · 50 · 100 · 200 · 299 · 480 · 991 · 1,998 · 4,998 · 9,988 files</span>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <span class="pill plain">PLAIN — the baseline</span>
+      <p class="small" style="margin-top:10px">Agent gets the raw file tree. Finds answers with real
+      <span class="kbd">find</span> <span class="kbd">grep&nbsp;-r</span> <span class="kbd">cat</span>.
+      This is the "standard filesystem agent."</p>
+    </div>
+    <div class="card">
+      <span class="pill semfs">SEMFS — the contender</span>
+      <p class="small" style="margin-top:10px">Same files, but indexed into a <b>seed</b> (vector
+      embeddings + keyword index + a mountable tree). The agent searches <b>by meaning</b> via
+      <span class="kbd">semfs grep</span> instead of crawling.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>The pipeline — how one cell runs</h3>
+    <p class="small">Same harness for both arms. <span class="tag">agent = codex / gpt-5.4-mini (ChatGPT sub) · judge = Gemini 3.1 Pro</span></p>
+    <div class="flow">
+      <div class="step"><div class="t">corpus</div><div class="d">raw files</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">seed</div><div class="d">index: vectors + FTS + fs-tree</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">bake</div><div class="d">E2B template</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">mount</div><div class="d">sandbox FUSE</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">agent</div><div class="d">codex navigates</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">answer</div><div class="d">→ answer.md</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">judge</div><div class="d">vs gold (semantic)</div></div>
+    </div>
+    <p class="small" style="margin-bottom:0">A <b>cell</b> = one (question × arm). We measure two things per cell:
+    <b>correct?</b> (judge says the answer matches gold) and <b>tokens</b> (how much the agent burned getting there).</p>
+  </div>
+</section>
+
+<!-- FINDING 1 -->
+<section>
+  <h2><span class="n">2</span> Finding 1 — plain FS collapses at scale</h2>
+  <p class="sub">The expected result, reproduced: brute-force crawl works on small folders, falls off a cliff on big ones.</p>
+  <div class="card">
+    <p class="small">Plain on all 13 workspaces: <b>8/13 correct</b>. Watch what happens as file count grows —
+    tokens explode <i>and</i> accuracy dies (bars = tokens; ✓/✗ = correct).</p>
+    <table id="t1">
+      <thead><tr><th>workspace</th><th>files</th><th>tokens</th><th></th><th>ok</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="win" style="margin-bottom:0">
+      ✅ This <b>reproduces SMFS's headline</b> ("FS accuracy collapses at 10K files"). The crossover is ~300–500 files:
+      below it plain is cheap + right; above it the agent drowns crawling thousands of files and guesses wrong.
+    </div>
+  </div>
+</section>
+
+<!-- FINDING 2 -->
+<section>
+  <h2><span class="n">3</span> Finding 2 — the combined-seed confound</h2>
+  <p class="sub">A methodology bug we caught early: we'd put all 13 people in ONE index.</p>
+  <div class="card">
+    <div class="grid2">
+      <div>
+        <h3 class="no">❌ What we did first</h3>
+        <p class="small">One seed for all 13 workspaces. So when the agent searched for dp_005's Zelle
+        number, <span class="mono">semfs grep</span> searched <b>all 19,170 files of all 13 people</b>.</p>
+        <div class="res" style="margin-top:8px">dp_005 (50 files) → <span class="w no">487K tokens</span><br>
+        <span class="small">the agent waded through 13 strangers' files</span></div>
+      </div>
+      <div>
+        <h3 class="ok">✅ The fix</h3>
+        <p class="small"><b>One index per workspace.</b> The agent for dp_005 mounts only dp_005's seed →
+        searches only those 50 files. (This is how xAFS is designed — each person is isolated.)</p>
+        <div class="res win" style="margin-top:8px;border-color:var(--good)">tiny per-dp seeds (4–135 MB)<br>
+        <span class="small">also fixed our disk + sandbox limits as a bonus</span></div>
+      </div>
+    </div>
+    <div class="callout" style="margin-bottom:0">
+      ⚠️ Without this fix, any "semfs costs more" number was an <b>artifact</b> of searching 13× too much,
+      not the retrieval method. The tight leash caught it before a 660-cell run.
+    </div>
+  </div>
+</section>
+
+<!-- FINDING 3 -->
+<section>
+  <h2><span class="n">4</span> Finding 3 — semantic search &lt; literal grep</h2>
+  <p class="sub">The real reason it "went wrong." Even fairly scoped, semantic search lost — because the questions are exact lookups.</p>
+
+  <div class="card">
+    <h3>Climb from ELI5 → expert</h3>
+    <div class="tabs" id="lvltabs">
+      <span class="tab active" data-l="0">🧒 ELI5</span>
+      <span class="tab" data-l="1">📘 Beginner</span>
+      <span class="tab" data-l="2">🛠️ Practitioner</span>
+      <span class="tab" data-l="3">🔬 Engineer</span>
+      <span class="tab" data-l="4">🎓 Expert</span>
+    </div>
+    <div id="levels">
+      <div class="lvl active"><p>Imagine asking a librarian for "the book with the exact phone number 555‑0192."
+        A <b>keyword</b> librarian flips to that exact number fast. A <b>meaning</b> librarian brings you
+        books <i>about phones</i> — close, but not the one with the number. xAFS keeps asking for the exact number.</p></div>
+      <div class="lvl"><p><b>Plain</b> uses <span class="kbd">grep -r "Zelle"</span> — it matches the literal
+        string and finds the file containing the confirmation code. <b>semfs</b> uses vector similarity —
+        it ranks files by <i>topic</i>, so "Zelle confirmation number" pulls up Venmo logs and bills (same topic, wrong file).</p></div>
+      <div class="lvl"><p>For an <b>exact-lookup</b> task the answer is a <i>token</i> (an ID, amount, code),
+        not a <i>concept</i>. Embedding similarity blurs tokens together (Zelle ≈ Venmo ≈ payment), so the
+        target file doesn't rank #1. The agent reads the top semantic hits, doesn't find the value, and
+        <b>thrashes</b> — more tool calls, more tokens, often gives up.</p></div>
+      <div class="lvl"><p>Our seed has a vector lane <i>and</i> a BM25/FTS keyword lane. In practice the
+        <span class="mono">semfs grep</span> output was vector-dominated — the keyword match for "Zelle"
+        wasn't surfaced above the semantically-near distractors. So the hybrid wasn't behaving like
+        keyword-first for this query class. (Untested: re-weighting FTS could recover it.)</p></div>
+      <div class="lvl"><p>The benchmark's task distribution matters more than the retrieval engine:
+        xAFS is dominated by <code>single_hop</code> exact-extraction. Semantic FS's documented win is
+        largely <b>token efficiency</b> (we saw −30% on several cells), not accuracy on exact lookups.
+        The remaining lever is the <b>KG/PPR prior</b> — entity edges pointing straight at the answer file —
+        which we did not build (needs the GPU). That's the only mechanism that could flip exact-lookup accuracy.</p></div>
+    </div>
+  </div>
+
+  <!-- the smoking gun -->
+  <div class="card smoking" style="border-radius:0 14px 14px 0">
+    <h3 class="no">🔫 The smoking gun: dp_005, the Zelle question</h3>
+    <p class="small">Question: <i>"What was the Zelle confirmation number on Yael's transfer?"</i>
+      Gold: <span class="mono ok">ZE9521-09BB</span></p>
+    <p class="small mono">semfs grep "Zelle confirmation number transfer" → returned:</p>
+    <div class="res">
+      📄 /messages/<b>venmo</b>-log-sept-oct.md <span class="no">← Venmo, not Zelle</span><br>
+      📄 /house/bills/september-bills-summary.md <span class="no">← bills</span><br>
+      📄 /messages/imessage-yael-wren-…md <span class="no">← chat</span><br>
+      <span class="small">…the file with <span class="mono">ZE9521-09BB</span> never surfaced.</span>
+    </div>
+    <p class="small mono" style="margin-top:10px">plain <span class="kbd">grep -r "Zelle"</span> → found it on the first try.</p>
+    <p class="small" style="margin-bottom:0">Result: semfs spent <b class="no">554K tokens / 58 tool calls</b> and
+      <b class="no">failed</b>; plain spent <b class="ok">75K</b> and got it right.</p>
+  </div>
+
+  <!-- interactive demo -->
+  <div class="card">
+    <h3>Try it: which retriever wins?</h3>
+    <p class="small">Pick a question type and see why one method beats the other.</p>
+    <div class="demo">
+      <div>
+        <button class="qbtn sel" data-q="exact">🔢 <b>Exact lookup</b><br><span class="small">"the Zelle confirmation number"</span></button>
+        <button class="qbtn" data-q="concept">💭 <b>Conceptual</b><br><span class="small">"summarize the dispute with the landlord"</span></button>
+      </div>
+      <div class="res" id="demoOut"></div>
+    </div>
+  </div>
+</section>
+
+<!-- SCOREBOARD -->
+<section>
+  <h2><span class="n">5</span> The scoreboard</h2>
+  <p class="sub">Per-dp scoped vector-search semfs (no KG) vs plain, the 6 cells we ran before stopping.</p>
+  <div class="card">
+    <div class="legend">
+      <span><span class="dot" style="background:var(--semfs)"></span>semfs tokens</span>
+      <span><span class="dot" style="background:var(--plain)"></span>plain tokens</span>
+    </div>
+    <table id="t2">
+      <thead><tr><th>workspace</th><th>files</th><th>semfs</th><th></th><th>ok</th><th>plain</th><th>ok</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="grid2" style="margin-top:8px">
+      <div class="res" style="text-align:center"><div class="small">scoped-semfs</div>
+        <div style="font-size:24px;font-weight:800;color:var(--semfs)">4/6 · 1.23M tok</div></div>
+      <div class="res win" style="text-align:center;border-color:var(--good)"><div class="small">plain</div>
+        <div style="font-size:24px;font-weight:800;color:var(--plain)">5/6 · 0.78M tok</div></div>
+    </div>
+    <div class="callout smoking" style="margin-bottom:0">
+      <b>Plain wins outright:</b> more accurate (5/6 vs 4/6) <b>and</b> 58% fewer tokens. The −30% efficiency
+      semfs showed on a couple of cells didn't survive contact with the exact-lookup cells (dp_003, dp_004 costlier; dp_005 a blowup).
+    </div>
+  </div>
+</section>
+
+<!-- CONCLUSION -->
+<section>
+  <h2><span class="n">6</span> So what now?</h2>
+  <div class="grid2">
+    <div class="card win" style="border-radius:0 14px 14px 0">
+      <h3 class="ok">✅ Banked</h3>
+      <ul class="small" style="margin:0;padding-left:18px">
+        <li>Full E2B pipeline validated end-to-end (bake → mount → codex → Gemini judge)</li>
+        <li>Supermemory-faithful judge (<span class="mono">run_judge_xafs.py</span>, 9/9 tests + live)</li>
+        <li>Plain baseline = SMFS reproduction; per-dp index fix; semantic&lt;grep finding</li>
+      </ul>
+    </div>
+    <div class="card" style="border-left:3px solid var(--warn);border-radius:0 14px 14px 0">
+      <h3 style="color:var(--warn)">🔓 Open (deferred)</h3>
+      <ul class="small" style="margin:0;padding-left:18px">
+        <li><b>KG / PPR arms</b> — graph edges to the answer file; the only thing that could beat grep on exact lookups. Needs the GPU gemma-vLLM KG build.</li>
+        <li><b>FTS/hybrid weighting</b> — make keyword match win for exact lookups before any rebuild.</li>
+        <li>dp_010–013 per-dp seeds (CPU+summary embed too slow).</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card" style="text-align:center">
+    <p style="margin:0;font-size:18px">The honest headline:
+      <b style="color:var(--plain)">semantic search is not a free win.</b><br>
+      <span class="small">It buys token efficiency on conceptual tasks — but on exact-lookup tasks, literal <span class="mono">grep</span> is hard to beat.</span></p>
+  </div>
+</section>
+
+<footer>
+  Generated for SEM-47 · agent gpt-5.4-mini (Codex) · judge Gemini 3.1 Pro · data:
+  <span class="mono">_xafs_slice_plain.json</span>, <span class="mono">_xafs_perdp_search.json</span>
+</footer>
+</div>
+
+<script>
+// ---- data ----
+const plainAll = [
+  ["dp_001",5,52813,1],["dp_002",10,78393,1],["dp_003",20,60817,1],["dp_004",30,53546,1],
+  ["dp_005",50,75332,1],["dp_006",100,73459,1],["dp_007",200,83188,1],["dp_008",299,149087,1],
+  ["dp_009",480,455861,0],["dp_010",991,414901,0],["dp_011",1998,595523,0],["dp_012",4998,281450,0],
+  ["dp_013",9988,175747,0]
+];
+const compare = [ // dp, files, semfsTok, semfsOk, plainTok, plainOk
+  ["dp_001",5,37096,1,52813,1],["dp_002",10,73804,1,78393,1],["dp_003",20,148576,1,60817,1],
+  ["dp_004",30,96940,1,53546,1],["dp_005",50,553917,0,75332,1],["dp_009",480,316410,0,455861,0]
+];
+const fmt = n => n>=1000 ? (n/1000).toFixed(0)+'K' : n;
+const maxP = Math.max(...plainAll.map(r=>r[2]));
+const maxC = Math.max(...compare.flatMap(r=>[r[2],r[4]]));
+
+// finding 1 table
+const tb1 = document.querySelector('#t1 tbody');
+plainAll.forEach(([dp,f,tok,ok])=>{
+  const big = f>=480;
+  tb1.insertAdjacentHTML('beforeend',
+    `<tr><td>${dp}${big?' <span class="tag">(big)</span>':''}</td><td>${f.toLocaleString()}</td>
+     <td>${tok.toLocaleString()}</td>
+     <td style="width:34%;text-align:left"><span class="bar plain" data-w="${(tok/maxP*100)}" style="width:0;${big?'background:var(--bad)':''}"></span></td>
+     <td class="${ok?'ok':'no'}">${ok?'✓':'✗'}</td></tr>`);
+});
+
+// scoreboard table
+const tb2 = document.querySelector('#t2 tbody');
+compare.forEach(([dp,f,st,so,pt,po])=>{
+  tb2.insertAdjacentHTML('beforeend',
+    `<tr><td>${dp}</td><td>${f}</td>
+     <td>${fmt(st)}</td>
+     <td style="width:26%;text-align:left">
+       <span class="bar semfs" data-w="${st/maxC*100}" style="width:0"></span></td>
+     <td class="${so?'ok':'no'}">${so?'✓':'✗'}</td>
+     <td>${fmt(pt)} <span class="bar plain" data-w="${pt/maxC*100}" style="width:0;margin-left:4px"></span></td>
+     <td class="${po?'ok':'no'}">${po?'✓':'✗'}</td></tr>`);
+});
+
+// animate bars when scrolled into view
+const io = new IntersectionObserver((es)=>{es.forEach(e=>{
+  if(e.isIntersecting){e.target.querySelectorAll('.bar').forEach(b=>{b.style.width=b.dataset.w+'%';});io.unobserve(e.target);}
+});},{threshold:.2});
+document.querySelectorAll('table').forEach(t=>io.observe(t));
+
+// ELI5->expert tabs
+const tabs=[...document.querySelectorAll('#lvltabs .tab')], lvls=[...document.querySelectorAll('#levels .lvl')];
+tabs.forEach(t=>t.onclick=()=>{tabs.forEach(x=>x.classList.remove('active'));lvls.forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');lvls[+t.dataset.l].classList.add('active');});
+
+// demo
+const demoOut=document.getElementById('demoOut');
+const demo={
+  exact:{w:'plain (grep) wins',c:'var(--plain)',
+    body:`Answer is an exact token (<span class="mono">ZE9521-09BB</span>). <span class="mono">grep -r "Zelle"</span> matches it literally → 1 hit, done. Semantic search ranks by topic → returns Venmo/bills (close meaning, wrong file) → agent thrashes.`},
+  concept:{w:'semfs (semantic) wins',c:'var(--semfs)',
+    body:`Answer is spread across notes, emails, chats with no shared keyword. <span class="mono">grep</span> has nothing literal to match. Semantic search gathers the topically-related files in one shot → fewer reads, fewer tokens.`}
+};
+function renderDemo(k){const d=demo[k];demoOut.innerHTML=`<div class="w" style="color:${d.c};font-size:15px;margin-bottom:6px">🏆 ${d.w}</div><div class="small">${d.body}</div>`;}
+document.querySelectorAll('.qbtn').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.qbtn').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');renderDemo(b.dataset.q);});
+renderDemo('exact');
+</script>
+</body>
+</html>

@@ -1,6 +1,19 @@
 # Current State — semfs / Workspace-Bench instance
 
-_Last updated: 2026-06-25. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
+_Last updated: 2026-07-01. Living snapshot. Companion to `rcas/`, Linear (team `SemFS`), and the Notion SemFS page._
+
+## ⮕ Latest (2026-07-01) — xAFS 4-arm × 13-persona matrix: CROSSOVER — KG arms win at scale (`ppr_off` overall winner)
+
+**FINAL 49/52** (dp_013, 9,988 files, DEFERRED — GPU stopped 2026-07-01 for cost; result already decisive). Full xAFS matrix (agent codex/gpt-5.4-mini, judge Gemini 3.1 Pro, q01 per persona). Ticket `tickets/wb-xafs-ppr-ab/` (SEM-47); live `benchmarks/e2b/xafs_dashboard.html`.
+
+- **The earlier "plain wins on xAFS" was a SMALL-WORKSPACE ARTIFACT** (vector-only, no KG, few cells). With the KG/PPR arms built and the big workspaces run, the result **inverts**.
+- **`ppr_off` (hidden KG + 1-hop) is the overall winner** — on the common 12 personas: **ppr_off 9/12 correct @ 259K tok/correct (best on BOTH axes)** > ppr_map 8/12 @ 616K (accurate but expensive) > plain 7/12 @ 319K ≈ ppr_on 7/12 @ 330K.
+- **Crossover at scale (dp_011=1998f, dp_012=4998f):** plain ✗✗ & ppr_on ✗✗ (grep drowns, ~400K tok, wrong) but **ppr_map ✓✓ & ppr_off ✓✓ — correct AND ~4× cheaper** (71–88K). The hidden KG lets the agent jump to the answer file. **This is semfs's real value case** (large corpora), not the small exact-lookups.
+- **PPR *diffusion* does NOT help** — ppr_on (7/12) ≈ plain and LOSES to the 1-hop control ppr_off (9/12). Graph *prior* helps; multi-hop PageRank over it doesn't. (Nuances the SEM-39/PPR-A/B "PPR net-negative" WB-Lite finding — on xAFS the KG helps, diffusion is the non-lever.)
+- **Structure:** 13 separate `plain-xafs-dp_XXX` templates (plain arm) + `semfs-ppr-xafs` (13 per-dp KG seeds, mounted one-per-question). Runner `run_xafs_perdp.py`.
+- **Bugs fixed (RCAs 2026-07-01):** `2026-07-01-map-gen-budget-uncapped-dirs-crashes-codex.md` (map DIR skeleton uncapped → 100K-tok map crashed codex; fix caps dirs top-40) and `2026-07-01-premature-completion-gate-stale-fs.md` (gate `entity>0`+stale-fs baked half-built seed; fix = KG-stability gate + dashboard `is_real` filter).
+- **Infra:** gemma-4-31b-nvfp4 vLLM redeployed `GEMMA_MIN=1` (PERSISTENT — was idle-dying at `min_containers=0` → empty KGs mid-build); KG + summaries pointed at it (batched GPU ≫ serialized OpenRouter). Caveat: the CPU `build_corpus_seed` caller is preemptible + `build_kg` does NOT resume incrementally (dp_013 KG restarted 5350→1769 on relaunch). **GPU STOPPED 2026-07-01** (`modal app stop gemma4-31b-nvfp4-vllm`) — dp_013 deferred rather than burn GPU for one confirmation cell. To resume dp_013: redeploy `GEMMA_GPU=RTX-PRO-6000 GEMMA_MIN=1 modal deploy …/gemma4_31b_nvfp4_vllm.py`, rebuild dp_013 KG, run `finish_dp013_v2.sh`.
+- **Caveat:** q01-only slice (13 of 110 Q) — directional pattern, not full per-persona accuracy.
 
 ## ⮕ Latest (2026-06-25) — 4-persona seeds (fs_data complete) · PPR hidden-KG prior · queue harness · PPR A/B running
 
