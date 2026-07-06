@@ -12,7 +12,10 @@ WHERE name=?`), self-healing on re-index. Verified (independent re-run): mountin
 `graph_entity` kinds **function=2, method=1, class=1** + relations **calls=2, contains=4, imports=1**,
 **zero** gliner labels on the `.go` files. Default suite 382 green (flaky NFS-port passed);
 gliner-kg 390 green. Changes: `sqlite_vec.rs`, `graph_ast.rs`, `graph_ast/tests.rs`.
-**Only Leiden communities (`ppr_map`) remain batch-only** (inherently global).
+**Correction (SEM-56):** communities are NOT batch-only — the daemon already materializes them on
+the live path (debounced settle → `materialize_projection`, from commit `60a9b11`). So `ppr_map`'s
+community layer works on a live mount. The real open item is community *quality* for code-heavy repos
+(file-qualified AST entities fragment into near-singletons) — an entity-resolution issue, SEM-51 territory.
 
 ---
 

@@ -84,6 +84,14 @@ impl Graph {
     /// they share no named entity (the sparse-edge → singleton fix). Symmetric;
     /// weights accumulate into existing edges so a kNN edge that coincides with a
     /// shared-entity edge reinforces it. `embeddings[i]` is file `i`'s vector.
+    ///
+    /// Callers may pass vectors from more than one embedding space (e.g. the
+    /// dual-lane text/code embedders, which can differ in width): a pair with
+    /// mismatched dimension is skipped rather than compared — `.zip()`'d cosine
+    /// over unequal-length vectors would silently truncate to the shorter one
+    /// and produce a meaningless cross-lane similarity. This naturally groups
+    /// kNN neighbours to same-dimension (same-lane) files without needing the
+    /// caller to partition the input.
     pub fn add_knn_edges(&mut self, embeddings: &[Vec<f32>], k: usize, weight: f64) {
         let n = self.n.min(embeddings.len());
         if k == 0 || n < 2 {
@@ -103,7 +111,7 @@ impl Graph {
             }
             let mut sims: Vec<(f32, usize)> = Vec::with_capacity(n);
             for j in 0..n {
-                if i == j || norms[j] == 0.0 {
+                if i == j || norms[j] == 0.0 || embeddings[i].len() != embeddings[j].len() {
                     continue;
                 }
                 let dot: f32 = embeddings[i]
@@ -607,6 +615,36 @@ mod tests {
         assert_eq!(comm[0], comm[1], "embedding-near files 0,1 must cluster");
         assert_eq!(comm[2], comm[3], "embedding-near files 2,3 must cluster");
         assert_ne!(comm[0], comm[2], "the two embedding clusters stay distinct");
+    }
+
+    /// SEM-57 (1b): a file's embedding may come from either the text lane
+    /// (`vchunks`) or a differently-sized code lane (`vchunks_code`). `.zip()`'d
+    /// cosine over unequal-length vectors would silently truncate to the
+    /// shorter one and produce a bogus similarity — `add_knn_edges` must skip
+    /// mismatched-dimension pairs instead of comparing them, and must not panic.
+    #[test]
+    fn knn_edges_skip_mismatched_dimension_pairs() {
+        // 0,1 share a 2-d space (near each other); 2,3 share an unrelated 3-d
+        // space (near each other). No entity edges, so kNN is the only signal.
+        let fe = vec![hs(&[10]), hs(&[11]), hs(&[12]), hs(&[13])];
+        let mut g = Graph::from_file_entities(&fe);
+        let emb = vec![
+            vec![1.0, 0.0],
+            vec![0.98, 0.05],
+            vec![1.0, 0.0, 0.0],
+            vec![0.98, 0.05, 0.0],
+        ];
+        g.add_knn_edges(&emb, 1, 1.0);
+        let comm = Louvain {
+            leiden_refine: true,
+        }
+        .detect(&g, 1.0);
+        assert_eq!(comm[0], comm[1], "same-dim (2-d) near files cluster");
+        assert_eq!(comm[2], comm[3], "same-dim (3-d) near files cluster");
+        assert_ne!(
+            comm[0], comm[2],
+            "cross-dim pairs must never be compared/connected"
+        );
     }
 
     fn each_community_connected(g: &Graph, comm: &[usize]) -> bool {

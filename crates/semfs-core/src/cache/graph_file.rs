@@ -23,9 +23,15 @@ const RESOLUTION: f64 = 1.0;
 const KNN_K: usize = 6;
 const KNN_WEIGHT: f64 = 1.0;
 
-/// Per-file mean embedding from the `vchunks` vec0 store (rowid = chunk id),
-/// indexed to match `files`. Best-effort: a missing vector store / extension yields
-/// an `Err`, and the caller simply skips kNN densification.
+/// Per-file mean embedding from the `vchunks` (text lane) and `vchunks_code`
+/// (SEM-55 dual-lane code embedder, when present) vec0 stores — rowid = chunk
+/// id in both, joined back to `chunks` for the filepath — indexed to match
+/// `files`. A file's chunks all land in exactly ONE lane (`sqlite_vec.rs`'s
+/// `vec_table` choice is per-file), so unioning the two lanes still yields each
+/// file a single-lane, self-consistent mean vector; the per-file `sums[fi].len()
+/// == v.len()` guard below only ever compares vectors from that one lane.
+/// Best-effort: a missing vector store / extension yields an `Err`, and the
+/// caller simply skips kNN densification.
 fn file_mean_embeddings(conn: &Connection, files: &[String]) -> rusqlite::Result<Vec<Vec<f32>>> {
     let index: HashMap<&str, usize> = files
         .iter()
@@ -34,30 +40,43 @@ fn file_mean_embeddings(conn: &Connection, files: &[String]) -> rusqlite::Result
         .collect();
     let mut sums: Vec<Vec<f32>> = vec![Vec::new(); files.len()];
     let mut counts = vec![0u32; files.len()];
-    let mut stmt = conn
-        .prepare("SELECT c.filepath, v.embedding FROM vchunks v JOIN chunks c ON c.id = v.rowid")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
-    })?;
-    for (fp, blob) in rows.flatten() {
-        let Some(&fi) = index.get(fp.as_str()) else {
-            continue;
-        };
-        if blob.len() % 4 != 0 {
-            continue;
-        }
-        let v: Vec<f32> = blob
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
-        if sums[fi].is_empty() {
-            sums[fi] = v;
-        } else if sums[fi].len() == v.len() {
-            for (s, x) in sums[fi].iter_mut().zip(&v) {
-                *s += x;
+    let mut accumulate = |sql: &str| -> rusqlite::Result<()> {
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        for (fp, blob) in rows.flatten() {
+            let Some(&fi) = index.get(fp.as_str()) else {
+                continue;
+            };
+            if blob.len() % 4 != 0 {
+                continue;
             }
+            let v: Vec<f32> = blob
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            if sums[fi].is_empty() {
+                sums[fi] = v;
+            } else if sums[fi].len() == v.len() {
+                for (s, x) in sums[fi].iter_mut().zip(&v) {
+                    *s += x;
+                }
+            }
+            counts[fi] += 1;
         }
-        counts[fi] += 1;
+        Ok(())
+    };
+    accumulate("SELECT c.filepath, v.embedding FROM vchunks v JOIN chunks c ON c.id = v.rowid")?;
+    let has_code_lane: bool = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='vchunks_code'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if has_code_lane {
+        accumulate(
+            "SELECT c.filepath, v.embedding FROM vchunks_code v JOIN chunks c ON c.id = v.rowid",
+        )?;
     }
     for fi in 0..files.len() {
         if counts[fi] > 1 {
@@ -314,6 +333,131 @@ pub fn compute_projection(conn: &Connection) -> rusqlite::Result<Vec<ProjView>> 
     }
     views.sort_by(|a, b| b.member_files.len().cmp(&a.member_files.len()));
     Ok(views)
+}
+
+/// SEM-57: close the live incremental-resolve gap for cross-file code `calls`.
+///
+/// The live per-file indexer (`sqlite_vec::index_graph_ast`) resolves each
+/// file's `calls`/`uses`/`inherits` refs against `graph_ast::resolve_refs` — a
+/// DB lookup of *already-indexed* entities. That's order-dependent: a call
+/// whose target lives in a file indexed LATER finds nothing and is dropped,
+/// never retried (self-healing only if that other file is re-written later).
+/// The batch builder (`build_kg.rs`) doesn't have this problem — it parses
+/// every file up front and runs `graph_ast::resolve`, a global pass over ALL
+/// files' symbol tables at once.
+///
+/// Queue-settle (this function's caller, `CacheFs::refresh_knowledge_graph`,
+/// once the graph-extraction queue has drained) is the SAME "all files
+/// indexed" precondition batch's `resolve()` relies on. So here we re-parse
+/// every code file's CURRENT content and re-run the real `graph_ast::resolve`
+/// (reused, not reimplemented) over the whole set, then replace the `calls`
+/// relations for those files with the complete result.
+///
+/// Scoped to `calls` only (this fix's bounded scope — see
+/// `tickets/code-community-quality`). `contains`/`method`/`imports` and the
+/// `graph_entity`/`edges` rows have no such ordering dependency and are
+/// already fully correct from the per-file incremental path on every write;
+/// left untouched here.
+///
+/// Must be called BEFORE `materialize_projection` (whose caller already holds
+/// `conn`'s lock) so the community projection sees the corrected graph. Takes
+/// an already-locked `conn` directly (rather than `&Db`) so file-content reads
+/// (`db::read_content_locked`) never re-acquire the connection mutex — that
+/// would deadlock re-entrantly on `parking_lot::Mutex`.
+///
+/// Gliner-kg gated: the live AST code lane itself (`index_graph_ast`) only
+/// exists behind that feature; without it, code files never get `calls` via
+/// the AST lane in the first place, so there's nothing to re-resolve. A no-op
+/// stub (below) keeps the call site feature-independent.
+#[cfg(feature = "gliner-kg")]
+pub fn resolve_code_calls(conn: &Connection) -> rusqlite::Result<()> {
+    use crate::backend::graph_ast;
+
+    // 1. Every real regular file's (path, ino) — same CTE as
+    //    `Db::materialized_file_paths` / `Db::enqueue_all_real_files_for_push`.
+    let files: Vec<(String, i64)> = {
+        let mut stmt = conn.prepare(
+            "WITH RECURSIVE paths(ino, path) AS (
+                 SELECT ino, '' FROM fs_inode WHERE ino = ?1
+               UNION ALL
+                 SELECT d.ino, paths.path || '/' || d.name
+                   FROM fs_dentry d JOIN paths ON d.parent_ino = paths.ino)
+             SELECT paths.path, paths.ino
+               FROM paths JOIN fs_inode i ON i.ino = paths.ino
+              WHERE i.derived = 0 AND (i.mode & 61440) = 32768 AND paths.ino != ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![super::ROOT_INO as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
+        rows.filter_map(Result::ok).collect()
+    };
+
+    // 2. Parse every code file's CURRENT content into a `FileAst`. Non-code
+    //    (no `Lang`) and binary/non-UTF8/unparseable files are skipped —
+    //    identical fail-open behavior to `index_graph_ast`.
+    let mut asts: Vec<graph_ast::FileAst> = Vec::new();
+    for (path, ino) in &files {
+        if graph_ast::Lang::from_path(path).is_none() {
+            continue;
+        }
+        let raw = super::db::read_content_locked(conn, *ino as u64);
+        let Ok(content) = String::from_utf8(raw) else {
+            continue;
+        };
+        if let Some(ast) = graph_ast::parse_file(path, &content) {
+            asts.push(ast);
+        }
+    }
+    if asts.is_empty() {
+        return Ok(());
+    }
+
+    // 3. The REAL batch resolve — one global symbol table over every code
+    //    file at once (reused verbatim; see `graph_ast::resolve`).
+    let resolved = graph_ast::resolve(&asts);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    // 4. Rewrite ONLY `calls` for files that parsed successfully this round —
+    //    never touch contains/method/imports/entities/edges. A file that
+    //    failed to (re-)parse this pass keeps its existing `calls` rows
+    //    untouched (self-heals on the next successful settle) rather than
+    //    losing them.
+    for f in &asts {
+        conn.execute(
+            "DELETE FROM graph_relation WHERE source_file = ?1 AND relation = 'calls'",
+            [&f.path],
+        )?;
+    }
+    for r in resolved.iter().filter(|r| r.relation == "calls") {
+        conn.execute(
+            "INSERT OR IGNORE INTO graph_relation\
+             (source,target,relation,confidence,confidence_score,source_file,source_location,weight,created_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            rusqlite::params![
+                r.source,
+                r.target,
+                r.relation,
+                r.confidence,
+                r.confidence_score,
+                r.source_file,
+                r.source_location,
+                r.weight,
+                now
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// No-op without `gliner-kg` — see the doc comment on the gated definition
+/// above. Keeps `CacheFs::refresh_knowledge_graph`'s call site
+/// feature-independent (mirrors `sqlite_vec::gliner_mode_active`'s pattern).
+#[cfg(not(feature = "gliner-kg"))]
+pub fn resolve_code_calls(_conn: &Connection) -> rusqlite::Result<()> {
+    Ok(())
 }
 
 /// Persist [`compute_projection`] into `graph_community` + `graph_god_node` so
@@ -766,6 +910,37 @@ mod tests {
             rusqlite::params![file],
         )
         .unwrap();
+    }
+
+    /// SEM-57 (1b): a code file's chunks live in `vchunks_code` (dual-lane
+    /// indexer), never `vchunks` — before this fix `file_mean_embeddings` only
+    /// read `vchunks`, so every code file got an empty mean vector and zero
+    /// kNN edges. It must now also read `vchunks_code` when present.
+    #[test]
+    fn file_mean_embeddings_includes_code_lane() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup(&conn);
+        conn.execute_batch(
+            "CREATE TABLE vchunks(rowid INTEGER PRIMARY KEY, embedding BLOB);
+             CREATE TABLE vchunks_code(rowid INTEGER PRIMARY KEY, embedding BLOB);",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chunks(id, filepath, text) VALUES (1, '/svc/main.go', 'x')",
+            [],
+        )
+        .unwrap();
+        let v: Vec<f32> = vec![1.0, 2.0, 3.0];
+        let blob: Vec<u8> = v.iter().flat_map(|f| f.to_le_bytes()).collect();
+        conn.execute(
+            "INSERT INTO vchunks_code(rowid, embedding) VALUES (1, ?1)",
+            rusqlite::params![blob],
+        )
+        .unwrap();
+
+        let files = vec!["/svc/main.go".to_string()];
+        let emb = file_mean_embeddings(&conn, &files).unwrap();
+        assert_eq!(emb[0], v, "code-lane vector recovered for the code file");
     }
 
     #[test]

@@ -201,4 +201,181 @@ mod tests {
         q.enqueue(1, "/a.md".into());
         assert_eq!(q.depth(), 1);
     }
+
+    // --- SEM-56: settle → materialize_projection scheduling -----------------
+    //
+    // `run_graph_worker`'s `kg_refresh` callback (L6) is the hook the daemon
+    // uses to call `materialize_projection` once the live KG settles (see
+    // `daemon_runtime.rs`'s `refresh_knowledge_graph`, which wraps it). These
+    // tests drive that trigger directly: a minimal `LocalIndexer` stands in
+    // for the store so the debounce/once-per-settle contract and the actual
+    // Leiden-community materialization are both verified without a real
+    // gliner/AST extractor or network.
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct FakeGraphIndexer {
+        queue: Arc<GraphQueue>,
+        extract_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::cache::LocalIndexer for FakeGraphIndexer {
+        async fn index(&self, _ino: u64, _filepath: &str, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn remove(&self, _filepath: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn rename(&self, _old: &str, _new: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn graph_queue(&self) -> Option<Arc<GraphQueue>> {
+            Some(self.queue.clone())
+        }
+        async fn index_graph(&self, _ino: u64, _filepath: &str) -> anyhow::Result<()> {
+            self.extract_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// A burst of enqueued files must coalesce into ONE `kg_refresh` call once
+    /// the queue drains and settles — never one call per file. Louvain is
+    /// O(graph); per-write materialization is exactly what `materialize_kg`'s
+    /// doc comment forbids.
+    #[tokio::test]
+    async fn settle_runs_kg_refresh_once_per_batch_not_per_file() {
+        let queue = GraphQueue::new();
+        let extract_calls = Arc::new(AtomicUsize::new(0));
+        let indexer: Arc<dyn crate::cache::LocalIndexer> = Arc::new(FakeGraphIndexer {
+            queue: queue.clone(),
+            extract_calls: extract_calls.clone(),
+        });
+        let refresh_calls = Arc::new(AtomicUsize::new(0));
+        let refresh_calls_cb = refresh_calls.clone();
+        let kg_refresh: Option<Arc<dyn Fn() + Send + Sync + 'static>> =
+            Some(Arc::new(move || {
+                refresh_calls_cb.fetch_add(1, Ordering::SeqCst);
+            }));
+
+        // Enqueue a burst of 3 files before the worker even starts draining.
+        queue.enqueue(1, "/a.go".into());
+        queue.enqueue(2, "/b.go".into());
+        queue.enqueue(3, "/c.go".into());
+
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let worker = tokio::spawn(run_graph_worker(indexer, shutdown_rx, kg_refresh));
+
+        // Past the 500ms debounce tick, long enough for the burst to fully
+        // drain and the queue to settle at least once.
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        shutdown_tx.send(true).unwrap();
+        worker.await.unwrap();
+
+        assert_eq!(
+            extract_calls.load(Ordering::SeqCst),
+            3,
+            "all 3 files must still be extracted"
+        );
+        assert_eq!(
+            refresh_calls.load(Ordering::SeqCst),
+            1,
+            "kg_refresh must fire ONCE per settle, not once per file"
+        );
+    }
+
+    /// End-to-end (minus a real extractor): wire `kg_refresh` to the actual
+    /// `materialize_projection` over an in-memory graph with two disjoint
+    /// clusters (mirroring the two-Go-package live E2E). Proves the settle
+    /// trigger really does populate `graph_community` — not just that the
+    /// callback fires.
+    #[tokio::test]
+    async fn settle_triggered_refresh_materializes_communities_from_edges() {
+        use rusqlite::Connection;
+        let conn = Arc::new(parking_lot::Mutex::new(Connection::open_in_memory().unwrap()));
+        {
+            let c = conn.lock();
+            c.execute_batch(
+                "CREATE TABLE edges(from_path TEXT, to_path TEXT, edge_kind TEXT, created_at INT, confidence TEXT);
+                 CREATE TABLE graph_entity(path TEXT PRIMARY KEY, name TEXT, kind TEXT);
+                 CREATE TABLE chunks(id INTEGER PRIMARY KEY, filepath TEXT, text TEXT);
+                 CREATE TABLE graph_community(file_path TEXT, community_id INTEGER, is_primary INTEGER DEFAULT 1, PRIMARY KEY(file_path,community_id));
+                 CREATE TABLE graph_god_node(community_id INTEGER, entity_path TEXT, rank INTEGER, PRIMARY KEY(community_id,entity_path));",
+            )
+            .unwrap();
+            // Two disjoint clusters, no shared entity between them.
+            for (file, ent) in [
+                ("/pkgA/widget.go", "Widget"),
+                ("/pkgA/widget_store.go", "Widget"),
+                ("/pkgB/invoice.go", "Invoice"),
+                ("/pkgB/invoice_ledger.go", "Invoice"),
+            ] {
+                let ent_path = format!("/entities/{ent}");
+                c.execute(
+                    "INSERT INTO edges(from_path,to_path,edge_kind,created_at,confidence) \
+                     VALUES (?1,?2,'Concept',0,'INFERRED')",
+                    rusqlite::params![file, ent_path],
+                )
+                .unwrap();
+                c.execute(
+                    "INSERT OR REPLACE INTO graph_entity(path,name,kind) VALUES (?1,?2,'Concept')",
+                    rusqlite::params![ent_path, ent],
+                )
+                .unwrap();
+                c.execute(
+                    "INSERT INTO chunks(filepath,text) VALUES (?1,'x')",
+                    rusqlite::params![file],
+                )
+                .unwrap();
+            }
+        }
+
+        let queue = GraphQueue::new();
+        let indexer: Arc<dyn crate::cache::LocalIndexer> = Arc::new(FakeGraphIndexer {
+            queue: queue.clone(),
+            extract_calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let conn_for_refresh = conn.clone();
+        let kg_refresh: Option<Arc<dyn Fn() + Send + Sync + 'static>> =
+            Some(Arc::new(move || {
+                let c = conn_for_refresh.lock();
+                super::super::graph_file::materialize_projection(&c)
+                    .expect("materialize_projection must not fail on a well-formed graph");
+            }));
+
+        // Baseline (pre-settle): the live path's community tables start empty —
+        // this is the bug SEM-56 fixes (batch-only materialization).
+        {
+            let c = conn.lock();
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM graph_community", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 0, "graph_community must be empty before the graph settles");
+        }
+
+        queue.enqueue(1, "/pkgA/widget.go".into());
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let worker = tokio::spawn(run_graph_worker(indexer, shutdown_rx, kg_refresh));
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        shutdown_tx.send(true).unwrap();
+        worker.await.unwrap();
+
+        let c = conn.lock();
+        let communities: i64 = c
+            .query_row(
+                "SELECT COUNT(DISTINCT community_id) FROM graph_community",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let members: i64 = c
+            .query_row("SELECT COUNT(*) FROM graph_community", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            communities >= 2,
+            "two disjoint clusters must yield >=2 communities, got {communities}"
+        );
+        assert_eq!(members, 4, "all 4 files must be projected into a community");
+    }
 }

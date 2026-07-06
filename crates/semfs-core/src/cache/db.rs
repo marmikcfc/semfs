@@ -805,31 +805,7 @@ impl Db {
     /// Used by the push worker when sending file content.
     pub(crate) fn read_all_content(&self, ino: u64) -> Vec<u8> {
         let conn = self.conn.lock();
-        let size: i64 = match conn.query_row(
-            "SELECT size FROM fs_inode WHERE ino = ?1",
-            [ino as i64],
-            |r| r.get(0),
-        ) {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
-        };
-        if size <= 0 {
-            return Vec::new();
-        }
-        let mut stmt = match conn
-            .prepare("SELECT data FROM fs_data WHERE ino = ?1 ORDER BY chunk_index ASC")
-        {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
-        };
-        let mut out: Vec<u8> = Vec::with_capacity(size as usize);
-        if let Ok(rows) = stmt.query_map([ino as i64], |r| r.get::<_, Vec<u8>>(0)) {
-            for row in rows.flatten() {
-                out.extend_from_slice(&row);
-            }
-        }
-        out.truncate(size as usize);
-        out
+        read_content_locked(&conn, ino)
     }
 
     /// Record a binary file whose content could not be extracted to searchable
@@ -1122,6 +1098,38 @@ impl Db {
         .map(|n| n as usize)
         .unwrap_or(0)
     }
+}
+
+/// [`Db::read_all_content`]'s body, factored out to take an ALREADY-HELD
+/// connection — lets a caller that holds `db.conn.lock()` for a larger
+/// transaction (e.g. the settle-time global code-`calls` re-resolve,
+/// `graph_file::resolve_code_calls`, SEM-57) read file content without a
+/// re-entrant `Mutex::lock()` deadlock.
+pub(crate) fn read_content_locked(conn: &Connection, ino: u64) -> Vec<u8> {
+    let size: i64 = match conn.query_row(
+        "SELECT size FROM fs_inode WHERE ino = ?1",
+        [ino as i64],
+        |r| r.get(0),
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    if size <= 0 {
+        return Vec::new();
+    }
+    let mut stmt =
+        match conn.prepare("SELECT data FROM fs_data WHERE ino = ?1 ORDER BY chunk_index ASC") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+    let mut out: Vec<u8> = Vec::with_capacity(size as usize);
+    if let Ok(rows) = stmt.query_map([ino as i64], |r| r.get::<_, Vec<u8>>(0)) {
+        for row in rows.flatten() {
+            out.extend_from_slice(&row);
+        }
+    }
+    out.truncate(size as usize);
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

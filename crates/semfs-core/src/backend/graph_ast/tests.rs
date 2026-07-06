@@ -348,3 +348,39 @@ fn resolve_refs_matches_lookup_incrementally() {
     });
     assert!(rel(&wrong_kind, "calls").is_empty());
 }
+
+#[test]
+fn settle_time_resolve_recovers_forward_reference_incremental_misses() {
+    // SEM-57 root cause: the live per-file path (`index_graph_ast`) resolves
+    // via `resolve_refs` against only ALREADY-INDEXED entities. If `a.go` (the
+    // caller) is indexed BEFORE `b.go` (the callee's home file), the
+    // incremental pass never learns about `b.go`'s `Helper` and drops the
+    // `calls` edge — permanently, unless `b.go` happens to be re-written
+    // later. The settle-time fix (`graph_file::resolve_code_calls`) instead
+    // re-runs the real batch `resolve()` over every file's CURRENT content
+    // once the queue has settled, recovering exactly this edge.
+    let a = parse_file(
+        "pkg/a.go",
+        "package pkg\n\nfunc Caller() {\n\tHelper()\n}\n",
+    )
+    .unwrap();
+    let b = parse_file("pkg/b.go", "package pkg\n\nfunc Helper() {}\n").unwrap();
+
+    // 1. Simulate the incremental live path: `a.go` is indexed first, so its
+    //    `resolve_refs` lookup only knows about entities `a.go` itself has
+    //    defined so far (none relevant to `Helper`) — `b.go` doesn't exist yet
+    //    from the indexer's point of view.
+    let incremental = resolve_refs(&a, |_name| Vec::new());
+    assert!(
+        incremental.iter().all(|r| r.relation != "calls"),
+        "a purely order-dependent incremental pass must miss the forward reference: {incremental:?}"
+    );
+
+    // 2. Settle-time fix: `graph_ast::resolve` (the same fn the batch builder
+    //    uses) sees BOTH files' full symbol tables at once and recovers it.
+    let settled = resolve(&[a, b]);
+    assert!(
+        has_edge(&settled, "calls", "pkg.a.Caller", "pkg.b.Helper"),
+        "global resolve at settle must recover the A→B calls edge: {settled:?}"
+    );
+}

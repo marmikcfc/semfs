@@ -105,8 +105,13 @@ can only come from the batch finalize. The gliner integration went into the **ba
   `graph_relation=5` with gliner kinds (database/module/service/library) + typed relations
   (calls/depends on/…), vs the `graph_entity=0` baseline above. Default suite stays 380 green.
   Changes: `crates/semfs-core/src/backend/sqlite_vec.rs`, `crates/semfs/Cargo.toml`.
-  **So "mount = search + typed KG" is now TRUE** — only Leiden communities (`ppr_map`) remain batch-only.
-- **Incremental community maintenance** — likely infeasible cheaply; `ppr_map` stays batch-only.
+  **So "mount = search + typed KG" is now TRUE.**
+- ✅ **CORRECTED (SEM-56): Leiden communities are NOT batch-only.** The daemon already materializes
+  them on the live path (debounced queue-settle → `kg_refresh` → `materialize_projection`, from commit
+  `60a9b11`) — verified: a live mount yields a populated `graph_community`. An earlier note here
+  claiming "batch-only / ppr_map broken on live" was wrong (unverified). Remaining open item is
+  community *quality* for code-heavy repos (file-qualified AST entities → fragmented communities),
+  which is entity-resolution (SEM-51), not scheduling.
 - Confirm the earlier mac `semfs grep` "configure a local embedder" was a search-side embedder
   resolution issue (indexing itself demonstrably works — chunks were written).
 

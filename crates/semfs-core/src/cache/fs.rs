@@ -848,6 +848,14 @@ impl CacheFs {
     pub fn refresh_knowledge_graph(&self) -> VfsResult<()> {
         let (digest, graph_json, report) = {
             let conn = self.db.conn.lock();
+            // SEM-57: settle-time global re-resolve of cross-file code `calls`
+            // (see `graph_file::resolve_code_calls` for the full rationale) —
+            // must run BEFORE `materialize_projection` below so the community
+            // projection sees the corrected graph. Fail-open: never blocks the
+            // rest of the refresh (or the mount).
+            if let Err(e) = super::graph_file::resolve_code_calls(&conn) {
+                tracing::warn!("global code-calls resolve failed (non-fatal): {e}");
+            }
             let digest = super::graph_file::build_digest(&conn)
                 .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
             // graphify-parity queryable artifact alongside the markdown digest.
