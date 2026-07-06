@@ -22,6 +22,7 @@ pub mod login;
 pub mod logout;
 pub mod logs;
 pub mod marker;
+pub mod mcp;
 pub mod mount;
 pub mod resolve;
 pub mod seed_verify;
@@ -74,6 +75,9 @@ pub enum Command {
     /// Verify a built seed `.db` is content-complete (gate; exits non-zero if not)
     SeedVerify(seed_verify::Args),
 
+    /// Run a stdio MCP server exposing semantic search (`semfs grep`) as a tool
+    Mcp(mcp::Args),
+
     /// Internal: long-running daemon entry point (do not invoke directly)
     #[command(hide = true)]
     DaemonInner(daemon_inner::Args),
@@ -95,6 +99,7 @@ pub async fn dispatch(cmd: Command) -> Result<()> {
         Command::Logs(args) => logs::run(args).await,
         Command::Sync(args) => sync::run(args).await,
         Command::SeedVerify(args) => seed_verify::run(args).await,
+        Command::Mcp(args) => mcp::run(args).await,
         Command::DaemonInner(args) => daemon_inner::run(args).await,
     }
 }

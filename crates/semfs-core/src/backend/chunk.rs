@@ -126,9 +126,10 @@ impl Chunk {
     }
 }
 
-/// Char budget for the v2 chunker. ~2000 chars ≈ 500 tokens — cAST's empirical
-/// sweet spot for code retrieval, and a far better unit than 200 whitespace-words.
-pub const CHUNK_CHAR_BUDGET: usize = 2000;
+/// Char budget for the v2 chunker. ~3500 chars ≈ 875 tokens — larger budget keeps
+/// more whole functions in a single AST-aligned chunk (fewer budget-splits mid-body),
+/// at the cost of slightly coarser embedding units. A far better unit than words.
+pub const CHUNK_CHAR_BUDGET: usize = 3500;
 
 /// Split `s` into ≤`budget`-char windows at LINE boundaries (keeps code/prose
 /// lines intact). Each window is a verbatim contiguous substring of `s`.
