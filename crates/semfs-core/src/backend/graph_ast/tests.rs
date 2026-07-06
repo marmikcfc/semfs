@@ -298,3 +298,53 @@ fn unresolved_refs_dropped() {
     let (_ast, rels) = graph("x.py", "def f():\n    return totally_unknown_fn()\n");
     assert!(rel(&rels, "calls").is_empty());
 }
+
+#[test]
+fn from_label_round_trips_as_str() {
+    for k in [
+        CodeKind::Class,
+        CodeKind::Interface,
+        CodeKind::Function,
+        CodeKind::Method,
+        CodeKind::Module,
+    ] {
+        assert_eq!(CodeKind::from_label(k.as_str()), Some(k));
+    }
+    assert_eq!(CodeKind::from_label("bogus"), None);
+}
+
+#[test]
+fn resolve_refs_matches_lookup_incrementally() {
+    // The live per-file path: worker.go's `helper()` call resolves against an
+    // EXTERNAL lookup (standing in for a `graph_entity` DB query) instead of a
+    // global `resolve()` symbol table built from all files at once.
+    let worker = parse_file(
+        "srv/worker.go",
+        "package main\n\nfunc caller() {\n    helper()\n}\n",
+    )
+    .unwrap();
+
+    // Nothing known yet (helper.go not indexed): no calls edge.
+    let none: Vec<CodeRelation> = resolve_refs(&worker, |_| Vec::new());
+    assert!(none.is_empty());
+
+    // helper.go has since been indexed and `helper` is now a known Function.
+    let resolved = resolve_refs(&worker, |name| {
+        if name == "helper" {
+            vec![("srv.helper.helper".to_string(), CodeKind::Function)]
+        } else {
+            Vec::new()
+        }
+    });
+    assert!(has_edge(&resolved, "calls", "caller", "helper.helper"));
+    // Kind-incompatible candidates (e.g. a Class named `helper`) don't match a
+    // `calls` ref.
+    let wrong_kind = resolve_refs(&worker, |name| {
+        if name == "helper" {
+            vec![("srv.helper.Helper".to_string(), CodeKind::Class)]
+        } else {
+            Vec::new()
+        }
+    });
+    assert!(rel(&wrong_kind, "calls").is_empty());
+}

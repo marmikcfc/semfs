@@ -77,6 +77,19 @@ impl CodeKind {
     fn is_callable(self) -> bool {
         matches!(self, CodeKind::Function | CodeKind::Method)
     }
+    /// Parse back a kind label as persisted by [`Self::as_str`] (e.g.
+    /// `graph_entity.kind` in the DB) — used by [`resolve_refs`]'s DB-backed
+    /// lookup to interpret a candidate's kind without a second column.
+    pub fn from_label(s: &str) -> Option<CodeKind> {
+        Some(match s {
+            "class" => CodeKind::Class,
+            "interface" => CodeKind::Interface,
+            "function" => CodeKind::Function,
+            "method" => CodeKind::Method,
+            "module" => CodeKind::Module,
+            _ => return None,
+        })
+    }
 }
 
 /// One extracted code entity. `qualified` is the module-qualified node id
@@ -193,6 +206,76 @@ impl Lang {
             Lang::Php => Q_PHP,
         }
     }
+}
+
+/// A top-level definition's byte span + label, for AST-aware chunking
+/// (`chunk::code_chunks`). Distinct from `CodeEntity` (the KG node): this is
+/// just "what to cut on," not a graph node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefSpan {
+    pub start: usize,
+    pub end: usize,
+    pub line: usize,
+    pub kind: CodeKind,
+    pub name: String,
+}
+
+/// Top-level class/function/method definitions (byte spans, source order) plus
+/// the file's import lines — for AST-aware chunking. Reuses the same tree-sitter
+/// query as [`parse_file`]. `None` if the extension is unsupported or the grammar
+/// fails to load (caller falls back to the word/char chunker). Nested defs are
+/// dropped: the chunker takes each OUTERMOST unit and recursively splits it only
+/// if it exceeds the size budget.
+pub fn def_spans(path: &str, src: &str) -> Option<(Vec<DefSpan>, Vec<String>)> {
+    let lang = Lang::from_path(path)?;
+    let language = lang.language();
+    let query = Query::new(&language, lang.query_src()).ok()?;
+    let mut parser = Parser::new();
+    parser.set_language(&language).ok()?;
+    let tree = parser.parse(src, None)?;
+    let bytes = src.as_bytes();
+    let names = query.capture_names();
+
+    let mut defs: Vec<DefSpan> = Vec::new();
+    let mut imports: Vec<String> = Vec::new();
+    let mut cursor = QueryCursor::new();
+    let mut it = cursor.matches(&query, tree.root_node(), bytes);
+    while let Some(m) = it.next() {
+        let mut kind: Option<CodeKind> = None;
+        let mut range: Option<(usize, usize, usize)> = None; // start, end, line
+        let mut name: Option<String> = None;
+        for cap in m.captures {
+            let node = cap.node;
+            let r = (node.start_byte(), node.end_byte(), node.start_position().row + 1);
+            match names[cap.index as usize] {
+                "name" => name = Some(node.utf8_text(bytes).unwrap_or("").to_string()),
+                "def.class" => (kind, range) = (Some(CodeKind::Class), Some(r)),
+                "def.interface" => (kind, range) = (Some(CodeKind::Interface), Some(r)),
+                "def.function" => (kind, range) = (Some(CodeKind::Function), Some(r)),
+                "def.method" => (kind, range) = (Some(CodeKind::Method), Some(r)),
+                "def.module" => (kind, range) = (Some(CodeKind::Module), Some(r)),
+                "import" => imports.push(node.utf8_text(bytes).unwrap_or("").trim().to_string()),
+                _ => {}
+            }
+        }
+        if let (Some(kind), Some((start, end, line)), Some(name)) = (kind, range, name) {
+            if !name.trim().is_empty() {
+                defs.push(DefSpan { start, end, line, kind, name });
+            }
+        }
+    }
+    // Keep only OUTERMOST defs (a def strictly contained in another is nested).
+    let mut top: Vec<DefSpan> = defs
+        .iter()
+        .filter(|d| {
+            !defs.iter().any(|o| {
+                o.start <= d.start && o.end >= d.end && (o.start, o.end) != (d.start, d.end)
+            })
+        })
+        .cloned()
+        .collect();
+    top.sort_by_key(|d| d.start);
+    Some((top, imports))
 }
 
 /// Module path from a file path: `pkg/sub/mod.py` → `pkg.sub.mod`.
@@ -494,6 +577,61 @@ pub fn resolve(files: &[FileAst]) -> Vec<CodeRelation> {
                     source_location: format!("{}:{}", f.path, r.line),
                 });
             }
+        }
+    }
+    out
+}
+
+/// Incremental, single-file variant of [`resolve`] for the live per-file index
+/// path (`sqlite_vec::index_graph_ast`, SEM-55). [`resolve`] builds its symbol
+/// table from ALL files at once — fine for the batch builder (one shot, every
+/// file known up front), but the live path indexes one file per write, and
+/// re-running a full-corpus `resolve()` on every write would be O(N²) over the
+/// whole tree. Here the caller supplies `lookup`: given a bare symbol name,
+/// return candidate `(qualified name, kind)` pairs from wherever it tracks
+/// already-known entities (in practice, a `graph_entity` query). Matching
+/// rules (kind-compatibility, no self-loops, EXTRACTED/INFERRED confidence)
+/// mirror `resolve` exactly. Does NOT include `file.extracted` — that ready
+/// EXTRACTED half (`contains`/`method`/`imports`) is written by the caller
+/// directly. This is inherently order-dependent (a callee not yet indexed is
+/// missed on this pass) but self-heals: every file re-indexes on write, so the
+/// edge appears once the callee exists.
+pub fn resolve_refs(
+    file: &FileAst,
+    lookup: impl Fn(&str) -> Vec<(String, CodeKind)>,
+) -> Vec<CodeRelation> {
+    let mut out: Vec<CodeRelation> = Vec::new();
+    for r in &file.refs {
+        let cands = lookup(&r.name);
+        if cands.is_empty() {
+            continue;
+        }
+        let (relation, want): (&str, fn(CodeKind) -> bool) = match r.kind {
+            RefKind::Calls => ("calls", CodeKind::is_callable),
+            RefKind::Inherits => ("inherits", CodeKind::is_type),
+            RefKind::Uses => ("uses", CodeKind::is_type),
+        };
+        // Distinct targets matching the expected kind, excluding self-loops.
+        let mut seen: Vec<String> = Vec::new();
+        for (qual, kind) in cands {
+            if !want(kind) || qual == r.from || seen.contains(&qual) {
+                continue;
+            }
+            seen.push(qual.clone());
+            let (conf, score, weight) = match r.kind {
+                RefKind::Inherits => ("EXTRACTED", 1.0, 1.0),
+                _ => ("INFERRED", 0.8, 0.8),
+            };
+            out.push(CodeRelation {
+                source: r.from.clone(),
+                target: qual,
+                relation: relation.to_string(),
+                confidence: conf.into(),
+                confidence_score: score,
+                weight,
+                source_file: file.path.clone(),
+                source_location: format!("{}:{}", file.path, r.line),
+            });
         }
     }
     out

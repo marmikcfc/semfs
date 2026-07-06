@@ -20,6 +20,10 @@ path = "src/lib.rs"
 # vectors as text cast to `::vector` (no `pgvector` crate) to keep one sqlx version.
 pg = ["dep:sqlx"]
 pg-local = ["pg", "dep:pglite-oxide"]
+# GLiNER2 doc-lane KG extractor (GPU-free, Candle). Optional: pulls candle-*.
+# Additive — NOT mutually exclusive with fastembed (Candle uses no ONNX Runtime,
+# so no ort `-sys` collision). Enable for the `build_kg` example only.
+gliner-kg = ["dep:gliner2"]
 
 [dependencies]
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-ring"], optional = true }
@@ -38,6 +42,10 @@ reqwest = { workspace = true }
 rusqlite = { workspace = true }
 sqlite-vec = { workspace = true }
 fastembed = { workspace = true }
+# GLiNER2 KG extractor (doc lane) — Candle backend, no ONNX Runtime. Optional,
+# behind the `gliner-kg` feature. See backend/graph_gliner.rs. Pinned to the exact
+# rev verified end-to-end on the sftpgo probe (crates.io tops out at 0.1.2).
+gliner2 = { git = "https://github.com/paul-english/gliner2_rs", rev = "8fd7ab893c4efe76cf867906ef0892187eab9d60", optional = true }
 # Fetch a SPECIFIC reranker ONNX variant (int8) from the model's HF repo —
 # fastembed's reranker registry is pinned to full-precision onnx/model.onnx.
 # Match fastembed's hf-hub features (ureq sync client + native-tls) to share one

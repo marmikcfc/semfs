@@ -285,8 +285,21 @@ impl PgVectorStore {
                 "content exceeds index cap; indexing head only (partial)"
             );
         }
-        let chunks = chunk::recursive_chunks(content, &chunk::ChunkOptions::default());
-        let vectors = self.embedder.embed(&chunks)?;
+        // v2 (opt-in `SEMFS_CHUNK_V2=1`): AST-aware code chunking + context headers.
+        // Legacy path wraps word-window chunks with header=None (no regression).
+        let chunks: Vec<chunk::Chunk> =
+            if std::env::var("SEMFS_CHUNK_V2").ok().as_deref() == Some("1") {
+                chunk::chunk_file(filepath, content, chunk::CHUNK_CHAR_BUDGET)
+            } else {
+                chunk::recursive_chunks(content, &chunk::ChunkOptions::default())
+                    .into_iter()
+                    .map(|t| chunk::Chunk { text: t, header: None, line_start: 0, line_end: 0 })
+                    .collect()
+            };
+        // Embed header+body; store `text` VERBATIM (grep line-mapping + the L7
+        // content reconstruction below both depend on it).
+        let indexed: Vec<String> = chunks.iter().map(|c| c.indexed()).collect();
+        let vectors = self.embedder.embed(&indexed)?;
         let now = now_ms();
         let mut conn = self.conn.lock().await;
         let mut tx = conn.begin().await?;
@@ -304,7 +317,7 @@ impl PgVectorStore {
             .bind(filepath)
             .execute(&mut *tx)
             .await?;
-        for (ord, (text, vec)) in chunks.iter().zip(vectors.iter()).enumerate() {
+        for (ord, (c, vec)) in chunks.iter().zip(vectors.iter()).enumerate() {
             sqlx::query(
                 "INSERT INTO chunks(container, ino, filepath, ord, text, last_accessed_at, embedding) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7::vector)",
@@ -313,7 +326,7 @@ impl PgVectorStore {
             .bind(ino as i64)
             .bind(filepath)
             .bind(ord as i32)
-            .bind(text)
+            .bind(&c.text)
             .bind(now)
             .bind(vec_literal(vec))
             .execute(&mut *tx)

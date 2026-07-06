@@ -27,6 +27,8 @@ use std::path::Path;
 
 use rusqlite::{params, Connection};
 use semfs_core::backend::graph::{entity_path, extract_graph, GraphExtraction};
+#[cfg(feature = "gliner-kg")]
+use semfs_core::backend::graph_gliner::GlinerExtractor;
 use semfs_core::backend::graph_ast;
 use semfs_core::llm::LlmClient;
 
@@ -254,73 +256,116 @@ fn main() -> anyhow::Result<()> {
         .collect();
     let code_relations = graph_ast::resolve(&ast_files);
 
-    if !llm_files.is_empty() && key.is_none() {
-        anyhow::bail!(
-            "OPENROUTER_API_KEY required: {} non-code files need the LLM lane",
-            llm_files.len()
-        );
-    }
-    let workers = kg_workers();
-    println!(
-        "rebuilding KG: {} code files (AST) + {} doc files (LLM, {workers} workers)…",
-        ast_files.len(),
-        llm_files.len()
-    );
+    // Doc lane extractor: GLiNER2 (gliner-kg feature — GPU-free, deterministic,
+    // the default when compiled) or the LLM `extract_graph`. Force the LLM path
+    // with `SEMFS_KG_EXTRACTOR=llm`. Both arms yield `(conn, n_doc_written)`.
+    #[cfg(feature = "gliner-kg")]
+    let gliner_mode = std::env::var("SEMFS_KG_EXTRACTOR").as_deref() != Ok("llm");
+    #[cfg(not(feature = "gliner-kg"))]
+    let gliner_mode = false;
 
-    let key = key.unwrap_or_default();
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64;
-    let files = Arc::new(llm_files);
-    let cursor = Arc::new(AtomicUsize::new(0));
-    let done = Arc::new(AtomicUsize::new(0));
-    let written = Arc::new(AtomicUsize::new(0));
-    // Share the connection across workers: the slow part (extract_graph) runs in
-    // parallel; the quick per-doc write is serialized under the mutex. Each doc is
-    // committed immediately (write_doc_extraction) so a preempted/restarted worker
-    // leaves resumable progress instead of losing the whole run.
-    let conn = Arc::new(Mutex::new(conn));
 
-    let mut handles = Vec::new();
-    for _ in 0..workers {
-        let (files, cursor, done, written, key, conn) = (
-            files.clone(),
-            cursor.clone(),
-            done.clone(),
-            written.clone(),
-            key.clone(),
-            conn.clone(),
-        );
-        handles.push(std::thread::spawn(move || {
-            let client = make_llm_client(key);
-            loop {
-                let i = cursor.fetch_add(1, Ordering::SeqCst);
-                if i >= files.len() {
-                    break;
-                }
-                let (fp, text) = &files[i];
-                if let Ok(g) = extract_graph(&client, text) {
-                    if !g.entities.is_empty() || !g.relations.is_empty() {
-                        let c = conn.lock().unwrap();
-                        if write_doc_extraction(&c, fp, &g, now).is_ok() {
-                            written.fetch_add(1, Ordering::SeqCst);
+    let (conn, n_doc_written) = if gliner_mode {
+        #[cfg(feature = "gliner-kg")]
+        {
+            // Local CPU inference — no per-worker network latency to hide, so run
+            // sequentially with one loaded model (Candle multi-threads internally).
+            println!(
+                "rebuilding KG: {} code files (AST) + {} doc files (GLiNER2, CPU)…",
+                ast_files.len(),
+                llm_files.len()
+            );
+            let gliner = GlinerExtractor::load()?;
+            let mut written = 0usize;
+            for (i, (fp, text)) in llm_files.iter().enumerate() {
+                match gliner.extract_graph(text) {
+                    Ok(g) if !g.entities.is_empty() || !g.relations.is_empty() => {
+                        if write_doc_extraction(&conn, fp, &g, now).is_ok() {
+                            written += 1;
                         }
                     }
+                    Ok(_) => {}
+                    Err(e) => eprintln!("  gliner doc {fp}: {e}"),
                 }
-                let d = done.fetch_add(1, Ordering::SeqCst) + 1;
-                if d % 50 == 0 {
-                    println!("  {d}/{} files", files.len());
+                if (i + 1) % 50 == 0 {
+                    println!("  {}/{} doc files", i + 1, llm_files.len());
                 }
             }
-        }));
-    }
-    for h in handles {
-        h.join().ok();
-    }
-    let n_doc_written = written.load(Ordering::SeqCst);
-    // Reclaim the connection for the AST lane + materialize.
-    let conn = Arc::try_unwrap(conn)
-        .map_err(|_| anyhow::anyhow!("connection still shared at join"))?
-        .into_inner()
-        .unwrap();
+            (conn, written)
+        }
+        #[cfg(not(feature = "gliner-kg"))]
+        {
+            unreachable!("gliner_mode is false without the gliner-kg feature")
+        }
+    } else {
+        if !llm_files.is_empty() && key.is_none() {
+            anyhow::bail!(
+                "OPENROUTER_API_KEY required: {} non-code files need the LLM lane",
+                llm_files.len()
+            );
+        }
+        let workers = kg_workers();
+        println!(
+            "rebuilding KG: {} code files (AST) + {} doc files (LLM, {workers} workers)…",
+            ast_files.len(),
+            llm_files.len()
+        );
+        let key = key.unwrap_or_default();
+        let files = Arc::new(llm_files);
+        let cursor = Arc::new(AtomicUsize::new(0));
+        let done = Arc::new(AtomicUsize::new(0));
+        let written = Arc::new(AtomicUsize::new(0));
+        // Share the connection across workers: the slow part (extract_graph) runs in
+        // parallel; the quick per-doc write is serialized under the mutex. Each doc is
+        // committed immediately (write_doc_extraction) so a preempted/restarted worker
+        // leaves resumable progress instead of losing the whole run.
+        let conn = Arc::new(Mutex::new(conn));
+
+        let mut handles = Vec::new();
+        for _ in 0..workers {
+            let (files, cursor, done, written, key, conn) = (
+                files.clone(),
+                cursor.clone(),
+                done.clone(),
+                written.clone(),
+                key.clone(),
+                conn.clone(),
+            );
+            handles.push(std::thread::spawn(move || {
+                let client = make_llm_client(key);
+                loop {
+                    let i = cursor.fetch_add(1, Ordering::SeqCst);
+                    if i >= files.len() {
+                        break;
+                    }
+                    let (fp, text) = &files[i];
+                    if let Ok(g) = extract_graph(&client, text) {
+                        if !g.entities.is_empty() || !g.relations.is_empty() {
+                            let c = conn.lock().unwrap();
+                            if write_doc_extraction(&c, fp, &g, now).is_ok() {
+                                written.fetch_add(1, Ordering::SeqCst);
+                            }
+                        }
+                    }
+                    let d = done.fetch_add(1, Ordering::SeqCst) + 1;
+                    if d % 50 == 0 {
+                        println!("  {d}/{} files", files.len());
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().ok();
+        }
+        let n = written.load(Ordering::SeqCst);
+        // Reclaim the connection for the AST lane + materialize.
+        let conn = Arc::try_unwrap(conn)
+            .map_err(|_| anyhow::anyhow!("connection still shared at join"))?
+            .into_inner()
+            .unwrap();
+        (conn, n)
+    };
 
     // ── AST code-lane writes ─────────────────────────────────────────────
     // Code entity node key = its module-qualified name (distinct namespace from

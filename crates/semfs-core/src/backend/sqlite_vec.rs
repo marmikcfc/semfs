@@ -5,7 +5,7 @@
 //! three tables in one transaction; `search` fuses vec0 KNN and BM25 with
 //! Reciprocal Rank Fusion. Ports `bash/src/backends/sqlite-vec.ts`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,6 +15,8 @@ use super::{SearchHit, SemanticIndex};
 use crate::cache::Db;
 use crate::embed::Embedder;
 use crate::rerank::Reranker;
+#[cfg(feature = "gliner-kg")]
+use super::graph_gliner::GlinerExtractor;
 
 /// Over-fetch per ranked list before collapsing chunks → files.
 const SEARCH_POOL: usize = 80;
@@ -25,6 +27,10 @@ const SEARCH_POOL: usize = 80;
 /// the long tail keep its RRF order. Bounds per-query rerank cost. (ticket
 /// search-deadline-fails-closed-to-empty, fix #2.)
 const RERANK_CANDIDATES: usize = 50;
+// Rescue mode: rerank-window slots reserved for KG-injected (genuine-missed) files,
+// so the cross-encoder can promote a relevant rescue without injection displacing
+// genuine hits out of the window.
+const RESCUE_SLOTS: usize = 10;
 
 /// Cooperative deadline for a single SQLite search. The whole search runs inside
 /// `spawn_blocking`, which Tokio CANNOT cancel — so the daemon's outer
@@ -88,18 +94,6 @@ fn doc_return_cap() -> usize {
         .and_then(|s| s.parse::<usize>().ok())
         .filter(|n| *n > 0)
         .unwrap_or(DOC_RETURN_CAP)
-}
-
-/// `SEMFS_RETURN_MODE=snippet` (or `chunk`) → return ONLY the matched chunk(s)
-/// per hit instead of the whole document. Cloud-style compact returns: on a
-/// corpus of LARGE docs the whole-doc payload floods the agent's multi-turn
-/// context (the dominant token sink), so returning just the reranker's matched
-/// chunk (already computed, on the hit) cuts payload by ~doc/chunk. The full
-/// file is always still on the mount if the agent needs more context.
-fn snippet_return_mode() -> bool {
-    std::env::var("SEMFS_RETURN_MODE")
-        .map(|v| matches!(v.as_str(), "snippet" | "chunk"))
-        .unwrap_or(false)
 }
 
 /// True if `path` is the agent's own output directory (`model_output/`) — where
@@ -187,10 +181,69 @@ pub struct SqliteVecStore {
     /// worker extracts typed entities and writes file→entity edges. `None` = no
     /// graph.
     graph_llm: Option<Arc<crate::llm::LlmClient>>,
-    /// Pending L7-extraction queue, present iff `graph_llm` is. `index()` enqueues
-    /// a file here after writing its vectors; `run_graph_worker` drains it. Keeps
-    /// the blocking per-file LLM call OFF the synchronous index/flush path.
+    /// Pending L7-extraction queue, present iff `graph_llm` is (or the live
+    /// gliner path is active — see [`gliner_mode_active`]). `index()` enqueues a
+    /// file here after writing its vectors; `run_graph_worker` drains it. Keeps
+    /// the blocking per-file extraction OFF the synchronous index/flush path.
     graph_queue: Option<Arc<crate::cache::GraphQueue>>,
+    /// Lazily-loaded GLiNER2 extractor for the live/on-write KG path (feature
+    /// `gliner-kg`). Loaded ONCE — the model is ~1.7GB — on the first
+    /// `index_graph` call, then reused for the store's lifetime. See
+    /// [`GlinerCell`] for the Send/Sync story.
+    #[cfg(feature = "gliner-kg")]
+    gliner: Arc<GlinerCell>,
+}
+
+/// Lazy, load-once holder for the live-path [`GlinerExtractor`]. `CandleExtractor`
+/// (inside `GlinerExtractor`) is `unsafe impl Send + Sync` (read-only inference
+/// after load), but the daemon's graph worker runs up to `L7_CONCURRENCY` (8)
+/// files concurrently via `spawn_blocking` — a `Mutex` serializes those calls
+/// onto one model instance rather than holding N loaded copies (~1.7GB each) or
+/// building a pool; gliner CPU inference is fast enough that serializing is a
+/// fine trade. `OnceLock<Option<..>>` makes a failed model load (fail-open,
+/// mirrors the LLM path) permanent for this store instead of retried per file.
+#[cfg(feature = "gliner-kg")]
+#[derive(Default)]
+struct GlinerCell(std::sync::OnceLock<Option<std::sync::Mutex<GlinerExtractor>>>);
+
+#[cfg(feature = "gliner-kg")]
+impl std::fmt::Debug for GlinerCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GlinerCell(..)")
+    }
+}
+
+#[cfg(feature = "gliner-kg")]
+impl GlinerCell {
+    /// Get the loaded extractor, loading it on the first call. `None` if the
+    /// model failed to load — fail-open, the store keeps working without a KG.
+    fn get(&self) -> Option<&std::sync::Mutex<GlinerExtractor>> {
+        self.0
+            .get_or_init(|| match GlinerExtractor::load() {
+                Ok(g) => Some(std::sync::Mutex::new(g)),
+                Err(e) => {
+                    tracing::warn!("gliner2 model load failed ({e}); live KG extraction disabled");
+                    None
+                }
+            })
+            .as_ref()
+    }
+}
+
+/// Is the live path's KG extractor GLiNER2 (vs the LLM)? GLiNER2 is the default
+/// once the store is compiled with the `gliner-kg` feature — set
+/// `SEMFS_KG_EXTRACTOR=llm` to force the LLM path instead. Mirrors the same
+/// switch in `examples/build_kg.rs`'s doc lane. Always `false` without the
+/// feature (so callers don't need their own `#[cfg]` to check it).
+fn gliner_mode_active() -> bool {
+    #[cfg(feature = "gliner-kg")]
+    {
+        std::env::var("SEMFS_KG_EXTRACTOR").as_deref() != Ok("llm")
+    }
+    #[cfg(not(feature = "gliner-kg"))]
+    {
+        false
+    }
 }
 
 impl SqliteVecStore {
@@ -305,13 +358,27 @@ impl SqliteVecStore {
         if stored.is_none() {
             db.record_embed_identity(&identity)?;
         }
+        // Live gliner path: unlike the LLM path (armed later by
+        // `with_graph_extractor`, which needs an LLM key), gliner needs no key —
+        // so it's armed right here whenever the feature is compiled and
+        // `SEMFS_KG_EXTRACTOR` doesn't force the LLM path, gated on the same
+        // `SEMFS_KG` off-switch the LLM path already respects. Without this the
+        // graph worker (`run_graph_worker`) would see `graph_queue() == None` and
+        // exit immediately, never calling `index_graph`.
+        let graph_queue = if gliner_mode_active() && crate::cache::graph_file::kg_enabled() {
+            Some(crate::cache::GraphQueue::new())
+        } else {
+            None
+        };
         Ok(Self {
             db,
             embedder,
             code_embedder: None,
             reranker: None,
             graph_llm: None,
-            graph_queue: None,
+            graph_queue,
+            #[cfg(feature = "gliner-kg")]
+            gliner: Arc::new(GlinerCell::default()),
         })
     }
 
@@ -409,6 +476,8 @@ impl SqliteVecStore {
             reranker: None,
             graph_llm: None,
             graph_queue: None,
+            #[cfg(feature = "gliner-kg")]
+            gliner: Arc::new(GlinerCell::default()),
         }
     }
 
@@ -588,8 +657,18 @@ impl SqliteVecStore {
                 "content exceeds index cap; indexing head only (partial)"
             );
         }
-        let chunks =
-            super::chunk::recursive_chunks(content, &super::chunk::ChunkOptions::default());
+        // v2 (opt-in `SEMFS_CHUNK_V2=1`): AST-aware code chunking + context
+        // headers + char budget. Legacy path wraps word-window chunks with
+        // header=None so `indexed()` == verbatim text — byte-for-byte no regression.
+        let chunks: Vec<super::chunk::Chunk> =
+            if std::env::var("SEMFS_CHUNK_V2").ok().as_deref() == Some("1") {
+                super::chunk::chunk_file(filepath, content, super::chunk::CHUNK_CHAR_BUDGET)
+            } else {
+                super::chunk::recursive_chunks(content, &super::chunk::ChunkOptions::default())
+                    .into_iter()
+                    .map(|t| super::chunk::Chunk { text: t, header: None, line_start: 0, line_end: 0 })
+                    .collect()
+            };
         // Route code-like files to the code embedder + `vchunks_code` lane when a
         // code embedder is attached; everything else uses the text lane.
         let use_code = self.code_embedder.is_some() && path_is_code;
@@ -598,7 +677,10 @@ impl SqliteVecStore {
             _ => self.embedder.as_ref(),
         };
         let vec_table = if use_code { "vchunks_code" } else { "vchunks" };
-        let vectors = embedder.embed(&chunks)?;
+        // Embed header+body; the header lands only in the retrieval lanes (vec/fts),
+        // never in `chunks` (that stays verbatim for grep line-mapping).
+        let indexed: Vec<String> = chunks.iter().map(|c| c.indexed()).collect();
+        let vectors = embedder.embed(&indexed)?;
 
         let mut conn = self.db.conn.lock();
         // IMMEDIATE: take the write lock at BEGIN. These transactions read
@@ -617,10 +699,11 @@ impl SqliteVecStore {
         // three tables join back on the same id. `last_accessed_at` = now so a
         // freshly-written file starts fully salient (L6).
         let now = now_ms();
-        for (ord, (text, vec)) in chunks.iter().zip(vectors.iter()).enumerate() {
+        for (ord, (c, vec)) in chunks.iter().zip(vectors.iter()).enumerate() {
+            // `chunks.text` = VERBATIM body so grep maps a hit → file line ranges.
             tx.execute(
                 "INSERT INTO chunks(ino, filepath, ord, text, last_accessed_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![ino as i64, filepath, ord as i64, text, now],
+                rusqlite::params![ino as i64, filepath, ord as i64, c.text, now],
             )?;
             let id = tx.last_insert_rowid();
             // `vec_table` is a fixed internal identifier (never user input), so
@@ -629,9 +712,10 @@ impl SqliteVecStore {
                 &format!("INSERT INTO {vec_table}(rowid, embedding) VALUES (?1, ?2)"),
                 rusqlite::params![id, vec_to_blob(vec)],
             )?;
+            // ffts (BM25) gets header+body so header identifiers are searchable.
             tx.execute(
                 "INSERT INTO ffts(rowid, text) VALUES (?1, ?2)",
-                rusqlite::params![id, text],
+                rusqlite::params![id, c.indexed()],
             )?;
         }
 
@@ -648,12 +732,29 @@ impl SqliteVecStore {
         Ok(())
     }
 
-    /// L7 (deferred): extract entities for one already-indexed file and write its
-    /// `edges`. Reads the file's content from the local cache, runs the blocking
-    /// LLM extraction on the blocking pool (so many can overlap), then replaces
-    /// the file's edge rows. Fail-open: a missing graph only weakens the ±5%
-    /// co-mention boost, never recall. No-op without a graph extractor.
+    /// L7 (deferred): extract entities (+ typed relations, gliner path) for one
+    /// already-indexed file and write its `edges`/`graph_entity`/`graph_relation`.
+    /// Reads the file's content from the local cache, runs the blocking
+    /// extraction on the blocking pool (so many can overlap), then replaces the
+    /// file's rows. Fail-open: a missing graph only weakens the ±5% co-mention
+    /// boost, never recall. No-op without a graph extractor.
+    ///
+    /// Picks the extractor: GLiNER2 (GPU-free, typed) when this build has the
+    /// `gliner-kg` feature and `SEMFS_KG_EXTRACTOR != "llm"` (the default once
+    /// compiled in) — see [`gliner_mode_active`] — otherwise the LLM co-mention
+    /// path below.
     pub async fn index_graph(&self, ino: u64, filepath: &str) -> anyhow::Result<()> {
+        #[cfg(feature = "gliner-kg")]
+        if gliner_mode_active() {
+            // Dual-lane, matching the batch `build_kg`: code files get the
+            // tree-sitter AST lane (real functions/methods/calls/imports)
+            // instead of gliner reading raw source as prose (SEM-55). Non-code
+            // stays on gliner.
+            if super::graph_ast::Lang::from_path(filepath).is_some() {
+                return self.index_graph_ast(ino, filepath).await;
+            }
+            return self.index_graph_gliner(ino, filepath).await;
+        }
         let Some(llm) = self.graph_llm.clone() else {
             return Ok(());
         };
@@ -693,6 +794,98 @@ impl SqliteVecStore {
                     rusqlite::params![node, ent.name, ent.kind],
                 )?;
             }
+            tx.commit()?;
+            Ok(())
+        })
+        .await?
+    }
+
+    /// L7 (deferred), GLiNER2 branch: same contract as [`Self::index_graph`]
+    /// above, but extracts typed entities AND relations via the local Candle
+    /// model and writes `graph_relation` too (the LLM live path is entities-only
+    /// co-mention and never has). Writes the SAME tables/columns as the batch
+    /// `build_kg --gliner` doc lane (`write_doc_extraction`) — see
+    /// [`write_gliner_extraction`] — so live and batch KGs agree on schema.
+    #[cfg(feature = "gliner-kg")]
+    async fn index_graph_gliner(&self, ino: u64, filepath: &str) -> anyhow::Result<()> {
+        let gliner = self.gliner.clone();
+        let db = self.db.clone();
+        let fp = filepath.to_string();
+        // Content read → (lazy model load +) blocking CPU inference → write is
+        // all sync, so run it on the blocking pool like the LLM branch; the
+        // worker's semaphore bounds concurrency (extraction itself is serialized
+        // on the model's Mutex — see `GlinerCell`).
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let raw = db.read_all_content(ino);
+            let Ok(content) = String::from_utf8(raw) else {
+                return Ok(()); // binary/non-UTF8 — nothing to extract
+            };
+            let Some(model) = gliner.get() else {
+                return Ok(()); // model failed to load; fail-open (no KG this file)
+            };
+            let extraction = {
+                let model = model.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                match model.extract_graph(&content) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        tracing::warn!(filepath = %fp, "gliner extraction failed ({e}); no edges");
+                        return Ok(());
+                    }
+                }
+            };
+            let now = now_ms();
+            let mut conn = db.conn.lock();
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            // Replace this file's edges + relations (idempotent re-derive).
+            drop_file_edges(&tx, &fp)?;
+            drop_file_relations(&tx, &fp)?;
+            write_gliner_extraction(&tx, &fp, &extraction, now)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await?
+    }
+
+    /// L7 (deferred), AST branch: same contract as [`Self::index_graph`]
+    /// above, but for CODE files (`graph_ast::Lang::from_path` is `Some`) —
+    /// extracts real functions/methods/classes + `imports`/`contains`/`method`
+    /// edges via tree-sitter, instead of running gliner on raw source as prose
+    /// (SEM-55). Writes the SAME `edges`/`graph_entity`/`graph_relation`
+    /// schema as the batch AST lane in `examples/build_kg.rs` ("AST code-lane
+    /// writes"), so live and batch code KGs agree.
+    ///
+    /// `calls`/`uses`/`inherits` trade-off: `graph_ast::resolve()` is a
+    /// GLOBAL pass — it needs every file's entities to match a ref, which is
+    /// fine for the batch builder (one shot, whole corpus in memory) but would
+    /// be O(N²) here (one file indexed at a time, re-resolving the whole tree
+    /// on every write). Instead this uses [`super::graph_ast::resolve_refs`]:
+    /// an INCREMENTAL, per-file resolve against the DB's *already-indexed*
+    /// `graph_entity` rows. This is order-dependent — a call to a function in
+    /// a not-yet-indexed file is missed this pass — but self-heals: every file
+    /// re-indexes on write, so the edge appears once the callee exists.
+    /// Entities + `imports` + `contains`/`method` have no such ordering
+    /// dependency and are always fully derived from this one write.
+    #[cfg(feature = "gliner-kg")]
+    async fn index_graph_ast(&self, ino: u64, filepath: &str) -> anyhow::Result<()> {
+        let db = self.db.clone();
+        let fp = filepath.to_string();
+        // Content read → (CPU-only) tree-sitter parse → write is all sync, so
+        // run it on the blocking pool like the gliner/LLM branches.
+        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let raw = db.read_all_content(ino);
+            let Ok(content) = String::from_utf8(raw) else {
+                return Ok(()); // binary/non-UTF8 — nothing to extract
+            };
+            let Some(file_ast) = super::graph_ast::parse_file(&fp, &content) else {
+                return Ok(()); // grammar/query failed to load; fail-open
+            };
+            let now = now_ms();
+            let mut conn = db.conn.lock();
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            // Replace this file's edges + relations (idempotent re-derive).
+            drop_file_edges(&tx, &fp)?;
+            drop_file_relations(&tx, &fp)?;
+            write_ast_extraction(&tx, &file_ast, now)?;
             tx.commit()?;
             Ok(())
         })
@@ -868,6 +1061,170 @@ fn drop_file_edges(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Resu
 fn drop_file_chunks(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Result<()> {
     drop_file_vectors(tx, filepath)?;
     drop_file_edges(tx, filepath)?;
+    Ok(())
+}
+
+/// Delete a file's outbound `graph_relation` rows within a txn (idempotent
+/// re-derive, mirrors [`drop_file_edges`]). Only the gliner live path writes
+/// `graph_relation` today; the LLM live path is entities-only.
+#[cfg(feature = "gliner-kg")]
+fn drop_file_relations(tx: &rusqlite::Transaction, filepath: &str) -> rusqlite::Result<()> {
+    tx.execute("DELETE FROM graph_relation WHERE source_file = ?1", [filepath])?;
+    Ok(())
+}
+
+/// Write one file's GLiNER2 extraction into `edges`/`graph_entity`/
+/// `graph_relation` — the SAME tables/columns the batch `build_kg --gliner` doc
+/// lane writes (see `write_doc_extraction` in `examples/build_kg.rs`), so the
+/// live and batch KG builders agree on schema. Edge/entity confidence is
+/// `EXTRACTED` (gliner is a direct typed extraction, not LLM co-mention
+/// inference — matches the batch lane's convention, not the LLM live path's
+/// `INFERRED`).
+#[cfg(feature = "gliner-kg")]
+fn write_gliner_extraction(
+    tx: &rusqlite::Transaction,
+    fp: &str,
+    g: &super::graph::GraphExtraction,
+    now: i64,
+) -> rusqlite::Result<()> {
+    let ft = gliner_file_type_of(fp);
+    for e in &g.entities {
+        let node = super::graph::entity_path(&e.name);
+        tx.execute(
+            "INSERT OR IGNORE INTO edges(from_path, to_path, edge_kind, created_at, confidence) \
+             VALUES (?1, ?2, ?3, ?4, 'EXTRACTED')",
+            rusqlite::params![fp, node, e.kind, now],
+        )?;
+        tx.execute(
+            "INSERT INTO graph_entity(path,name,kind,file_type,source_file) VALUES (?1,?2,?3,?4,?5) \
+             ON CONFLICT(path) DO UPDATE SET name=excluded.name, kind=excluded.kind, \
+               file_type=COALESCE(graph_entity.file_type, excluded.file_type), \
+               source_file=COALESCE(graph_entity.source_file, excluded.source_file)",
+            rusqlite::params![node, e.name, e.kind, ft, fp],
+        )?;
+    }
+    for r in &g.relations {
+        let (s, t) = (
+            super::graph::entity_path(&r.source),
+            super::graph::entity_path(&r.target),
+        );
+        tx.execute(
+            "INSERT OR IGNORE INTO graph_relation\
+             (source,target,relation,confidence,confidence_score,source_file,weight,created_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![
+                s,
+                t,
+                r.relation,
+                r.confidence,
+                r.confidence_score,
+                fp,
+                if r.confidence == "EXTRACTED" { 1.0 } else { 0.6 },
+                now
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// graphify `file_type` from the path extension — mirrors
+/// `examples/build_kg.rs`'s `file_type_of` (duplicated rather than shared: that
+/// one lives in a binary example, not the lib crate).
+#[cfg(feature = "gliner-kg")]
+fn gliner_file_type_of(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "py" | "ts" | "tsx" | "js" | "jsx" | "go" | "rs" | "java" | "c" | "cpp" | "h" | "rb"
+        | "php" | "swift" | "kt" | "scala" | "sh" => "code",
+        "pdf" => "paper",
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" => "image",
+        _ => "document",
+    }
+}
+
+/// Write one file's tree-sitter AST extraction into `edges`/`graph_entity`/
+/// `graph_relation` — the SAME tables/columns the batch AST code lane writes
+/// (see "AST code-lane writes" in `examples/build_kg.rs`), so the live and
+/// batch code KGs agree on schema. Entity confidence is always `EXTRACTED`
+/// (a direct parse, not inference); relation confidence follows
+/// `CodeRelation::confidence` (`EXTRACTED` for `contains`/`method`/`imports`/
+/// `inherits`, `INFERRED` for `calls`/`uses` — see `graph_ast`'s module doc).
+#[cfg(feature = "gliner-kg")]
+fn write_ast_extraction(
+    tx: &rusqlite::Transaction,
+    file: &super::graph_ast::FileAst,
+    now: i64,
+) -> rusqlite::Result<()> {
+    for e in &file.entities {
+        tx.execute(
+            "INSERT OR IGNORE INTO edges(from_path,to_path,edge_kind,created_at,confidence) \
+             VALUES (?1,?2,?3,?4,'EXTRACTED')",
+            rusqlite::params![file.path, e.qualified, e.kind.as_str(), now],
+        )?;
+        tx.execute(
+            "INSERT INTO graph_entity(path,name,kind,file_type,source_file) VALUES (?1,?2,?3,'code',?4) \
+             ON CONFLICT(path) DO UPDATE SET name=excluded.name, kind=excluded.kind, \
+               file_type='code', source_file=COALESCE(graph_entity.source_file, excluded.source_file)",
+            rusqlite::params![e.qualified, e.name, e.kind.as_str(), file.path],
+        )?;
+    }
+    // Ready EXTRACTED relations from the parse itself: contains/method/imports.
+    for r in &file.extracted {
+        write_code_relation(tx, r, now)?;
+    }
+    // calls/uses/inherits: incremental resolve against already-indexed DB
+    // entities — see `index_graph_ast`'s doc comment for the O(N²) trade-off
+    // that rules out a full `graph_ast::resolve()` re-run here.
+    let resolved = super::graph_ast::resolve_refs(file, |name| {
+        let mut stmt = match tx.prepare_cached("SELECT path, kind FROM graph_entity WHERE name = ?1")
+        {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map([name], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        });
+        match rows {
+            Ok(rows) => rows
+                .filter_map(|r| r.ok())
+                .filter_map(|(path, kind)| {
+                    super::graph_ast::CodeKind::from_label(&kind).map(|k| (path, k))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    });
+    for r in &resolved {
+        write_code_relation(tx, r, now)?;
+    }
+    Ok(())
+}
+
+/// Write one `graph_relation` row for an AST-derived `CodeRelation` — shared
+/// by both halves of [`write_ast_extraction`] (ready EXTRACTED relations and
+/// the incrementally-resolved ones).
+#[cfg(feature = "gliner-kg")]
+fn write_code_relation(
+    tx: &rusqlite::Transaction,
+    r: &super::graph_ast::CodeRelation,
+    now: i64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT OR IGNORE INTO graph_relation\
+         (source,target,relation,confidence,confidence_score,source_file,source_location,weight,created_at) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        rusqlite::params![
+            r.source,
+            r.target,
+            r.relation,
+            r.confidence,
+            r.confidence_score,
+            r.source_file,
+            r.source_location,
+            r.weight,
+            now
+        ],
+    )?;
     Ok(())
 }
 
@@ -1241,9 +1598,52 @@ impl SqliteVecStore {
             }
         }
 
+        let kg_rescue = super::hidden_kg::rescue_mode();
+        // Rescue mode snapshots the genuine (dense/FTS/code) candidate set so the KG
+        // injects only files the genuine lanes MISSED, and so the rerank window can
+        // reserve slots for them — recall without displacement.
+        let pre_kg_files: HashSet<String> = if kg_rescue {
+            by_file.keys().cloned().collect()
+        } else {
+            HashSet::new()
+        };
+
         if super::hidden_kg::retrieval_enabled() {
-            match super::hidden_kg::query_kg_candidates(&conn, query, scope.as_deref(), SEARCH_POOL)
+            let kg_result = if super::hidden_kg::typed_walk_enabled()
+                && super::hidden_kg::seed_dense_enabled()
             {
+                // Seed-from-dense: expand the typed walk out from the entities in the
+                // top dense hits (what retrieval already ranked), not from LIKE tokens.
+                let mut scored: Vec<(String, f64)> =
+                    by_file.iter().map(|(fp, acc)| (fp.clone(), acc.score())).collect();
+                scored.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let seeds: Vec<String> = scored
+                    .into_iter()
+                    .take(super::hidden_kg::SEED_TOP_K)
+                    .map(|(fp, _)| fp)
+                    .collect();
+                if std::env::var("SEMFS_DEBUG_RANKING").is_ok() {
+                    tracing::info!(seed_files = ?seeds, "KG_EXPAND_SEED");
+                }
+                super::hidden_kg::query_kg_typed_expand(
+                    &conn,
+                    &seeds,
+                    scope.as_deref(),
+                    SEARCH_POOL,
+                )
+            } else if super::hidden_kg::typed_walk_enabled() {
+                super::hidden_kg::query_kg_typed_candidates(
+                    &conn,
+                    query,
+                    scope.as_deref(),
+                    SEARCH_POOL,
+                )
+            } else {
+                super::hidden_kg::query_kg_candidates(&conn, query, scope.as_deref(), SEARCH_POOL)
+            };
+            match kg_result {
                 Ok(result) => {
                     if std::env::var("SEMFS_DEBUG_RANKING").is_ok() {
                         let injected: Vec<(String, super::hidden_kg::KgCandidateReason, f64)> =
@@ -1262,6 +1662,13 @@ impl SqliteVecStore {
                         );
                     }
                     for (rank, candidate) in result.candidates.into_iter().enumerate() {
+                        // Rescue mode: only inject files the genuine lanes MISSED —
+                        // never re-bump an already-retrieved file (that reshuffles the
+                        // genuine ranking and displaces golds). Missed files reach the
+                        // reranker via the reserved window slots below.
+                        if kg_rescue && by_file.contains_key(&candidate.filepath) {
+                            continue;
+                        }
                         let Some((id, text)) =
                             representative_chunk_for_file(&conn, &candidate.filepath, query)?
                         else {
@@ -1431,7 +1838,28 @@ impl SqliteVecStore {
                 // Bound rerank CPU: only the top RRF candidates are reranked; the
                 // tail keeps its RRF rank below them. Caps the cross-encoder cost
                 // so one search can't peg the box.
-                hits.truncate(RERANK_CANDIDATES);
+                if kg_rescue && !pre_kg_files.is_empty() {
+                    // Reserve up to RESCUE_SLOTS of the rerank window for KG-rescued
+                    // (genuine-missed) files, so the cross-encoder can promote a
+                    // relevant one WITHOUT injection displacing genuine hits out of
+                    // the window. Genuine hits keep their RRF order; only the window's
+                    // bottom slots go to rescues.
+                    let (rescued_hits, genuine_hits): (Vec<_>, Vec<_>) =
+                        hits.into_iter().partition(|h| {
+                            h.filepath
+                                .as_deref()
+                                .is_some_and(|fp| !pre_kg_files.contains(fp))
+                        });
+                    let n_rescue = rescued_hits.len().min(RESCUE_SLOTS);
+                    let n_genuine = RERANK_CANDIDATES.saturating_sub(n_rescue);
+                    hits = genuine_hits
+                        .into_iter()
+                        .take(n_genuine)
+                        .chain(rescued_hits.into_iter().take(n_rescue))
+                        .collect();
+                } else {
+                    hits.truncate(RERANK_CANDIDATES);
+                }
                 super::rank::apply_reranker(&mut hits, reranker.as_ref(), query)?;
                 reranked = true;
             }
@@ -1638,38 +2066,14 @@ impl SqliteVecStore {
         // the mount is raw binary — the text exists ONLY in `chunks` — so we stitch
         // it from `chunks ORDER BY ord` and put it in `memory`, the SAME field the
         // cloud path fills, so grep renders local + cloud identically.
-        if !hits.is_empty() {
-            if snippet_return_mode() {
-                // H1 trust-marker path: leave `memory` None so `grep` renders each hit
-                // via the chunk presenter (line ranges + `# ^ COMPLETE FILE — …do not
-                // open it`), matching the cloud backend. That "the excerpt IS the file,
-                // don't re-open it" signal is what stops codex pandas/xlrd/zipfile-
-                // parsing the file — the format-trap token sink (case-289 gfs2/gfs3).
-                // Populating `memory` here would short-circuit grep.rs before the
-                // presenter and emit a bare `path:dump` with no marker (the old local
-                // behavior). The `[semfs: SOURCE INACCESSIBLE]` 403 chunk is preserved
-                // (grep handles it ahead of the presenter), so local keeps honesty too.
-                for h in hits.iter_mut() {
-                    h.memory = None;
-                }
-            } else {
-                let conn = self.db.conn.lock();
-                let prepared =
-                    conn.prepare("SELECT text FROM chunks WHERE filepath = ?1 ORDER BY ord");
-                if let Ok(mut stmt) = prepared {
-                    for h in hits.iter_mut() {
-                        let Some(fp) = h.filepath.clone() else {
-                            continue;
-                        };
-                        if let Ok(rows) = stmt.query_map([&fp], |r| r.get::<_, String>(0)) {
-                            let parts: Vec<String> = rows.filter_map(|r| r.ok()).collect();
-                            if !parts.is_empty() {
-                                h.memory = Some(stitch_chunks(&parts));
-                            }
-                        }
-                    }
-                }
-            }
+        // Deliver the ACTUAL file from the filesystem, not a re-stitched `memory`
+        // blob. We have the pointer (`filepath`); grep reads it via the mount and
+        // ships the whole file (default mode) or the matched chunk + line range
+        // (SEMFS_RETURN_MODE=snippet). Leaving `memory` None routes every LOCAL hit
+        // through grep's filesystem-read path. The CLOUD backend still fills `memory`
+        // itself (it has no filesystem). This drops the old cloud-parity re-stitch.
+        for h in hits.iter_mut() {
+            h.memory = None;
         }
 
         Ok(hits)
@@ -2843,13 +3247,23 @@ mod tests {
             1,
             "index() must enqueue the file for L7 extraction"
         );
-        // A store WITHOUT an extractor has no queue and enqueues nothing.
+        // A store WITHOUT an LLM extractor has no queue and enqueues nothing —
+        // UNLESS this build has the `gliner-kg` feature, in which case the live
+        // gliner path arms the queue itself (no LLM key needed; see
+        // `gliner_mode_active`), so it stays `Some` here too.
         let plain = SqliteVecStore::new(
             Arc::new(Db::open_in_memory().unwrap()),
             Arc::new(StubEmbedder::new(384)),
         )
         .unwrap();
-        assert!(plain.graph_queue().is_none());
+        if gliner_mode_active() {
+            assert!(
+                plain.graph_queue().is_some(),
+                "gliner-kg arms the live queue without an LLM extractor"
+            );
+        } else {
+            assert!(plain.graph_queue().is_none());
+        }
     }
 
     /// Rename relabels the index (no re-embed) and drops the overwritten
@@ -3607,5 +4021,135 @@ mod tests {
             Some("/needle.md"),
             "needle must surface among 301 files"
         );
+    }
+
+    /// `SEMFS_KG_EXTRACTOR` selects the live extractor: gliner is the default
+    /// once this build has the feature; `=llm` forces the LLM co-mention path.
+    /// Mirrors the same switch in `examples/build_kg.rs`'s doc lane.
+    #[test]
+    #[cfg(feature = "gliner-kg")]
+    fn gliner_mode_active_is_the_default_and_llm_overrides_it() {
+        std::env::remove_var("SEMFS_KG_EXTRACTOR");
+        assert!(
+            gliner_mode_active(),
+            "gliner-kg compiled in => gliner is the default live extractor"
+        );
+        std::env::set_var("SEMFS_KG_EXTRACTOR", "llm");
+        assert!(!gliner_mode_active(), "SEMFS_KG_EXTRACTOR=llm forces the LLM path");
+        std::env::remove_var("SEMFS_KG_EXTRACTOR");
+    }
+
+    /// Real end-to-end: the live `index_graph` path, with a real GLiNER2 model,
+    /// writes typed entities AND relations into `graph_entity`/`graph_relation`
+    /// (the LLM live path only ever wrote `graph_entity`+`edges`) using the
+    /// gliner dev-pack labels (software/service/module/…), not the LLM
+    /// `ONTOLOGY`. Ignored by default (downloads ~1.7GB on first run); run
+    /// explicitly: `cargo test -p semfs-core --features gliner-kg -- --ignored
+    /// live_gliner`.
+    #[tokio::test]
+    #[cfg(feature = "gliner-kg")]
+    #[ignore = "downloads the gliner2 model + runs CPU inference"]
+    async fn live_gliner_e2e_populates_graph_entity_and_relation() {
+        std::env::remove_var("SEMFS_KG_EXTRACTOR"); // ensure gliner (the default), not llm
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store =
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
+        assert!(
+            store.graph_queue.is_some(),
+            "gliner mode must arm the live queue without an LLM key"
+        );
+        let text = "The Quokka authentication module issues JWT tokens for the Zephyr \
+                    gateway. It depends on the Wombat datastore.";
+        store.index(2, "/notes.md", text).unwrap();
+        store.index_graph(2, "/notes.md").await.unwrap();
+
+        let conn = db.conn.lock();
+        let entities: i64 = conn
+            .query_row("SELECT count(*) FROM graph_entity", [], |r| r.get(0))
+            .unwrap();
+        let relations: i64 = conn
+            .query_row("SELECT count(*) FROM graph_relation", [], |r| r.get(0))
+            .unwrap();
+        assert!(entities > 0, "expected gliner entities from the live path");
+        assert!(relations > 0, "expected gliner typed relations from the live path");
+    }
+
+    /// SEM-55: a CODE file must route to the tree-sitter AST branch
+    /// (`index_graph_ast`), not gliner — no model download, runs in the
+    /// default test suite. Asserts real `Function` entity kinds + `imports`/
+    /// `contains`/`calls` relations, matching the batch AST lane's schema
+    /// (`examples/build_kg.rs`), not gliner's dev-pack labels.
+    #[tokio::test]
+    #[cfg(feature = "gliner-kg")]
+    async fn live_ast_e2e_routes_go_file_to_ast_lane_not_gliner() {
+        std::env::remove_var("SEMFS_KG_EXTRACTOR"); // ensure the dual-lane default
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let store =
+            Arc::new(SqliteVecStore::new(db.clone(), Arc::new(StubEmbedder::new(384))).unwrap());
+
+        let src = "package main\n\nimport \"fmt\"\n\nfunc helper() {\n\tfmt.Println(\"hi\")\n}\n\nfunc caller() {\n\thelper()\n}\n";
+        store.index(2, "/srv/main.go", src).unwrap();
+        // `index_graph`'s content read is `db.read_all_content(ino)`, which reads
+        // the RAW file bytes from `fs_inode`/`fs_data` (the on-disk cache blob
+        // store the FUSE write path populates) — a separate store from the
+        // `chunks`/vector rows `index()` above just wrote. Seed it directly so
+        // the AST branch has source to parse, mirroring what a real file write
+        // would have already put there.
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO fs_inode (ino, mode, nlink, uid, gid, size, atime, mtime, ctime) \
+                 VALUES (2, 33188, 1, 0, 0, ?1, 0, 0, 0)",
+                rusqlite::params![src.len() as i64],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO fs_data (ino, chunk_index, data) VALUES (2, 0, ?1)",
+                rusqlite::params![src.as_bytes()],
+            )
+            .unwrap();
+        }
+        store.index_graph(2, "/srv/main.go").await.unwrap();
+
+        let conn = db.conn.lock();
+        let mut kinds: Vec<String> = conn
+            .prepare("SELECT DISTINCT kind FROM graph_entity")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        kinds.sort();
+        assert_eq!(
+            kinds,
+            vec!["function".to_string()],
+            "AST lane must yield real code kinds (function), not gliner dev-pack labels"
+        );
+
+        let mut relations: Vec<String> = conn
+            .prepare("SELECT DISTINCT relation FROM graph_relation")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        relations.sort();
+        assert_eq!(
+            relations,
+            vec!["calls".to_string(), "contains".to_string(), "imports".to_string()],
+            "AST lane must derive contains/imports (per-file) + calls (same-file incremental resolve)"
+        );
+
+        // `caller` calls `helper`, resolved incrementally against this file's
+        // own just-written `graph_entity` rows (self-file resolve, no O(N²)).
+        let calls: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM graph_relation WHERE relation = 'calls' \
+                 AND source LIKE '%caller' AND target LIKE '%helper'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(calls, 1, "caller -> helper calls edge must resolve within one file's write");
     }
 }

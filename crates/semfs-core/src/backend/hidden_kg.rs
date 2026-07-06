@@ -22,6 +22,59 @@ const GIANT_COMMUNITY_PENALTY_CAP: f64 = 0.03;
 const GIANT_COMMUNITY_START: usize = 24;
 const GIANT_COMMUNITY_SPAN: usize = 72;
 
+// Hub down-weighting + injection bound — fix for the "owner entity floods the pool"
+// failure (matching an entity present in ~every file, e.g. the workspace owner,
+// injects the whole workspace and buries the real gold). Drop matched entities
+// whose file-degree exceeds HUB_FRACTION of the corpus (an entity-level stopword),
+// and cap how many graph-connected files we inject. Both env-tunable via
+// SEMFS_KG_HUB_FRACTION / SEMFS_KG_INJECT_MAX. Skipped for tiny corpora.
+const HUB_FRACTION_DEFAULT: f64 = 0.30;
+const HUB_MIN_CORPUS: usize = 20;
+const INJECT_MAX_DEFAULT: usize = 12;
+
+// Directed typed edge-walk: instead of untyped co-mention neighbors, follow
+// high-confidence STRUCTURAL relations (calls/imports/depends_on/…) over
+// `graph_relation`, k-hops from the query's seed entities, then map reached
+// entities → files. A/B-able via SEMFS_KG_TYPED. A `calls` edge is a precise,
+// (for code) compiler-derived signal — the bet is it's trustworthy enough to
+// inject its target high, which the fuzzy co-mention walk never was.
+const TYPED_MAX_HOPS: usize = 2;
+const TYPED_HOP_DECAY: f64 = 0.5;
+const TYPED_MIN_SCORE: f64 = 0.4;
+const TYPED_CAP: f64 = 0.10;
+const TYPED_RELATIONS_DEFAULT: &[&str] = &[
+    "calls",
+    "imports",
+    "inherits",
+    "uses",
+    "extends",
+    "implements",
+    "depends_on",
+    "defines",
+    "instantiates",
+    "returns",
+    "contains",
+    "references",
+];
+
+/// Precise structural relation types the typed walk follows. Overridable via
+/// SEMFS_KG_TYPED_RELATIONS (comma-separated) — e.g. prose corpora use
+/// `part_of,depends_on,references,implements,shares_data_with` and exclude fuzzy
+/// relations (contradicts / relates_to / semantically_similar_to / mentions).
+fn typed_relations() -> Vec<String> {
+    match std::env::var("SEMFS_KG_TYPED_RELATIONS") {
+        Ok(s) if !s.trim().is_empty() => s
+            .split(',')
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .collect(),
+        _ => TYPED_RELATIONS_DEFAULT.iter().map(|s| (*s).to_string()).collect(),
+    }
+}
+// Seed-from-dense: how many top dense hits to seed the typed walk from (graph
+// expansion — walk from what dense already ranked, not from LIKE-matched tokens).
+pub(crate) const SEED_TOP_K: usize = 8;
+
 // PPR (Personalized PageRank) variant of the graph prior — A/B-able via SEMFS_KG_PPR.
 // Replaces the fixed 1-hop neighbor walk with damped multi-hop diffusion over the
 // bipartite file<->entity `edges` graph, seeded at the query's matched entities.
@@ -72,9 +125,50 @@ pub fn retrieval_enabled() -> bool {
     truthy_env("SEMFS_HIDDEN_KG_RETRIEVAL")
 }
 
+/// Rescue mode: KG injection adds ONLY genuine-missed files (never re-bumps an
+/// already-retrieved file) and the rerank window reserves slots for them — recall
+/// without displacing genuine hits. A/B-able via SEMFS_KG_RESCUE.
+pub fn rescue_mode() -> bool {
+    truthy_env("SEMFS_KG_RESCUE")
+}
+
+/// Directed typed edge-walk variant of KG candidate generation: follow typed
+/// `graph_relation` edges (calls/imports/…) instead of untyped co-mention
+/// neighbors + community. A/B via SEMFS_KG_TYPED.
+pub fn typed_walk_enabled() -> bool {
+    truthy_env("SEMFS_KG_TYPED")
+}
+
+/// Seed the typed walk from the top dense hits (graph expansion) instead of from
+/// LIKE-matched query tokens. A/B via SEMFS_KG_SEED_DENSE.
+pub fn seed_dense_enabled() -> bool {
+    truthy_env("SEMFS_KG_SEED_DENSE")
+}
+
 /// PPR variant of the hidden-KG graph prior (replaces the 1-hop neighbor walk).
 pub fn ppr_enabled() -> bool {
     truthy_env("SEMFS_KG_PPR")
+}
+
+/// Max fraction of the corpus an entity may touch before it is treated as a hub
+/// (an entity-level stopword) and dropped from KG candidate generation. `>= 1.0`
+/// disables the filter.
+fn hub_fraction() -> f64 {
+    std::env::var("SEMFS_KG_HUB_FRACTION")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
+        .unwrap_or(HUB_FRACTION_DEFAULT)
+}
+
+/// Upper bound on how many graph-connected files the KG injects per query, so even
+/// a partial hub match cannot flood the candidate pool.
+fn inject_max() -> usize {
+    std::env::var("SEMFS_KG_INJECT_MAX")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(INJECT_MAX_DEFAULT)
 }
 
 pub fn query_kg_priors(
@@ -205,6 +299,85 @@ pub fn query_kg_priors(
     })
 }
 
+/// Total number of distinct files that participate in the KG (optionally scoped).
+fn total_indexed_files(conn: &Connection, scope: Option<&str>) -> anyhow::Result<usize> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT from_path) FROM edges \
+         WHERE (?1 IS NULL OR instr(from_path, ?1) = 1)",
+        params![scope],
+        |r| r.get(0),
+    )?;
+    Ok(n as usize)
+}
+
+/// For each entity path, how many distinct files mention it (its file-degree).
+fn entity_file_degrees(
+    conn: &Connection,
+    entity_paths: &HashSet<String>,
+    scope: Option<&str>,
+) -> anyhow::Result<HashMap<String, usize>> {
+    let entity_paths: Vec<String> = entity_paths.iter().cloned().collect();
+    if entity_paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = vec!["?"; entity_paths.len()].join(",");
+    let sql = format!(
+        "SELECT to_path, COUNT(DISTINCT from_path) \
+         FROM edges WHERE to_path IN ({placeholders}) \
+         AND (?{} IS NULL OR instr(from_path, ?{}) = 1) GROUP BY to_path",
+        entity_paths.len() + 1,
+        entity_paths.len() + 2
+    );
+    let mut binds: Vec<rusqlite::types::Value> = entity_paths
+        .iter()
+        .cloned()
+        .map(rusqlite::types::Value::from)
+        .collect();
+    binds.push(scope.map_or(rusqlite::types::Value::Null, |s| {
+        rusqlite::types::Value::from(s.to_string())
+    }));
+    binds.push(scope.map_or(rusqlite::types::Value::Null, |s| {
+        rusqlite::types::Value::from(s.to_string())
+    }));
+    let mut out = HashMap::new();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(binds.iter()), |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })?;
+    for row in rows {
+        let (path, count) = row?;
+        out.insert(path, count as usize);
+    }
+    Ok(out)
+}
+
+/// Drop matched entities that are "hubs" — connected to more than `HUB_FRACTION` of
+/// the indexed files. Such an entity (typically the workspace owner) carries no
+/// retrieval signal but, when matched, injects the whole workspace and floods the
+/// candidate pool, burying the real gold. Entity-level IDF as a hard degree filter.
+/// Skipped for tiny corpora (which cannot flood) and when the filter is disabled.
+fn filter_hub_entities(
+    conn: &Connection,
+    matched: Vec<MatchedEntity>,
+    scope: Option<&str>,
+) -> anyhow::Result<Vec<MatchedEntity>> {
+    let frac = hub_fraction();
+    if frac >= 1.0 {
+        return Ok(matched);
+    }
+    let total = total_indexed_files(conn, scope)?;
+    if total < HUB_MIN_CORPUS {
+        return Ok(matched);
+    }
+    let hub_max = ((frac * total as f64).ceil() as usize).max(1);
+    let paths: HashSet<String> = matched.iter().map(|m| m.path.clone()).collect();
+    let degrees = entity_file_degrees(conn, &paths, scope)?;
+    Ok(matched
+        .into_iter()
+        .filter(|m| degrees.get(&m.path).copied().unwrap_or(0) <= hub_max)
+        .collect())
+}
+
 pub fn query_kg_candidates(
     conn: &Connection,
     query: &str,
@@ -221,6 +394,14 @@ pub fn query_kg_candidates(
     }
 
     let matched = match_entities(conn, &tokens)?;
+    if matched.is_empty() {
+        return Ok(KgCandidateResult::default());
+    }
+    // Hub down-weighting: drop matched entities present in more than HUB_FRACTION of
+    // the corpus. The workspace owner (e.g. "Lena") is mentioned in ~every file, so
+    // matching it injects the whole workspace — an entity-level stopword that floods
+    // the pool and buries the gold. Keeps rare, localizing entities (SOX2, issue-089).
+    let matched = filter_hub_entities(conn, matched, scope)?;
     if matched.is_empty() {
         return Ok(KgCandidateResult::default());
     }
@@ -320,12 +501,250 @@ pub fn query_kg_candidates(
             .then_with(|| reason_rank(a.reason).cmp(&reason_rank(b.reason)))
             .then_with(|| a.filepath.cmp(&b.filepath))
     });
-    out.truncate(limit.min(MAX_KG_CANDIDATES));
+    // Injection cap: bound how many graph-connected files we inject so even a
+    // partial hub match cannot flood the pool (env: SEMFS_KG_INJECT_MAX).
+    out.truncate(inject_max().min(limit).min(MAX_KG_CANDIDATES));
 
     Ok(KgCandidateResult {
         candidates: out,
         matched_entities: matched_entity_names,
         matched_communities,
+    })
+}
+
+/// One typed hop: reachable targets from `frontier` over high-confidence structural
+/// relations, scored by `confidence_score * weight`.
+fn typed_neighbors(
+    conn: &Connection,
+    frontier: &HashSet<String>,
+) -> anyhow::Result<Vec<(String, f64)>> {
+    if frontier.is_empty() {
+        return Ok(Vec::new());
+    }
+    let src: Vec<String> = frontier.iter().cloned().collect();
+    let rels = typed_relations();
+    let src_ph = vec!["?"; src.len()].join(",");
+    let rel_ph = vec!["?"; rels.len()].join(",");
+    let sql = format!(
+        "SELECT target, MAX(confidence_score * weight) FROM graph_relation \
+         WHERE source IN ({src_ph}) AND relation IN ({rel_ph}) AND confidence_score >= ? \
+         GROUP BY target"
+    );
+    let mut binds: Vec<rusqlite::types::Value> =
+        src.iter().cloned().map(rusqlite::types::Value::from).collect();
+    for r in &rels {
+        binds.push(rusqlite::types::Value::from(r.clone()));
+    }
+    binds.push(rusqlite::types::Value::from(TYPED_MIN_SCORE));
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(binds.iter()), |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Reached entities → the files that contain them (`edges.to_path` → `from_path`).
+fn entity_to_files(
+    conn: &Connection,
+    entity_paths: &HashSet<String>,
+    scope: Option<&str>,
+) -> anyhow::Result<HashMap<String, Vec<String>>> {
+    let paths: Vec<String> = entity_paths.iter().cloned().collect();
+    if paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let ph = vec!["?"; paths.len()].join(",");
+    let sql = format!(
+        "SELECT from_path, to_path FROM edges WHERE to_path IN ({ph}) \
+         AND (?{} IS NULL OR instr(from_path, ?{}) = 1)",
+        paths.len() + 1,
+        paths.len() + 2
+    );
+    let mut binds: Vec<rusqlite::types::Value> =
+        paths.iter().cloned().map(rusqlite::types::Value::from).collect();
+    binds.push(scope.map_or(rusqlite::types::Value::Null, |s| {
+        rusqlite::types::Value::from(s.to_string())
+    }));
+    binds.push(scope.map_or(rusqlite::types::Value::Null, |s| {
+        rusqlite::types::Value::from(s.to_string())
+    }));
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(binds.iter()), |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for row in rows {
+        let (file, ent) = row?;
+        out.entry(file).or_default().push(ent);
+    }
+    Ok(out)
+}
+
+/// k-hop BFS over the typed relation graph from `seeds`, returning reached entities
+/// scored by hop-decayed relation strength.
+fn typed_walk(
+    conn: &Connection,
+    seeds: HashSet<String>,
+) -> anyhow::Result<HashMap<String, f64>> {
+    let mut reached: HashMap<String, f64> = HashMap::new();
+    let mut visited = seeds.clone();
+    let mut frontier = seeds;
+    for hop in 0..TYPED_MAX_HOPS {
+        if frontier.is_empty() {
+            break;
+        }
+        let decay = TYPED_HOP_DECAY.powi(hop as i32);
+        let mut next: HashSet<String> = HashSet::new();
+        for (target, score) in typed_neighbors(conn, &frontier)? {
+            if visited.contains(&target) {
+                continue;
+            }
+            let s = (score * decay).min(1.0);
+            let entry = reached.entry(target.clone()).or_insert(0.0);
+            if s > *entry {
+                *entry = s;
+            }
+            visited.insert(target.clone());
+            next.insert(target);
+        }
+        frontier = next;
+    }
+    Ok(reached)
+}
+
+/// Entities contained in `files` (`edges.from_path` → `to_path`) — the seed set for
+/// the dense-seeded graph expansion.
+fn files_to_entities(conn: &Connection, files: &[String]) -> anyhow::Result<HashSet<String>> {
+    if files.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let ph = vec!["?"; files.len()].join(",");
+    let sql = format!("SELECT DISTINCT to_path FROM edges WHERE from_path IN ({ph})");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(files.iter()), |r| r.get::<_, String>(0))?;
+    let mut out = HashSet::new();
+    for row in rows {
+        out.insert(row?);
+    }
+    Ok(out)
+}
+
+/// Directed typed edge-walk: seed entities → k-hop BFS over typed `graph_relation`
+/// edges → reached entities → files. The typed alternative to `query_kg_candidates`
+/// (which walks untyped file↔entity co-mention + community).
+pub fn query_kg_typed_candidates(
+    conn: &Connection,
+    query: &str,
+    scope: Option<&str>,
+    limit: usize,
+) -> anyhow::Result<KgCandidateResult> {
+    if query.trim().is_empty()
+        || !has_table(conn, "graph_entity")?
+        || !has_table(conn, "graph_relation")?
+        || !has_table(conn, "edges")?
+    {
+        return Ok(KgCandidateResult::default());
+    }
+    let tokens = query_tokens(query);
+    if tokens.is_empty() {
+        return Ok(KgCandidateResult::default());
+    }
+    let matched = match_entities(conn, &tokens)?;
+    let matched = filter_hub_entities(conn, matched, scope)?;
+    if matched.is_empty() {
+        return Ok(KgCandidateResult::default());
+    }
+    let matched_entity_names: Vec<String> = matched.iter().map(|m| m.name.clone()).collect();
+
+    // k-hop BFS over the TYPED relation graph (calls/imports/depends_on/…).
+    let seeds: HashSet<String> = matched.iter().map(|m| m.path.clone()).collect();
+    let reached = typed_walk(conn, seeds)?;
+    if reached.is_empty() {
+        return Ok(KgCandidateResult {
+            candidates: Vec::new(),
+            matched_entities: matched_entity_names,
+            matched_communities: Vec::new(),
+        });
+    }
+
+    // Reached entities → files that contain them; score a file by the summed
+    // (hop-decayed) strength of the reached entities it holds.
+    let reached_paths: HashSet<String> = reached.keys().cloned().collect();
+    let entity_files = entity_to_files(conn, &reached_paths, scope)?;
+    let mut candidates: HashMap<String, KgCandidate> = HashMap::new();
+    for (file, ents) in entity_files {
+        let raw: f64 = ents.iter().filter_map(|e| reached.get(e)).sum();
+        let score = raw.min(1.0) * TYPED_CAP;
+        if score > 0.0 {
+            upsert_candidate(&mut candidates, file, KgCandidateReason::NeighborEntity, score);
+        }
+    }
+    let mut out: Vec<KgCandidate> = candidates.into_values().collect();
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.filepath.cmp(&b.filepath))
+    });
+    out.truncate(inject_max().min(limit).min(MAX_KG_CANDIDATES));
+
+    Ok(KgCandidateResult {
+        candidates: out,
+        matched_entities: matched_entity_names,
+        matched_communities: Vec::new(),
+    })
+}
+
+/// Seed-from-dense graph expansion: walk typed edges out from the entities in the
+/// TOP dense hits (`seed_files`), then inject the reached files. Grounds the walk in
+/// what dense already ranked, instead of LIKE-matching query tokens to entity names.
+pub fn query_kg_typed_expand(
+    conn: &Connection,
+    seed_files: &[String],
+    scope: Option<&str>,
+    limit: usize,
+) -> anyhow::Result<KgCandidateResult> {
+    if seed_files.is_empty() || !has_table(conn, "graph_relation")? || !has_table(conn, "edges")? {
+        return Ok(KgCandidateResult::default());
+    }
+    let seed_set: HashSet<String> = seed_files.iter().cloned().collect();
+    let seed_entities = files_to_entities(conn, seed_files)?;
+    if seed_entities.is_empty() {
+        return Ok(KgCandidateResult::default());
+    }
+    let reached = typed_walk(conn, seed_entities)?;
+    if reached.is_empty() {
+        return Ok(KgCandidateResult::default());
+    }
+    let reached_paths: HashSet<String> = reached.keys().cloned().collect();
+    let entity_files = entity_to_files(conn, &reached_paths, scope)?;
+    let mut candidates: HashMap<String, KgCandidate> = HashMap::new();
+    for (file, ents) in entity_files {
+        if seed_set.contains(&file) {
+            continue; // dense already has the seed files; only inject NEW reachable files
+        }
+        let raw: f64 = ents.iter().filter_map(|e| reached.get(e)).sum();
+        let score = raw.min(1.0) * TYPED_CAP;
+        if score > 0.0 {
+            upsert_candidate(&mut candidates, file, KgCandidateReason::NeighborEntity, score);
+        }
+    }
+    let mut out: Vec<KgCandidate> = candidates.into_values().collect();
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.filepath.cmp(&b.filepath))
+    });
+    out.truncate(inject_max().min(limit).min(MAX_KG_CANDIDATES));
+    Ok(KgCandidateResult {
+        candidates: out,
+        matched_entities: Vec::new(),
+        matched_communities: Vec::new(),
     })
 }
 

@@ -7,6 +7,8 @@ pub(crate) mod cloud;
 pub mod community;
 pub mod graph;
 pub mod graph_ast;
+#[cfg(feature = "gliner-kg")]
+pub mod graph_gliner;
 pub mod hidden_kg;
 #[cfg(feature = "pg")]
 pub mod pgvector;

@@ -21,6 +21,10 @@ pg = ["semfs-core/pg"]
 # supports BOTH embedded pglite AND external pgvector, so it must enable the
 # binary's own `pg` cfg too (not just semfs-core/pg-local).
 pglite = ["pg", "semfs-core/pg-local"]
+# GLiNER2 typed-KG extractor (Candle, GPU-free) for the live/on-write import KG
+# path — see semfs-core/gliner-kg. Off by default (pulls Candle + downloads the
+# ~1.7GB model on first use).
+gliner-kg = ["semfs-core/gliner-kg"]
 
 [dependencies]
 semfs-core = { workspace = true }

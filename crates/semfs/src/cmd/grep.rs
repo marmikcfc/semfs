@@ -450,15 +450,9 @@ fn print_block(fp: &str, content: &str) {
 }
 
 fn cap_render(s: &str) -> (String, bool) {
-    let cap = grep_result_cap();
-    if s.len() <= cap {
-        return (s.to_string(), false);
-    }
-    let mut end = cap.min(s.len());
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    (s[..end].to_string(), true)
+    // Truncation removed: we ship the full text and let the agent's harness cap it
+    // if it must. Returns `truncated=false` always, so the TRUNCATED markers never fire.
+    (s.to_string(), false)
 }
 
 /// E9 delivery modes (`SEMFS_GREP_RENDER_MODE`):
@@ -489,14 +483,19 @@ fn render_mode() -> RenderMode {
 /// budget is spent, remaining hits render as path + snippet with an honest note.
 /// `SEMFS_GREP_TOTAL_CAP` (bytes; 0 disables; unset → 10 KB).
 fn grep_total_cap() -> usize {
-    match std::env::var("SEMFS_GREP_TOTAL_CAP")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-    {
-        Some(0) => usize::MAX,
-        Some(n) => n,
-        None => 10 * 1024,
-    }
+    // Truncation removed: no global render budget. Every hit renders in full;
+    // the agent's harness truncates if the total is too large.
+    usize::MAX
+}
+
+/// `SEMFS_RETURN_MODE=snippet` (or `chunk`) → deliver the matched chunk + line
+/// range. Default (unset) → deliver the WHOLE file from the filesystem. Mirrors
+/// the daemon's `snippet_return_mode` so grep and the store agree on the mode.
+fn snippet_mode() -> bool {
+    matches!(
+        std::env::var("SEMFS_RETURN_MODE").ok().as_deref(),
+        Some("snippet") | Some("chunk")
+    )
 }
 
 /// E9(d) pilot — query-time caveman compression of large PROSE excerpts
@@ -1336,6 +1335,15 @@ pub async fn run(args: Args) -> Result<()> {
                         .or_insert_with(|| read_local_or_sidecar(cm, path));
                     match &*outcome {
                         ReadOutcome::Content(content) => {
+                            // Default mode: ship the WHOLE file from the filesystem
+                            // (no re-stitch, no truncation). Only `snippet` mode
+                            // narrows to the matched chunk + its line range.
+                            if !snippet_mode() {
+                                complete_file = true;
+                                let lines = content.lines().count().max(1);
+                                inline_full = Some(content.clone());
+                                return Some((1, lines));
+                            }
                             let (cf, full) = present_excerpt(content, chunk);
                             complete_file = cf;
                             if let Some(f) = full {
