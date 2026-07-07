@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/semfs-core",
     "crates/semfs",
+    "crates/tokopt-gateway",
 ]
 
 [workspace.package]

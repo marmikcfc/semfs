@@ -1,0 +1,19 @@
+{
+  "routing_preferences": [
+    {
+      "name": "cheap",
+      "description": "simple edits, renames, small localized fixes, factual Q&A, formatting, boilerplate",
+      "model": "claude-haiku-4-5-20251001"
+    },
+    {
+      "name": "mid",
+      "description": "multi-step edits, moderate debugging, changes contained to a single file or module",
+      "model": "claude-sonnet-5"
+    },
+    {
+      "name": "strong",
+      "description": "architecture and design, cross-file refactors, root-cause debugging, ambiguous or underspecified tasks",
+      "model": "claude-opus-4-8"
+    }
+  ]
+}

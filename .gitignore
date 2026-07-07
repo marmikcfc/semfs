@@ -85,3 +85,11 @@ benchmarks/modal/_mined_candidates.json
 benchmarks/modal/_inspect.json
 benchmarks/modal/_reverify_diag.json
 benchmarks/modal/_reverify_sample.json
+dist/
+
+# tokopt: bundled gateway binary is a build artifact — rebuild via plugin/build.sh
+plugin/bin/tokopt-gateway
+# tokopt backend runtime sqlite
+backend-server/usage.db
+backend-server/usage.db-shm
+backend-server/usage.db-wal
